@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+:root {
+  --slate-900: #0f172a;
+  --orange-950: #431407;
+}
+
+body {
+  background: linear-gradient(to bottom right, var(--slate-900), var(--orange-950), var(--slate-900));
+  min-height: 100vh;
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 1rem;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+.glass-sidebar {
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(24px);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
