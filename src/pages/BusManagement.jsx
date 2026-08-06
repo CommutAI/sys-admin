@@ -11,6 +11,7 @@ const BusManagement = () => {
   const [editingBus, setEditingBus] = useState(null);
   const [newBus, setNewBus] = useState({
     plate_number: '',
+    bus_number: '',
     route: '',
     seat_capacity: 35,
     status: 'active'
@@ -48,7 +49,7 @@ const BusManagement = () => {
 
       alert('Bus added successfully!');
       setShowAddModal(false);
-      setNewBus({ plate_number: '', route: '', seat_capacity: 35, status: 'active' });
+      setNewBus({ plate_number: '', bus_number: '', route: '', seat_capacity: 35, status: 'active' });
       fetchBuses();
     } catch (error) {
       console.error('Error adding bus:', error);
@@ -68,7 +69,7 @@ const BusManagement = () => {
 
       alert('Bus updated successfully!');
       setEditingBus(null);
-      setNewBus({ plate_number: '', route: '', seat_capacity: 35, status: 'active' });
+      setNewBus({ plate_number: '', bus_number: '', route: '', seat_capacity: 35, status: 'active' });
       fetchBuses();
     } catch (error) {
       console.error('Error updating bus:', error);
@@ -111,6 +112,7 @@ const BusManagement = () => {
     setEditingBus(bus);
     setNewBus({
       plate_number: bus.plate_number,
+      bus_number: bus.bus_number || '',
       route: bus.route,
       seat_capacity: bus.seat_capacity,
       status: bus.status
@@ -183,6 +185,7 @@ const BusManagement = () => {
           <table className="w-full">
             <thead>
               <tr className="border-b border-white/10">
+                <th className="text-left text-white/60 py-3 px-4">Bus Number</th>
                 <th className="text-left text-white/60 py-3 px-4">Plate Number</th>
                 <th className="text-left text-white/60 py-3 px-4">Route</th>
                 <th className="text-left text-white/60 py-3 px-4">Seat Capacity</th>
@@ -194,6 +197,7 @@ const BusManagement = () => {
             <tbody>
               {filteredBuses.map((bus) => (
                 <tr key={bus.id} className="border-b border-white/5 hover:bg-white/5">
+                  <td className="py-3 px-4 text-white font-medium">{bus.bus_number || 'N/A'}</td>
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-orange-500 rounded-lg flex items-center justify-center">
@@ -260,6 +264,15 @@ const BusManagement = () => {
               {editingBus ? 'Edit Bus' : 'Add New Bus'}
             </h2>
             <form onSubmit={editingBus ? handleUpdateBus : handleAddBus} className="space-y-4">
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Bus Number</label>
+                <input
+                  type="number"
+                  value={newBus.bus_number}
+                  onChange={(e) => setNewBus({ ...newBus, bus_number: parseInt(e.target.value) || '' })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
               <div>
                 <label className="text-white/60 text-sm mb-1 block">Plate Number</label>
                 <input

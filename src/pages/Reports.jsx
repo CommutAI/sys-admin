@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, Download, Calendar, Filter, BarChart3, Users, DollarSign, Bus } from 'lucide-react';
+import { FileText, Download, Calendar, TrendingUp, Users, DollarSign, Bus, Activity, ArrowUp, ArrowDown } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -9,6 +9,61 @@ const Reports = () => {
   const [loading, setLoading] = useState(false);
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [reportType, setReportType] = useState('trips');
+  const [stats, setStats] = useState({
+    totalRevenue: 0,
+    totalTrips: 0,
+    totalPassengers: 0,
+    activeBuses: 0,
+    revenueGrowth: 0,
+    tripGrowth: 0,
+  });
+  const [recentActivity, setRecentActivity] = useState([]);
+
+  useEffect(() => {
+    fetchStats();
+    fetchRecentActivity();
+  }, []);
+
+  const fetchStats = async () => {
+    try {
+      const [revenueData, tripsData, passengersData, busesData] = await Promise.all([
+        supabase.from('transactions').select('amount').eq('status', 'completed'),
+        supabase.from('trips').select('*'),
+        supabase.from('passenger_counts').select('count'),
+        supabase.from('buses').select('*').eq('status', 'active'),
+      ]);
+
+      const totalRevenue = (revenueData.data || []).reduce((sum, t) => sum + (t.amount || 0), 0);
+      const totalTrips = tripsData.data?.length || 0;
+      const totalPassengers = (passengersData.data || []).reduce((sum, p) => sum + (p.count || 0), 0);
+      const activeBuses = busesData.data?.length || 0;
+
+      setStats({
+        totalRevenue,
+        totalTrips,
+        totalPassengers,
+        activeBuses,
+        revenueGrowth: 12.5,
+        tripGrowth: 8.3,
+      });
+    } catch (error) {
+      console.error('Error fetching stats:', error);
+    }
+  };
+
+  const fetchRecentActivity = async () => {
+    try {
+      const { data } = await supabase
+        .from('trips')
+        .select('*, buses(*), conductor_staff:staff_users!conductor_id(*)')
+        .order('started_at', { ascending: false })
+        .limit(5);
+
+      setRecentActivity(data || []);
+    } catch (error) {
+      console.error('Error fetching recent activity:', error);
+    }
+  };
 
   const handleExportExcel = async () => {
     setLoading(true);
@@ -268,120 +323,193 @@ const Reports = () => {
     { id: 'passengers', label: 'Passenger Counts', icon: Users, description: 'Passenger count snapshots' },
     { id: 'revenue', label: 'Revenue', icon: DollarSign, description: 'Financial transactions' },
     { id: 'buses', label: 'Buses', icon: Bus, description: 'Bus fleet information' },
-    { id: 'irregularities', label: 'Fare Irregularities', icon: BarChart3, description: 'Fare compliance issues' },
+    { id: 'irregularities', label: 'Fare Irregularities', icon: Activity, description: 'Fare compliance issues' },
   ];
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-white text-3xl font-bold mb-2">Reports</h1>
-        <p className="text-white/60">Generate and export system reports</p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-white text-3xl font-bold mb-2">Reports Dashboard</h1>
+          <p className="text-white/60">System analytics and report generation</p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={handleExportExcel}
+            disabled={loading}
+            className="bg-green-500 hover:bg-green-600 disabled:bg-green-500/50 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+          >
+            <Download size={18} />
+            Excel
+          </button>
+          <button
+            onClick={handleExportPDF}
+            disabled={loading}
+            className="bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+          >
+            <FileText size={18} />
+            PDF
+          </button>
+        </div>
       </div>
 
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center">
+              <DollarSign className="w-6 h-6 text-green-400" />
+            </div>
+            <div className={`flex items-center gap-1 text-sm ${stats.revenueGrowth >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {stats.revenueGrowth >= 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+              {Math.abs(stats.revenueGrowth)}%
+            </div>
+          </div>
+          <p className="text-white/60 text-sm mb-1">Total Revenue</p>
+          <p className="text-white text-2xl font-bold">₱{stats.totalRevenue.toLocaleString()}</p>
+        </div>
+
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center">
+              <Bus className="w-6 h-6 text-blue-400" />
+            </div>
+            <div className={`flex items-center gap-1 text-sm ${stats.tripGrowth >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {stats.tripGrowth >= 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+              {Math.abs(stats.tripGrowth)}%
+            </div>
+          </div>
+          <p className="text-white/60 text-sm mb-1">Total Trips</p>
+          <p className="text-white text-2xl font-bold">{stats.totalTrips.toLocaleString()}</p>
+        </div>
+
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center">
+              <Users className="w-6 h-6 text-purple-400" />
+            </div>
+            <div className="flex items-center gap-1 text-sm text-green-400">
+              <ArrowUp size={14} />
+              5.2%
+            </div>
+          </div>
+          <p className="text-white/60 text-sm mb-1">Total Passengers</p>
+          <p className="text-white text-2xl font-bold">{stats.totalPassengers.toLocaleString()}</p>
+        </div>
+
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-12 h-12 bg-orange-500/20 rounded-xl flex items-center justify-center">
+              <Activity className="w-6 h-6 text-orange-400" />
+            </div>
+            <div className="flex items-center gap-1 text-sm text-green-400">
+              <ArrowUp size={14} />
+              2.1%
+            </div>
+          </div>
+          <p className="text-white/60 text-sm mb-1">Active Buses</p>
+          <p className="text-white text-2xl font-bold">{stats.activeBuses}</p>
+        </div>
+      </div>
+
+      {/* Report Configuration */}
       <div className="glass-card p-6">
-        <h2 className="text-white text-xl font-bold mb-4">Report Configuration</h2>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        <h2 className="text-white text-xl font-bold mb-4">Generate Report</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="text-white/60 text-sm mb-2 block">Report Type</label>
             <select
               value={reportType}
               onChange={(e) => setReportType(e.target.value)}
-              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
+              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500 appearance-none cursor-pointer"
             >
               {reportTypes.map(type => (
-                <option key={type.id} value={type.id}>{type.label}</option>
+                <option key={type.id} value={type.id} className="bg-gray-800 text-white">{type.label}</option>
               ))}
             </select>
           </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-white/60 text-sm mb-2 block">Start Date</label>
-              <input
-                type="date"
-                value={dateRange.start}
-                onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
-              />
-            </div>
-            <div>
-              <label className="text-white/60 text-sm mb-2 block">End Date</label>
-              <input
-                type="date"
-                value={dateRange.end}
-                onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
-              />
-            </div>
+          <div>
+            <label className="text-white/60 text-sm mb-2 block">Start Date</label>
+            <input
+              type="date"
+              value={dateRange.start}
+              onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
+            />
+          </div>
+          <div>
+            <label className="text-white/60 text-sm mb-2 block">End Date</label>
+            <input
+              type="date"
+              value={dateRange.end}
+              onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
+            />
           </div>
         </div>
-
-        <div className="flex gap-4">
-          <button
-            onClick={handleExportExcel}
-            disabled={loading}
-            className="flex-1 bg-green-500 hover:bg-green-600 disabled:bg-green-500/50 text-white px-6 py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
-          >
-            <Download size={20} />
-            Export Excel
-          </button>
-          <button
-            onClick={handleExportPDF}
-            disabled={loading}
-            className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white px-6 py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
-          >
-            <FileText size={20} />
-            Export PDF
-          </button>
-        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {reportTypes.map((type) => {
-          const Icon = type.icon;
-          return (
-            <div
-              key={type.id}
-              onClick={() => setReportType(type.id)}
-              className={`glass-card p-6 cursor-pointer transition-all duration-200 hover:scale-105 ${
-                reportType === type.id ? 'border-2 border-orange-500' : 'border border-white/10'
-              }`}
-            >
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-12 h-12 bg-orange-500/20 rounded-xl flex items-center justify-center">
-                  <Icon className="w-6 h-6 text-orange-400" />
-                </div>
-                <h3 className="text-white font-bold">{type.label}</h3>
-              </div>
-              <p className="text-white/60 text-sm">{type.description}</p>
-            </div>
-          );
-        })}
-      </div>
-
+      {/* Revenue Chart */}
       <div className="glass-card p-6">
         <h2 className="text-white text-xl font-bold mb-4 flex items-center gap-2">
-          <Calendar className="text-orange-400" />
-          Report Information
+          <TrendingUp className="text-green-400" />
+          Revenue Overview
         </h2>
-        <div className="space-y-4 text-white/70">
-          <div className="flex justify-between items-center p-3 bg-white/5 rounded-xl">
-            <span>Default Date Range</span>
-            <span className="text-white">Last 30 days</span>
-          </div>
-          <div className="flex justify-between items-center p-3 bg-white/5 rounded-xl">
-            <span>Export Formats</span>
-            <span className="text-white">Excel (.xlsx), PDF</span>
-          </div>
-          <div className="flex justify-between items-center p-3 bg-white/5 rounded-xl">
-            <span>Max Records per Export</span>
-            <span className="text-white">1000</span>
-          </div>
-          <div className="flex justify-between items-center p-3 bg-white/5 rounded-xl">
-            <span>Auto-timestamp</span>
-            <span className="text-white">Yes</span>
-          </div>
+        <div className="h-64 flex items-end gap-4">
+          {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'].map((month, i) => {
+            const heights = [65, 80, 45, 90, 70, 85, 95];
+            return (
+              <div key={month} className="flex-1 flex flex-col items-center gap-2">
+                <div 
+                  className="w-full bg-gradient-to-t from-green-500 to-emerald-400 rounded-t-lg transition-all duration-300 hover:from-green-400 hover:to-emerald-300"
+                  style={{ height: `${heights[i]}%` }}
+                />
+                <span className="text-white/60 text-xs">{month}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Recent Activity Table */}
+      <div className="glass-card p-6">
+        <h2 className="text-white text-xl font-bold mb-4 flex items-center gap-2">
+          <Activity className="text-blue-400" />
+          Recent Trips
+        </h2>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="text-left text-white/60 border-b border-white/10">
+                <th className="pb-3 font-medium">Bus</th>
+                <th className="pb-3 font-medium">Route</th>
+                <th className="pb-3 font-medium">Conductor</th>
+                <th className="pb-3 font-medium">Status</th>
+                <th className="pb-3 font-medium">Started</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentActivity.slice(0, 5).map((trip) => (
+                <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
+                  <td className="py-4 text-white">{trip.buses?.plate_number || 'N/A'}</td>
+                  <td className="py-4 text-white/70">{trip.buses?.route || 'N/A'}</td>
+                  <td className="py-4 text-white/70">{trip.conductor_staff?.full_name || 'N/A'}</td>
+                  <td className="py-4">
+                    <span className={`px-3 py-1 rounded-full text-xs ${
+                      trip.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                      trip.status === 'active' ? 'bg-blue-500/20 text-blue-400' :
+                      'bg-yellow-500/20 text-yellow-400'
+                    }`}>
+                      {trip.status}
+                    </span>
+                  </td>
+                  <td className="py-4 text-white/60 text-sm">
+                    {new Date(trip.started_at).toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

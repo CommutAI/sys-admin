@@ -1,23 +1,132 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { TrendingUp, Users, Armchair, Calendar } from 'lucide-react';
+import { TrendingUp, Users, Armchair, Calendar, Brain, AlertTriangle, Eye, Scan, XCircle, CheckCircle, Search, Filter, Video, Camera, Wifi, WifiOff, Play, Square, RefreshCw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import io from 'socket.io-client';
 
 const PassengerAnalytics = () => {
   const [timeRange, setTimeRange] = useState('daily');
   const [passengerCounts, setPassengerCounts] = useState([]);
   const [boardedPassengers, setBoardedPassengers] = useState([]);
+  const [fareIrregularities, setFareIrregularities] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterType, setFilterType] = useState('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showCameraFeeds, setShowCameraFeeds] = useState(false);
+  const [cameraFeeds, setCameraFeeds] = useState([]);
+  const [selectedCamera, setSelectedCamera] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [passengerCount, setPassengerCount] = useState(0);
+  const [averageCount, setAverageCount] = useState(0);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [error, setError] = useState(null);
+  const [serverUrl, setServerUrl] = useState('http://localhost:5000');
+  const socketRef = useRef(null);
+  const videoRef = useRef(null);
   const [stats, setStats] = useState({
     totalPassengers: 0,
     yoloCount: 0,
     qrCount: 0,
-    seatUtilization: 0
+    seatUtilization: 0,
+    anomaliesDetected: 0
   });
 
   useEffect(() => {
     fetchAnalyticsData();
+    // Set up real-time subscription for fare irregularities
+    const subscription = supabase
+      .channel('fare-irregularities-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'fare_irregularities' }, () => {
+        fetchAnalyticsData();
+      })
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [timeRange]);
+
+  useEffect(() => {
+    connectToServer();
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    };
+  }, [serverUrl]);
+
+  const connectToServer = () => {
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+    }
+
+    socketRef.current = io(serverUrl, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    });
+
+    socketRef.current.on('connect', () => {
+      setIsConnected(true);
+      setError(null);
+    });
+
+    socketRef.current.on('disconnect', () => {
+      setIsConnected(false);
+      setIsStreaming(false);
+    });
+
+    socketRef.current.on('video_frame', (data) => {
+      if (data.frame && videoRef.current) {
+        videoRef.current.src = `data:image/jpeg;base64,${data.frame}`;
+        setIsStreaming(true);
+      }
+    });
+
+    socketRef.current.on('passenger_count', (data) => {
+      setPassengerCount(data.count);
+      setAverageCount(data.average_count.toFixed(1));
+      setLastUpdate(new Date().toLocaleTimeString());
+    });
+
+    socketRef.current.on('status', (data) => {
+      console.log('Server status:', data.message);
+    });
+
+    socketRef.current.on('error', (data) => {
+      setError(data.message);
+      console.error('Server error:', data.message);
+    });
+
+    socketRef.current.on('connect_error', (error) => {
+      setIsConnected(false);
+      setError('Failed to connect to video server');
+      console.error('Connection error:', error);
+    });
+  };
+
+  const startStream = () => {
+    if (socketRef.current && isConnected) {
+      socketRef.current.emit('start_stream');
+    }
+  };
+
+  const stopStream = () => {
+    if (socketRef.current && isConnected) {
+      socketRef.current.emit('stop_stream');
+      setIsStreaming(false);
+    }
+  };
+
+  const refreshConnection = () => {
+    setIsConnected(false);
+    setIsStreaming(false);
+    setError(null);
+    setTimeout(() => connectToServer(), 500);
+  };
 
   const fetchAnalyticsData = async () => {
     try {
@@ -46,13 +155,23 @@ const PassengerAnalytics = () => {
         .gte('boarded_at', startDate.toISOString())
         .order('boarded_at', { ascending: true });
 
+      // Fetch fare irregularities
+      const { data: irregularities } = await supabase
+        .from('fare_irregularities')
+        .select('*, trips(*, buses(*))')
+        .gte('detected_at', startDate.toISOString())
+        .order('detected_at', { ascending: false })
+        .limit(10);
+
       setPassengerCounts(counts || []);
       setBoardedPassengers(boarded || []);
+      setFareIrregularities(irregularities || []);
 
       // Calculate statistics
       const totalPassengers = (counts || []).reduce((sum, pc) => sum + (pc.count || 0), 0);
       const yoloCount = (counts || []).reduce((sum, pc) => sum + (pc.ai_count || 0), 0);
       const qrCount = (boarded || []).length;
+      const anomaliesCount = (irregularities || []).length;
 
       // Calculate seat utilization (would need bus capacity data)
       const seatUtilization = totalPassengers > 0 ? Math.round((qrCount / totalPassengers) * 100) : 0;
@@ -61,7 +180,8 @@ const PassengerAnalytics = () => {
         totalPassengers,
         yoloCount,
         qrCount,
-        seatUtilization
+        seatUtilization,
+        anomaliesDetected: anomaliesCount
       });
 
     } catch (error) {
@@ -145,6 +265,47 @@ const PassengerAnalytics = () => {
     }));
   };
 
+  const handleResolve = async (irregularityId) => {
+    try {
+      const { error } = await supabase
+        .from('fare_irregularities')
+        .update({ 
+          resolved: true,
+          resolved_at: new Date().toISOString(),
+          resolved_by: (await supabase.auth.getUser()).data.user?.id
+        })
+        .eq('id', irregularityId);
+
+      if (error) throw error;
+      fetchAnalyticsData();
+    } catch (error) {
+      console.error('Error resolving irregularity:', error);
+      alert('Error resolving irregularity: ' + error.message);
+    }
+  };
+
+  const filteredIrregularities = fareIrregularities.filter(irr => {
+    const matchesSearch = irr.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         irr.trips?.buses?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = filterStatus === 'all' || (filterStatus === 'resolved' ? irr.resolved : !irr.resolved);
+    const matchesType = filterType === 'all' || irr.type === filterType;
+    return matchesSearch && matchesStatus && matchesType;
+  });
+
+  const typeColors = {
+    double_scan: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
+    count_mismatch: 'bg-orange-500/20 text-orange-400 border-orange-500/50',
+    fare_evasion: 'bg-red-500/20 text-red-400 border-red-500/50',
+    other: 'bg-gray-500/20 text-gray-400 border-gray-500/50',
+  };
+
+  const typeLabels = {
+    double_scan: 'Double Scan',
+    count_mismatch: 'Count Mismatch',
+    fare_evasion: 'Fare Evasion',
+    other: 'Other',
+  };
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -158,8 +319,11 @@ const PassengerAnalytics = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-white text-3xl font-bold mb-2">Passenger Analytics</h1>
-          <p className="text-white/60">Detailed passenger count and utilization analytics</p>
+          <h1 className="text-white text-3xl font-bold mb-2 flex items-center gap-3">
+            <Brain className="text-orange-400" />
+            Passenger Analytics & AI Dashboard
+          </h1>
+          <p className="text-white/60">Detailed passenger count, utilization analytics, and AI-powered anomaly detection</p>
         </div>
         <div className="flex gap-2">
           {['hourly', 'daily', 'monthly'].map((range) => (
@@ -178,7 +342,7 @@ const PassengerAnalytics = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="glass-card p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center">
@@ -195,7 +359,7 @@ const PassengerAnalytics = () => {
         <div className="glass-card p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center">
-              <TrendingUp className="w-6 h-6 text-purple-400" />
+              <Eye className="w-6 h-6 text-purple-400" />
             </div>
             <div>
               <p className="text-white/60 text-sm">YOLO Count</p>
@@ -207,20 +371,195 @@ const PassengerAnalytics = () => {
 
         <div className="glass-card p-6">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-orange-500/20 rounded-xl flex items-center justify-center">
-              <Armchair className="w-6 h-6 text-orange-400" />
+            <div className="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center">
+              <Scan className="w-6 h-6 text-green-400" />
             </div>
             <div>
-              <p className="text-white/60 text-sm">Boarded Passengers</p>
+              <p className="text-white/60 text-sm">QR Scans</p>
               <p className="text-white text-2xl font-bold">{stats.qrCount.toLocaleString()}</p>
             </div>
           </div>
-          <p className="text-green-400 text-sm">QR scans</p>
+          <p className="text-green-400 text-sm">Boarded passengers</p>
+        </div>
+
+        <div className="glass-card p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-12 h-12 bg-red-500/20 rounded-xl flex items-center justify-center">
+              <AlertTriangle className="w-6 h-6 text-red-400" />
+            </div>
+            <div>
+              <p className="text-white/60 text-sm">Anomalies</p>
+              <p className="text-white text-2xl font-bold">{stats.anomaliesDetected}</p>
+            </div>
+          </div>
+          <p className="text-green-400 text-sm">Fare irregularities</p>
+        </div>
+      </div>
+
+      {/* Live Video Monitoring Section */}
+      <div className="glass-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-white text-xl font-bold flex items-center gap-2">
+            <Video className="text-orange-400" />
+            Live Bus Video Monitoring
+          </h2>
+          <div className="flex items-center gap-3">
+            <input
+              type="text"
+              value={serverUrl}
+              onChange={(e) => setServerUrl(e.target.value)}
+              placeholder="Server URL (e.g., http://192.168.1.100:5000)"
+              className="bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500 w-80"
+            />
+            <button
+              onClick={refreshConnection}
+              className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg transition-colors"
+              title="Refresh Connection"
+            >
+              <RefreshCw size={20} />
+            </button>
+          </div>
+        </div>
+
+        {/* Connection Status */}
+        <div className={`mb-4 p-4 rounded-xl flex items-center gap-3 ${
+          isConnected ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'
+        }`}>
+          {isConnected ? (
+            <Wifi className="w-5 h-5 text-green-400" />
+          ) : (
+            <WifiOff className="w-5 h-5 text-red-400" />
+          )}
+          <div className="flex-1">
+            <p className="text-white font-medium">
+              {isConnected ? 'Connected to Video Server' : 'Disconnected from Video Server'}
+            </p>
+            <p className="text-white/60 text-sm">{serverUrl}</p>
+          </div>
+          {error && (
+            <div className="flex items-center gap-2 text-red-400">
+              <AlertTriangle size={16} />
+              <span className="text-sm">{error}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Video Feed */}
+          <div className="lg:col-span-2">
+            <div className="bg-black/30 rounded-xl overflow-hidden relative aspect-video">
+              {isStreaming ? (
+                <img
+                  ref={videoRef}
+                  alt="Live video feed"
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="text-center">
+                    <Video className="w-16 h-16 text-white/30 mx-auto mb-4" />
+                    <p className="text-white/50">
+                      {isConnected ? 'Click "Start Stream" to begin' : 'Connect to server to start streaming'}
+                    </p>
+                  </div>
+                </div>
+              )}
+              {/* Overlay Info */}
+              {isStreaming && (
+                <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+                    <span className="text-white text-sm font-medium">LIVE</span>
+                  </div>
+                </div>
+              )}
+              {/* Stream Controls */}
+              <div className="absolute bottom-4 right-4 flex gap-2">
+                {!isStreaming && isConnected && (
+                  <button
+                    onClick={startStream}
+                    className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+                  >
+                    <Play size={16} />
+                    Start Stream
+                  </button>
+                )}
+                {isStreaming && (
+                  <button
+                    onClick={stopStream}
+                    className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+                  >
+                    <Square size={16} />
+                    Stop Stream
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Real-time Passenger Count */}
+          <div className="space-y-4">
+            <div className="bg-black/30 rounded-xl p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <Users className="w-6 h-6 text-orange-400" />
+                <h3 className="text-white font-semibold">Real-time Count</h3>
+              </div>
+              <div className="text-center py-6">
+                <div className="text-5xl font-bold text-white mb-2">{passengerCount}</div>
+                <p className="text-white/60">Current Passengers</p>
+              </div>
+              {lastUpdate && (
+                <div className="text-center text-white/40 text-sm">
+                  Last updated: {lastUpdate}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-black/30 rounded-xl p-6">
+              <h3 className="text-white font-semibold mb-4">Statistics</h3>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-white/60">Average (30 frames)</span>
+                  <span className="text-white font-medium">{averageCount}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-white/60">Stream Status</span>
+                  <span className={`font-medium ${isStreaming ? 'text-green-400' : 'text-red-400'}`}>
+                    {isStreaming ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-white/60">Connection</span>
+                  <span className={`font-medium ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
+                    {isConnected ? 'Connected' : 'Disconnected'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-black/30 rounded-xl p-6">
+              <h3 className="text-white font-semibold mb-4">Camera Info</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-white/60">Model</span>
+                  <span className="text-white">EMEET C60E</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-white/60">Resolution</span>
+                  <span className="text-white">1280x720</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-white/60">AI Model</span>
+                  <span className="text-white">YOLOv8n</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
       <div className="glass-card p-6">
-        <h2 className="text-white text-xl font-bold mb-4">Passenger Count Comparison</h2>
+        <h2 className="text-white text-xl font-bold mb-4">Passenger Count Comparison (YOLO vs QR)</h2>
         <ResponsiveContainer width="100%" height={400}>
           <BarChart data={getChartData()}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
@@ -235,6 +574,111 @@ const PassengerAnalytics = () => {
             <Bar dataKey="yolo" fill="#8b5cf6" name="YOLO Count" />
           </BarChart>
         </ResponsiveContainer>
+      </div>
+
+      <div className="glass-card p-6">
+        <h2 className="text-white text-xl font-bold mb-4 flex items-center gap-2">
+          <XCircle className="text-orange-400" />
+          Fare Irregularities Management
+        </h2>
+        
+        <div className="flex items-center gap-4 mb-6 flex-wrap">
+          <div className="flex-1 relative min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
+            <input
+              type="text"
+              placeholder="Search irregularities..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500"
+            />
+          </div>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+          >
+            <option value="all">All Status</option>
+            <option value="unresolved">Unresolved</option>
+            <option value="resolved">Resolved</option>
+          </select>
+          <select
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value)}
+            className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+          >
+            <option value="all">All Types</option>
+            <option value="double_scan">Double Scan</option>
+            <option value="count_mismatch">Count Mismatch</option>
+            <option value="fare_evasion">Fare Evasion</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="text-left text-white/60 border-b border-white/10">
+                <th className="pb-3 font-medium">Type</th>
+                <th className="pb-3 font-medium">Description</th>
+                <th className="pb-3 font-medium">Bus</th>
+                <th className="pb-3 font-medium">Detected</th>
+                <th className="pb-3 font-medium">Status</th>
+                <th className="pb-3 font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredIrregularities.length > 0 ? (
+                filteredIrregularities.map((irr) => (
+                  <tr key={irr.id} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="py-4">
+                      <span className={`px-3 py-1 rounded-full text-xs border ${typeColors[irr.type]}`}>
+                        {typeLabels[irr.type]}
+                      </span>
+                    </td>
+                    <td className="py-4 text-white/70">{irr.description}</td>
+                    <td className="py-4 text-white/70">{irr.trips?.buses?.plate_number || 'N/A'}</td>
+                    <td className="py-4 text-white/60 text-sm">
+                      {new Date(irr.detected_at).toLocaleString()}
+                    </td>
+                    <td className="py-4">
+                      <span className={`flex items-center gap-2 ${irr.resolved ? 'text-green-400' : 'text-red-400'}`}>
+                        {irr.resolved ? (
+                          <>
+                            <CheckCircle size={14} />
+                            Resolved
+                          </>
+                        ) : (
+                          <>
+                            <AlertTriangle size={14} />
+                            Unresolved
+                          </>
+                        )}
+                      </span>
+                    </td>
+                    <td className="py-4">
+                      {!irr.resolved && (
+                        <button
+                          onClick={() => handleResolve(irr.id)}
+                          className="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30 transition-colors"
+                        >
+                          Resolve
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center">
+                    <AlertTriangle className="w-16 h-16 text-white/20 mx-auto mb-4" />
+                    <p className="text-white/60">No fare irregularities found</p>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

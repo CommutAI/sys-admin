@@ -23,6 +23,10 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
+  CREATE TYPE card_type AS ENUM ('regular', 'student', 'senior_citizen', 'pwd');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
   CREATE TYPE ticket_status AS ENUM ('issued', 'validated', 'expired');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
@@ -80,11 +84,68 @@ CREATE TRIGGER on_auth_user_created
 CREATE TABLE IF NOT EXISTS buses (
   id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   plate_number   TEXT        NOT NULL UNIQUE,
+  bus_number     INTEGER     UNIQUE,
   route          TEXT        NOT NULL,
   seat_capacity  INTEGER     NOT NULL DEFAULT 50,
   status         bus_status  NOT NULL DEFAULT 'active',
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Add bus_number column if it doesn't exist (for existing tables)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'buses' AND column_name = 'bus_number'
+  ) THEN
+    ALTER TABLE buses ADD COLUMN bus_number INTEGER UNIQUE;
+  END IF;
+END $$;
+
+-- Add card_type and purchase_price columns to qr_cards if they don't exist
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'qr_cards' AND column_name = 'card_type'
+  ) THEN
+    ALTER TABLE qr_cards ADD COLUMN card_type card_type NOT NULL DEFAULT 'regular';
+  END IF;
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'qr_cards' AND column_name = 'purchase_price'
+  ) THEN
+    ALTER TABLE qr_cards ADD COLUMN purchase_price NUMERIC(10,2) NOT NULL DEFAULT 100.00;
+  END IF;
+END $$;
+
+-- Update existing card_type values if enum was changed from old values
+DO $$
+BEGIN
+  -- Update 'elderly' to 'senior_citizen' if it exists
+  UPDATE qr_cards SET card_type = 'senior_citizen' WHERE card_type = 'elderly';
+  -- Update 'disabled' to 'pwd' if it exists
+  UPDATE qr_cards SET card_type = 'pwd' WHERE card_type = 'disabled';
+EXCEPTION WHEN others THEN
+  -- Ignore errors if the old values don't exist
+  NULL;
+END $$;
+
+-- Update existing buses to have bus_number values based on plate_number
+DO $$
+BEGIN
+  UPDATE buses SET bus_number = 1001 WHERE plate_number = 'BUS-001' AND bus_number IS NULL;
+  UPDATE buses SET bus_number = 1002 WHERE plate_number = 'BUS-002' AND bus_number IS NULL;
+  UPDATE buses SET bus_number = 1003 WHERE plate_number = 'BUS-003' AND bus_number IS NULL;
+  UPDATE buses SET bus_number = 1004 WHERE plate_number = 'BUS-004' AND bus_number IS NULL;
+  UPDATE buses SET bus_number = 1005 WHERE plate_number = 'BUS-005' AND bus_number IS NULL;
+  UPDATE buses SET bus_number = 1006 WHERE plate_number = 'BUS-006' AND bus_number IS NULL;
+  UPDATE buses SET bus_number = 1007 WHERE plate_number = 'BUS-007' AND bus_number IS NULL;
+  UPDATE buses SET bus_number = 1008 WHERE plate_number = 'BUS-008' AND bus_number IS NULL;
+  UPDATE buses SET bus_number = 1009 WHERE plate_number = 'BUS-009' AND bus_number IS NULL;
+  UPDATE buses SET bus_number = 1010 WHERE plate_number = 'BUS-010' AND bus_number IS NULL;
+END $$;
 
 -- ── 3. Trips ──────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS trips (
@@ -108,6 +169,8 @@ CREATE TABLE IF NOT EXISTS qr_cards (
   contact_number  TEXT,
   balance         NUMERIC(10,2)  NOT NULL DEFAULT 0,
   status          qr_card_status NOT NULL DEFAULT 'active',
+  card_type       card_type      NOT NULL DEFAULT 'regular',
+  purchase_price  NUMERIC(10,2)  NOT NULL DEFAULT 100.00,
   allowed_routes  TEXT[]         DEFAULT '{}',
   passenger_id    UUID,          -- links to a registered passenger if applicable
   issued_by       UUID           REFERENCES staff_users (id),
@@ -211,7 +274,81 @@ CREATE TABLE IF NOT EXISTS customer_service_logs (
   created_at  TIMESTAMPTZ    NOT NULL DEFAULT NOW()
 );
 
--- ── 13. Helper Functions ──────────────────────────────────────────────────────
+-- ── 13. GCash Transactions ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS gcash_transactions (
+  id                BIGSERIAL PRIMARY KEY,
+  phone_number      TEXT        NOT NULL,
+  amount            NUMERIC     NOT NULL,
+  status            TEXT        NOT NULL CHECK (status IN ('completed', 'failed', 'pending')),
+  stripe_payment_id TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 14. Notifications ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS notifications (
+  id         BIGSERIAL PRIMARY KEY,
+  message    TEXT        NOT NULL,
+  type       TEXT        DEFAULT 'info' CHECK (type IN ('alert', 'success', 'info')),
+  read       BOOLEAN     NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 15. Fare Matrix ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS fare_matrix (
+  id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  route_from              TEXT        NOT NULL,
+  route_to                TEXT        NOT NULL,
+  km_distance             NUMERIC     NOT NULL,
+  regular_fare            NUMERIC     NOT NULL,
+  discounted_fare         NUMERIC     NOT NULL,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT unique_route UNIQUE (route_from, route_to)
+);
+
+-- ── 15.1. Baggage Fee Matrix ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS baggage_fee_matrix (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  category        TEXT        NOT NULL,
+  max_weight_kg   NUMERIC     NOT NULL,
+  fee             NUMERIC     NOT NULL,
+  remarks         TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 16. Bus Schedules ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS bus_schedules (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  bus_id      UUID        NOT NULL REFERENCES buses (id),
+  day_number  INTEGER     NOT NULL CHECK (day_number BETWEEN 1 AND 10),
+  trip_number INTEGER     NOT NULL CHECK (trip_number BETWEEN 1 AND 10),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT unique_bus_day_trip UNIQUE (bus_id, day_number, trip_number)
+);
+
+-- ── 17. Trip Schedules ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS trip_schedules (
+  id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  trip_number            INTEGER     NOT NULL CHECK (trip_number BETWEEN 1 AND 10),
+  arrival_time_start     TIME        NOT NULL,
+  arrival_time_end       TIME        NOT NULL,
+  departure_time_start   TIME        NOT NULL,
+  departure_time_end     TIME        NOT NULL,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT unique_trip_number UNIQUE (trip_number)
+);
+
+-- ── 18. Audit Logs ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id          BIGSERIAL PRIMARY KEY,
+  username    TEXT        NOT NULL,
+  action      TEXT        DEFAULT 'info' CHECK (action IN ('CREATE', 'UPDATE', 'DELETE', 'LOGIN', 'VIEW', 'EXPORT')),
+  module      TEXT,
+  details     TEXT,
+  ip_address  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 16. Helper Functions ──────────────────────────────────────────────────────
 -- Returns the active trip ID for the currently authenticated conductor
 CREATE OR REPLACE FUNCTION conductor_active_trip_id()
 RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER AS $$
@@ -228,7 +365,7 @@ RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER AS $$
   SELECT role::TEXT FROM staff_users WHERE id = auth.uid();
 $$;
 
--- ── 14. Row-Level Security ────────────────────────────────────────────────────
+-- ── 17. Row-Level Security ────────────────────────────────────────────────────
 ALTER TABLE staff_users           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE buses                 ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trips                 ENABLE ROW LEVEL SECURITY;
@@ -241,6 +378,13 @@ ALTER TABLE gps_logs              ENABLE ROW LEVEL SECURITY;
 ALTER TABLE fare_irregularities   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE emergency_alerts      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE customer_service_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE gcash_transactions    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE fare_matrix            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE baggage_fee_matrix     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bus_schedules          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trip_schedules         ENABLE ROW LEVEL SECURITY;
 
 -- Staff can view their own profile (admins see all)
 DO $$ BEGIN
@@ -438,7 +582,98 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- ── 15. Indexes for Performance ───────────────────────────────────────────────
+-- GCash transactions
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'gcash_transactions' AND policyname = 'gcash_transactions_rw_authenticated'
+  ) THEN
+    CREATE POLICY "gcash_transactions_rw_authenticated"
+      ON gcash_transactions FOR ALL
+      USING (auth.role() = 'authenticated')
+      WITH CHECK (auth.role() = 'authenticated');
+  END IF;
+END $$;
+
+-- Notifications
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'notifications' AND policyname = 'notifications_rw_authenticated'
+  ) THEN
+    CREATE POLICY "notifications_rw_authenticated"
+      ON notifications FOR ALL
+      USING (auth.role() = 'authenticated')
+      WITH CHECK (auth.role() = 'authenticated');
+  END IF;
+END $$;
+
+-- Audit logs
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'audit_logs' AND policyname = 'audit_logs_rw_authenticated'
+  ) THEN
+    CREATE POLICY "audit_logs_rw_authenticated"
+      ON audit_logs FOR ALL
+      USING (auth.role() = 'authenticated')
+      WITH CHECK (auth.role() = 'authenticated');
+  END IF;
+END $$;
+
+-- Fare matrix
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'fare_matrix' AND policyname = 'fare_matrix_rw_authenticated'
+  ) THEN
+    CREATE POLICY "fare_matrix_rw_authenticated"
+      ON fare_matrix FOR ALL
+      USING (auth.role() = 'authenticated')
+      WITH CHECK (auth.role() = 'authenticated');
+  END IF;
+END $$;
+
+-- Baggage fee matrix
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'baggage_fee_matrix' AND policyname = 'baggage_fee_matrix_rw_authenticated'
+  ) THEN
+    CREATE POLICY "baggage_fee_matrix_rw_authenticated"
+      ON baggage_fee_matrix FOR ALL
+      USING (auth.role() = 'authenticated')
+      WITH CHECK (auth.role() = 'authenticated');
+  END IF;
+END $$;
+
+-- Bus schedules
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'bus_schedules' AND policyname = 'bus_schedules_rw_authenticated'
+  ) THEN
+    CREATE POLICY "bus_schedules_rw_authenticated"
+      ON bus_schedules FOR ALL
+      USING (auth.role() = 'authenticated')
+      WITH CHECK (auth.role() = 'authenticated');
+  END IF;
+END $$;
+
+-- Trip schedules
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'trip_schedules' AND policyname = 'trip_schedules_rw_authenticated'
+  ) THEN
+    CREATE POLICY "trip_schedules_rw_authenticated"
+      ON trip_schedules FOR ALL
+      USING (auth.role() = 'authenticated')
+      WITH CHECK (auth.role() = 'authenticated');
+  END IF;
+END $$;
+
+-- ── 18. Indexes for Performance ───────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_trips_conductor_status
   ON trips(conductor_id, status) WHERE status = 'in_progress';
 
@@ -469,7 +704,46 @@ CREATE INDEX IF NOT EXISTS idx_emergency_alerts_trip
 CREATE INDEX IF NOT EXISTS idx_emergency_alerts_status
   ON emergency_alerts(status);
 
--- ── 16. Realtime Publications ─────────────────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_gcash_transactions_created_at
+  ON gcash_transactions(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_gcash_transactions_status
+  ON gcash_transactions(status);
+
+CREATE INDEX IF NOT EXISTS idx_gcash_transactions_phone_number
+  ON gcash_transactions(phone_number);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_created_at
+  ON notifications(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_read
+  ON notifications(read);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at
+  ON audit_logs(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_username
+  ON audit_logs(username);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action
+  ON audit_logs(action);
+
+CREATE INDEX IF NOT EXISTS idx_fare_matrix_route
+  ON fare_matrix(route_from, route_to);
+
+CREATE INDEX IF NOT EXISTS idx_baggage_fee_matrix_category
+  ON baggage_fee_matrix(category);
+
+CREATE INDEX IF NOT EXISTS idx_bus_schedules_bus_day
+  ON bus_schedules(bus_id, day_number);
+
+CREATE INDEX IF NOT EXISTS idx_bus_schedules_day_trip
+  ON bus_schedules(day_number, trip_number);
+
+CREATE INDEX IF NOT EXISTS idx_trip_schedules_trip_number
+  ON trip_schedules(trip_number);
+
+-- ── 19. Realtime Publications ─────────────────────────────────────────────────
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_publication_tables
@@ -519,16 +793,167 @@ END $$;
 -- Schema complete.
 -- ============================================================
 
--- ── 17. Seed: Test Bus Data ───────────────────────────────────────────────────
-INSERT INTO buses (plate_number, route, seat_capacity, status) VALUES
-  ('BUS-001', 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-002', 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-003', 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-004', 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-005', 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'maintenance')
-ON CONFLICT (plate_number) DO NOTHING;
+-- ── 20. Seed: Test Bus Data ───────────────────────────────────────────────────
+INSERT INTO buses (plate_number, bus_number, route, seat_capacity, status) VALUES
+  ('BUS-001', 1001, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-002', 1002, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-003', 1003, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-004', 1004, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-005', 1005, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-006', 1006, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-007', 1007, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-008', 1008, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-009', 1009, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-010', 1010, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active')
+ON CONFLICT (plate_number) DO UPDATE SET
+  bus_number = EXCLUDED.bus_number,
+  route = EXCLUDED.route,
+  seat_capacity = EXCLUDED.seat_capacity,
+  status = EXCLUDED.status;
 
--- ── 18. Create Admin Test User Instructions ─────────────────────────────────────
+-- ── 21. Seed: Fare Matrix Data ─────────────────────────────────────────────────
+INSERT INTO fare_matrix (route_from, route_to, km_distance, regular_fare, discounted_fare) VALUES
+  ('Agora Terminal', 'Puerto', 13, 34.75, 27.75),
+  ('Agora Terminal', 'Ba-e', 16, 41.50, 33.00),
+  ('Agora Terminal', 'Mambatangan', 20, 50.25, 40.25),
+  ('Agora Terminal', 'Maitom', 24, 59.00, 47.25),
+  ('Agora Terminal', 'Ala-e', 26, 63.50, 50.75),
+  ('Agora Terminal', 'Lonocan', 27, 65.50, 52.50),
+  ('Agora Terminal', 'San Miguel', 31, 74.50, 59.50),
+  ('Agora Terminal', 'Diclum', 35, 83.25, 66.50),
+  ('Agora Terminal', 'Manolo Fortich', 36, 85.50, 68.25),
+  ('Puerto', 'Agora Terminal', 13, 34.75, 27.75),
+  ('Ba-e', 'Agora Terminal', 16, 41.50, 33.00),
+  ('Mambatangan', 'Agora Terminal', 20, 50.25, 40.25),
+  ('Maitom', 'Agora Terminal', 24, 59.00, 47.25),
+  ('Ala-e', 'Agora Terminal', 26, 63.50, 50.75),
+  ('Lonocan', 'Agora Terminal', 27, 65.50, 52.50),
+  ('San Miguel', 'Agora Terminal', 31, 74.50, 59.50),
+  ('Diclum', 'Agora Terminal', 35, 83.25, 66.50),
+  ('Manolo Fortich', 'Agora Terminal', 36, 85.50, 68.25)
+ON CONFLICT (route_from, route_to) DO NOTHING;
+
+-- ── 21.1. Seed: Baggage Fee Matrix Data ─────────────────────────────────────────────
+INSERT INTO baggage_fee_matrix (category, max_weight_kg, fee, remarks) VALUES
+  ('Free Carry-on', 7, 0, 'Included in passenger fare'),
+  ('Small', 10, 20, 'Fits under seat or overhead area'),
+  ('Medium', 20, 40, 'Stored in baggage compartment'),
+  ('Large', 30, 60, 'Requires larger storage space'),
+  ('Oversized', 31, 100, 'Subject to conductor approval')
+ON CONFLICT DO NOTHING;
+
+-- ── 22. Seed: Trip Schedule Data ─────────────────────────────────────────────────
+INSERT INTO trip_schedules (trip_number, arrival_time_start, arrival_time_end, departure_time_start, departure_time_end) VALUES
+  (1, '04:15:00', '04:25:00', '04:30:00', '04:30:00'),
+  (2, '04:45:00', '04:45:00', '05:15:00', '05:15:00'),
+  (3, '05:15:00', '05:15:00', '05:45:00', '05:45:00'),
+  (4, '05:40:00', '05:40:00', '06:10:00', '06:15:00'),
+  (5, '06:00:00', '06:00:00', '06:30:00', '06:35:00'),
+  (6, '06:20:00', '06:20:00', '06:50:00', '06:55:00'),
+  (7, '06:40:00', '06:40:00', '07:10:00', '07:15:00'),
+  (8, '07:00:00', '07:00:00', '07:30:00', '07:35:00'),
+  (9, '07:20:00', '07:20:00', '07:50:00', '07:55:00'),
+  (10, '07:40:00', '07:40:00', '08:10:00', '08:15:00')
+ON CONFLICT (trip_number) DO NOTHING;
+
+-- ── 23. Seed: Bus Schedule Data ───────────────────────────────────────────────────
+-- Get bus IDs for scheduling
+DO $$
+DECLARE
+  bus_1001_id UUID;
+  bus_1002_id UUID;
+  bus_1003_id UUID;
+  bus_1004_id UUID;
+  bus_1005_id UUID;
+  bus_1006_id UUID;
+  bus_1007_id UUID;
+  bus_1008_id UUID;
+  bus_1009_id UUID;
+  bus_1010_id UUID;
+BEGIN
+  SELECT id INTO bus_1001_id FROM buses WHERE bus_number = 1001;
+  SELECT id INTO bus_1002_id FROM buses WHERE bus_number = 1002;
+  SELECT id INTO bus_1003_id FROM buses WHERE bus_number = 1003;
+  SELECT id INTO bus_1004_id FROM buses WHERE bus_number = 1004;
+  SELECT id INTO bus_1005_id FROM buses WHERE bus_number = 1005;
+  SELECT id INTO bus_1006_id FROM buses WHERE bus_number = 1006;
+  SELECT id INTO bus_1007_id FROM buses WHERE bus_number = 1007;
+  SELECT id INTO bus_1008_id FROM buses WHERE bus_number = 1008;
+  SELECT id INTO bus_1009_id FROM buses WHERE bus_number = 1009;
+  SELECT id INTO bus_1010_id FROM buses WHERE bus_number = 1010;
+
+  -- Insert bus schedules for Day 1
+  INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
+    (bus_1007_id, 1, 1), (bus_1008_id, 1, 2), (bus_1005_id, 1, 3), (bus_1004_id, 1, 4),
+    (bus_1003_id, 1, 5), (bus_1002_id, 1, 6), (bus_1009_id, 1, 7), (bus_1010_id, 1, 8),
+    (bus_1001_id, 1, 9), (bus_1006_id, 1, 10)
+  ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
+
+  -- Insert bus schedules for Day 2
+  INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
+    (bus_1008_id, 2, 1), (bus_1005_id, 2, 2), (bus_1004_id, 2, 3), (bus_1003_id, 2, 4),
+    (bus_1002_id, 2, 5), (bus_1009_id, 2, 6), (bus_1010_id, 2, 7), (bus_1001_id, 2, 8),
+    (bus_1006_id, 2, 9), (bus_1007_id, 2, 10)
+  ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
+
+  -- Insert bus schedules for Day 3
+  INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
+    (bus_1005_id, 3, 1), (bus_1004_id, 3, 2), (bus_1003_id, 3, 3), (bus_1002_id, 3, 4),
+    (bus_1009_id, 3, 5), (bus_1010_id, 3, 6), (bus_1001_id, 3, 7), (bus_1006_id, 3, 8),
+    (bus_1007_id, 3, 9), (bus_1008_id, 3, 10)
+  ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
+
+  -- Insert bus schedules for Day 4
+  INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
+    (bus_1004_id, 4, 1), (bus_1003_id, 4, 2), (bus_1002_id, 4, 3), (bus_1009_id, 4, 4),
+    (bus_1010_id, 4, 5), (bus_1001_id, 4, 6), (bus_1006_id, 4, 7), (bus_1007_id, 4, 8),
+    (bus_1008_id, 4, 9), (bus_1005_id, 4, 10)
+  ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
+
+  -- Insert bus schedules for Day 5
+  INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
+    (bus_1003_id, 5, 1), (bus_1002_id, 5, 2), (bus_1009_id, 5, 3), (bus_1010_id, 5, 4),
+    (bus_1001_id, 5, 5), (bus_1006_id, 5, 6), (bus_1007_id, 5, 7), (bus_1008_id, 5, 8),
+    (bus_1005_id, 5, 9), (bus_1004_id, 5, 10)
+  ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
+
+  -- Insert bus schedules for Day 6
+  INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
+    (bus_1002_id, 6, 1), (bus_1009_id, 6, 2), (bus_1010_id, 6, 3), (bus_1001_id, 6, 4),
+    (bus_1006_id, 6, 5), (bus_1007_id, 6, 6), (bus_1008_id, 6, 7), (bus_1005_id, 6, 8),
+    (bus_1004_id, 6, 9), (bus_1003_id, 6, 10)
+  ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
+
+  -- Insert bus schedules for Day 7
+  INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
+    (bus_1009_id, 7, 1), (bus_1010_id, 7, 2), (bus_1001_id, 7, 3), (bus_1006_id, 7, 4),
+    (bus_1007_id, 7, 5), (bus_1008_id, 7, 6), (bus_1005_id, 7, 7), (bus_1004_id, 7, 8),
+    (bus_1003_id, 7, 9), (bus_1002_id, 7, 10)
+  ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
+
+  -- Insert bus schedules for Day 8
+  INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
+    (bus_1010_id, 8, 1), (bus_1001_id, 8, 2), (bus_1006_id, 8, 3), (bus_1007_id, 8, 4),
+    (bus_1008_id, 8, 5), (bus_1005_id, 8, 6), (bus_1004_id, 8, 7), (bus_1003_id, 8, 8),
+    (bus_1002_id, 8, 9), (bus_1009_id, 8, 10)
+  ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
+
+  -- Insert bus schedules for Day 9
+  INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
+    (bus_1001_id, 9, 1), (bus_1006_id, 9, 2), (bus_1007_id, 9, 3), (bus_1008_id, 9, 4),
+    (bus_1005_id, 9, 5), (bus_1004_id, 9, 6), (bus_1003_id, 9, 7), (bus_1002_id, 9, 8),
+    (bus_1009_id, 9, 9), (bus_1010_id, 9, 10)
+  ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
+
+  -- Insert bus schedules for Day 10
+  INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
+    (bus_1006_id, 10, 1), (bus_1007_id, 10, 2), (bus_1008_id, 10, 3), (bus_1005_id, 10, 4),
+    (bus_1004_id, 10, 5), (bus_1003_id, 10, 6), (bus_1002_id, 10, 7), (bus_1009_id, 10, 8),
+    (bus_1010_id, 10, 9), (bus_1001_id, 10, 10)
+  ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
+END $$;
+
+-- ── 24. Create Admin Test User Instructions ─────────────────────────────────────
 -- To create test users, follow these steps in the Supabase Dashboard:
 --
 -- 1. Go to Supabase Dashboard → Authentication → Users → Add user

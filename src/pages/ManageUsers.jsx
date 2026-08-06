@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { UserPlus, Search, Edit, Trash2, Shield, HeadphonesIcon, UserCheck, MoreVertical } from 'lucide-react';
+import { UserPlus, Search, Edit, Trash2, Shield, UserCheck, MoreVertical } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const ManageUsers = () => {
@@ -97,7 +97,7 @@ const ManageUsers = () => {
   const userTypes = [
     { id: 'all', label: 'All Users', icon: UserCheck },
     { id: 'admin', label: 'Admin', icon: Shield },
-    { id: 'cs_desk', label: 'Customer Service', icon: HeadphonesIcon },
+    { id: 'cs_desk', label: 'Customer Service', icon: UserCheck },
     { id: 'conductor', label: 'Conductors', icon: UserCheck },
   ];
 
@@ -111,7 +111,7 @@ const ManageUsers = () => {
     return (
       <div className="space-y-6">
         <h1 className="text-white text-3xl font-bold mb-2">Manage Users</h1>
-        <p className="text-white/60">Loading users...</p>
+        <p className="text-white/60">Loading...</p>
       </div>
     );
   }
@@ -121,7 +121,7 @@ const ManageUsers = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-white text-3xl font-bold mb-2">Manage Users</h1>
-          <p className="text-white/60">Manage admin, customer service, and conductor accounts</p>
+          <p className="text-white/60">Manage staff users and their roles</p>
         </div>
         <button
           onClick={() => setShowAddModal(true)}
@@ -132,87 +132,7 @@ const ManageUsers = () => {
         </button>
       </div>
 
-      <div className="glass-card p-6">
-        <div className="flex flex-wrap items-center gap-4 mb-6">
-          <div className="flex gap-2">
-            {userTypes.map((type) => {
-              const Icon = type.icon;
-              return (
-                <button
-                  key={type.id}
-                  onClick={() => setUserType(type.id)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-colors ${
-                    userType === type.id
-                      ? 'bg-orange-500 text-white'
-                      : 'bg-white/10 text-white/70 hover:bg-white/20'
-                  }`}
-                >
-                  <Icon size={18} />
-                  {type.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
-            <input
-              type="text"
-              placeholder="Search users..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500"
-            />
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="text-left text-white/60 border-b border-white/10">
-                <th className="pb-3 font-medium">Name</th>
-                <th className="pb-3 font-medium">Email</th>
-                <th className="pb-3 font-medium">Role</th>
-                <th className="pb-3 font-medium">Status</th>
-                <th className="pb-3 font-medium">Created</th>
-                <th className="pb-3 font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredUsers.map((user) => (
-                <tr key={user.id} className="border-b border-white/5 hover:bg-white/5">
-                  <td className="py-4 text-white font-medium">{user.full_name}</td>
-                  <td className="py-4 text-white/70">{user.email}</td>
-                  <td className="py-4">
-                    <span className={`px-3 py-1 rounded-full text-xs border ${roleColors[user.role]}`}>
-                      {user.role}
-                    </span>
-                  </td>
-                  <td className="py-4">
-                    <span className={`px-3 py-1 rounded-full text-xs ${statusColors[user.is_active ? 'active' : 'inactive']}`}>
-                      {user.is_active ? 'Active' : 'Inactive'}
-                    </span>
-                  </td>
-                  <td className="py-4 text-white/70 text-sm">
-                    {new Date(user.created_at).toLocaleDateString()}
-                  </td>
-                  <td className="py-4">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleToggleStatus(user.id, user.is_active)}
-                        className="text-white/70 hover:text-orange-400 transition-colors text-sm"
-                      >
-                        {user.is_active ? 'Deactivate' : 'Activate'}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
+      {/* Stats Section */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="glass-card p-6">
           <div className="flex items-center gap-3 mb-4">
@@ -229,7 +149,7 @@ const ManageUsers = () => {
         <div className="glass-card p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center">
-              <HeadphonesIcon className="w-6 h-6 text-blue-400" />
+              <UserCheck className="w-6 h-6 text-blue-400" />
             </div>
             <div>
               <p className="text-white/60 text-sm">Customer Service</p>
@@ -251,6 +171,75 @@ const ManageUsers = () => {
         </div>
       </div>
 
+      {/* Users Section */}
+      <div className="glass-card p-6">
+        <h2 className="text-white text-xl font-bold mb-4 flex items-center gap-2">
+          <UserCheck className="text-orange-400" />
+          Staff Users
+        </h2>
+        <div className="flex flex-wrap items-center gap-4 mb-4">
+          <div className="flex gap-2">
+            {userTypes.map((type) => {
+              const Icon = type.icon;
+              return (
+                <button
+                  key={type.id}
+                  onClick={() => setUserType(type.id)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                    userType === type.id
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-white/10 text-white/70 hover:bg-white/20'
+                  }`}
+                >
+                  <Icon size={16} />
+                  {type.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={18} />
+            <input
+              type="text"
+              placeholder="Search users..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500 text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-3 max-h-[500px] overflow-y-auto">
+          {filteredUsers.slice(0, 10).map((user) => (
+            <div key={user.id} className="bg-white/5 p-4 rounded-xl">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <p className="text-white font-medium">{user.full_name}</p>
+                  <p className="text-white/60 text-sm">{user.email}</p>
+                </div>
+                <span className={`px-2 py-1 rounded-full text-xs border ${roleColors[user.role]}`}>
+                  {user.role}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-white/70 text-sm mb-3">
+                <span className={`px-2 py-1 rounded text-xs ${user.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                  {user.is_active ? 'Active' : 'Inactive'}
+                </span>
+                <span className="text-white/60">{new Date(user.created_at).toLocaleDateString()}</span>
+              </div>
+              <button
+                onClick={() => handleToggleStatus(user.id, user.is_active)}
+                className="w-full px-3 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors"
+              >
+                {user.is_active ? 'Deactivate' : 'Activate'}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Add User Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="glass-card p-6 rounded-2xl w-full max-w-md">
@@ -277,6 +266,18 @@ const ManageUsers = () => {
                 />
               </div>
               <div>
+                <label className="text-white/60 text-sm mb-1 block">Role</label>
+                <select
+                  value={newUser.role}
+                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                >
+                  <option value="admin">Admin</option>
+                  <option value="cs_desk">Customer Service</option>
+                  <option value="conductor">Conductor</option>
+                </select>
+              </div>
+              <div>
                 <label className="text-white/60 text-sm mb-1 block">Password</label>
                 <input
                   type="password"
@@ -286,22 +287,13 @@ const ManageUsers = () => {
                   className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 />
               </div>
-              <div>
-                <label className="text-white/60 text-sm mb-1 block">Role</label>
-                <select
-                  value={newUser.role}
-                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                >
-                  <option value="conductor">Conductor</option>
-                  <option value="cs_desk">CS Desk</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
               <div className="flex gap-3 justify-end">
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(false)}
+                  onClick={() => {
+                    setShowAddModal(false);
+                    setNewUser({ email: '', full_name: '', role: 'conductor', password: '' });
+                  }}
                   className="px-4 py-2 rounded-xl text-white/60 hover:text-white transition-colors"
                 >
                   Cancel
