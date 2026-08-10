@@ -201,8 +201,37 @@ CREATE TABLE IF NOT EXISTS transactions (
   amount           NUMERIC(10,2)    NOT NULL,
   channel          TEXT             NOT NULL, -- 'qr_card', 'temp_ticket', 'cash', 'card'
   staff_id         UUID             REFERENCES staff_users (id),
-  created_at       TIMESTAMPTZ      NOT NULL DEFAULT NOW()
+  created_at       TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
+  -- Baggage-related columns
+  baggage_category TEXT,
+  baggage_weight   NUMERIC(10,2),
+  baggage_fee      NUMERIC(10,2)
 );
+
+-- Add baggage columns to existing transactions table if they don't exist
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'transactions' AND column_name = 'baggage_category'
+  ) THEN
+    ALTER TABLE transactions ADD COLUMN baggage_category TEXT;
+  END IF;
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'transactions' AND column_name = 'baggage_weight'
+  ) THEN
+    ALTER TABLE transactions ADD COLUMN baggage_weight NUMERIC(10,2);
+  END IF;
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'transactions' AND column_name = 'baggage_fee'
+  ) THEN
+    ALTER TABLE transactions ADD COLUMN baggage_fee NUMERIC(10,2);
+  END IF;
+END $$;
 
 -- ── 7. Passenger Counts ───────────────────────────────────────────────────────
 -- Records periodic headcount snapshots (manual + AI-assisted) for video monitoring.
@@ -346,12 +375,6 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS update_emergency_contacts_updated_at_trigger ON emergency_contacts;
-CREATE TRIGGER update_emergency_contacts_updated_at_trigger
-  BEFORE UPDATE ON emergency_contacts
-  FOR EACH ROW
-  EXECUTE FUNCTION update_emergency_contacts_updated_at();
 
 DROP TRIGGER IF EXISTS update_emergency_contacts_updated_at_trigger ON emergency_contacts;
 CREATE TRIGGER update_emergency_contacts_updated_at_trigger
@@ -864,7 +887,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- ── 18. Indexes for Performance ───────────────────────────────────────────────
+-- ── 25. Indexes for Performance ───────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_trips_conductor_status
   ON trips(conductor_id, status) WHERE status = 'in_progress';
 
@@ -1013,7 +1036,7 @@ CREATE INDEX IF NOT EXISTS idx_bus_schedules_day_trip
 CREATE INDEX IF NOT EXISTS idx_trip_schedules_trip_number
   ON trip_schedules(trip_number);
 
--- ── 25. Realtime Publications ─────────────────────────────────────────────────
+-- ── 26. Realtime Publications ─────────────────────────────────────────────────
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_publication_tables
@@ -1099,7 +1122,7 @@ END $$;
 -- Schema complete.
 -- ============================================================
 
--- ── 26. Seed: Test Bus Data ───────────────────────────────────────────────────
+-- ── 27. Seed: Test Bus Data ───────────────────────────────────────────────────
 INSERT INTO buses (plate_number, bus_number, route, seat_capacity, status) VALUES
   ('BUS-001', 1001, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
   ('BUS-002', 1002, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
@@ -1117,7 +1140,7 @@ ON CONFLICT (plate_number) DO UPDATE SET
   seat_capacity = EXCLUDED.seat_capacity,
   status = EXCLUDED.status;
 
--- ── 27. Seed: Fare Matrix Data ─────────────────────────────────────────────────
+-- ── 28. Seed: Fare Matrix Data ─────────────────────────────────────────────────
 INSERT INTO fare_matrix (route_from, route_to, km_distance, regular_fare, discounted_fare) VALUES
   ('Agora Terminal', 'Puerto', 13, 34.75, 27.75),
   ('Agora Terminal', 'Ba-e', 16, 41.50, 33.00),
@@ -1139,7 +1162,7 @@ INSERT INTO fare_matrix (route_from, route_to, km_distance, regular_fare, discou
   ('Manolo Fortich', 'Agora Terminal', 36, 85.50, 68.25)
 ON CONFLICT (route_from, route_to) DO NOTHING;
 
--- ── 27.1. Seed: Baggage Fee Matrix Data ─────────────────────────────────────────────
+-- ── 28.1. Seed: Baggage Fee Matrix Data ─────────────────────────────────────────────
 INSERT INTO baggage_fee_matrix (category, max_weight_kg, fee, remarks) VALUES
   ('Free Carry-on', 7, 0, 'Included in passenger fare'),
   ('Small', 10, 20, 'Fits under seat or overhead area'),
@@ -1148,7 +1171,7 @@ INSERT INTO baggage_fee_matrix (category, max_weight_kg, fee, remarks) VALUES
   ('Oversized', 31, 100, 'Subject to conductor approval')
 ON CONFLICT DO NOTHING;
 
--- ── 28. Seed: Trip Schedule Data ─────────────────────────────────────────────────
+-- ── 29. Seed: Trip Schedule Data ─────────────────────────────────────────────────
 INSERT INTO trip_schedules (trip_number, arrival_time_start, arrival_time_end, departure_time_start, departure_time_end) VALUES
   (1, '04:15:00', '04:25:00', '04:30:00', '04:30:00'),
   (2, '04:45:00', '04:45:00', '05:15:00', '05:15:00'),
@@ -1162,7 +1185,7 @@ INSERT INTO trip_schedules (trip_number, arrival_time_start, arrival_time_end, d
   (10, '07:40:00', '07:40:00', '08:10:00', '08:15:00')
 ON CONFLICT (trip_number) DO NOTHING;
 
--- ── 29. Seed: Bus Schedule Data ───────────────────────────────────────────────────
+-- ── 30. Seed: Bus Schedule Data ───────────────────────────────────────────────────
 -- Get bus IDs for scheduling
 DO $$
 DECLARE
@@ -1259,7 +1282,7 @@ BEGIN
   ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
 END $$;
 
--- ── 30. Create Admin Test User Instructions ─────────────────────────────────────
+-- ── 31. Create Admin Test User Instructions ─────────────────────────────────────
 -- To create test users, follow these steps in the Supabase Dashboard:
 --
 -- 1. Go to Supabase Dashboard → Authentication → Users → Add user
@@ -1282,3 +1305,68 @@ END $$;
 -- 5. Repeat for CS Desk:
 --    Email: csdesk@commutai.test  Password: CSDesk123!
 --    Role: cs_desk
+
+-- ── 32. Maintenance & Utility Queries ──────────────────────────────────────────────
+-- These queries can be run as needed for maintenance tasks
+
+-- ── 32.1. Update Staff User Roles ──────────────────────────────────────────────────
+-- Update a specific user's role to customer service desk
+-- UPDATE staff_users 
+-- SET role = 'cs_desk' 
+-- WHERE id = '1654f098-c2b0-4ab3-9f59-6cf6fb2fafba';
+
+-- Update all admin users to cs_desk (run this to convert all admins to customer service desk)
+-- UPDATE staff_users 
+-- SET role = 'cs_desk' 
+-- WHERE role = 'admin';
+
+-- ── 32.2. Fix Inconsistent Card Data ────────────────────────────────────────────────
+-- Fix card data inconsistencies (run as needed when card data becomes inconsistent)
+
+-- Fix specific card (SC-170-60-383 - should be Student)
+-- UPDATE qr_cards 
+-- SET 
+--   passenger_type = 'student',
+--   card_type = 'student',
+--   allowed_routes = ARRAY['type:Student']
+-- WHERE card_uid = 'SC-170-60-383';
+
+-- Fix incorrectly formatted card (CARDMSJVQL2G - incorrect format, should be RC- format)
+-- UPDATE qr_cards 
+-- SET 
+--   card_uid = 'RC-' || substr(md5(random()::text), 1, 3) || '-' || substr(md5(random()::text), 4, 2) || '-' || substr(md5(random()::text), 6, 3),
+--   passenger_type = 'regular',
+--   card_type = 'regular',
+--   allowed_routes = ARRAY['type:Regular']
+-- WHERE card_uid = 'CARDMSJVQL2G';
+
+-- Fix specific card (SC-787-07-359 - should be Student, not regular)
+-- UPDATE qr_cards 
+-- SET 
+--   passenger_type = 'student',
+--   card_type = 'student',
+--   allowed_routes = ARRAY['type:Student']
+-- WHERE card_uid = 'SC-787-07-359';
+
+-- ── 32.3. System Admin Role Management ────────────────────────────────────────────────
+-- These queries help manage system admin access and permissions
+
+-- Grant admin role to a specific user
+-- UPDATE staff_users 
+-- SET role = 'admin' 
+-- WHERE id = '<user-uuid-here>';
+
+-- Remove admin role from a specific user (convert to cs_desk)
+-- UPDATE staff_users 
+-- SET role = 'cs_desk' 
+-- WHERE id = '<user-uuid-here>';
+
+-- List all admin users
+-- SELECT id, full_name, email, role, is_active, created_at 
+-- FROM staff_users 
+-- WHERE role = 'admin';
+
+-- List all users with their roles
+-- SELECT id, full_name, email, role, is_active, created_at 
+-- FROM staff_users 
+-- ORDER BY role, full_name;
