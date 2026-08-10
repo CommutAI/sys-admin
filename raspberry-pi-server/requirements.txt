@@ -7,3 +7,8 @@ uvicorn[standard]==0.32.0
 websockets==13.1
 pillow==10.1.0
 pybase64==1.4.0
+supabase==2.3.4
+pyserial==3.5
+requests==2.31.0
+RPi.GPIO==0.7.1
+gps==3.10

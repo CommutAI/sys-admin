@@ -1,13 +1,11 @@
 import { useState, useEffect } from 'react';
-import { CreditCard, Ticket, ArrowLeftRight, Plus, Search, Filter, Edit, X, MoreHorizontal, HeadphonesIcon, Smartphone, TrendingUp } from 'lucide-react';
+import { CreditCard, Ticket, Plus, Search, Filter, Edit, X, MoreHorizontal, HeadphonesIcon, TrendingUp } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const CardManagement = () => {
   const [activeTab, setActiveTab] = useState('qr-cards');
   const [qrCards, setQrCards] = useState([]);
   const [tempTickets, setTempTickets] = useState([]);
-  const [transactions, setTransactions] = useState([]);
-  const [gcashTransactions, setGcashTransactions] = useState([]);
   const [customerServiceLogs, setCustomerServiceLogs] = useState([]);
   const [cardSalesStats, setCardSalesStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -29,10 +27,6 @@ const CardManagement = () => {
         await fetchQrCards();
       } else if (activeTab === 'temp-tickets') {
         await fetchTempTickets();
-      } else if (activeTab === 'transactions') {
-        await fetchTransactions();
-      } else if (activeTab === 'payment-transactions') {
-        await fetchGcashTransactions();
       } else if (activeTab === 'customer-service') {
         await fetchCustomerServiceLogs();
       }
@@ -61,24 +55,6 @@ const CardManagement = () => {
     setTempTickets(data || []);
   };
 
-  const fetchTransactions = async () => {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*, staff:staff_users(*)')
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    setTransactions(data || []);
-  };
-
-  const fetchGcashTransactions = async () => {
-    const { data, error } = await supabase
-      .from('gcash_transactions')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    setGcashTransactions(data || []);
-  };
-
   const fetchCustomerServiceLogs = async () => {
     const { data, error } = await supabase
       .from('customer_service_logs')
@@ -104,8 +80,6 @@ const CardManagement = () => {
   const tabs = [
     { id: 'qr-cards', label: 'QR Cards', icon: CreditCard },
     { id: 'temp-tickets', label: 'Temporary Tickets', icon: Ticket },
-    { id: 'transactions', label: 'Transactions', icon: ArrowLeftRight },
-    { id: 'payment-transactions', label: 'Payment Transactions', icon: Smartphone },
     { id: 'customer-service', label: 'Customer Service', icon: HeadphonesIcon },
   ];
 
@@ -120,18 +94,6 @@ const CardManagement = () => {
     issued: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
     validated: 'bg-green-500/20 text-green-400 border-green-500/50',
     expired: 'bg-red-500/20 text-red-400 border-red-500/50',
-  };
-
-  const transactionTypeColors = {
-    fare_validation: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
-    balance_topup: 'bg-green-500/20 text-green-400 border-green-500/50',
-    card_issuance: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
-  };
-
-  const gcashStatusColors = {
-    completed: 'bg-green-500/20 text-green-400 border-green-500/50',
-    failed: 'bg-red-500/20 text-red-400 border-red-500/50',
-    pending: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50',
   };
 
   const csActionColors = {
@@ -165,20 +127,6 @@ const CardManagement = () => {
     return matchesSearch && matchesStatus;
   });
 
-  const filteredTransactions = transactions.filter(transaction => {
-    const matchesSearch = transaction.channel?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         transaction.staff?.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = filterStatus === 'all' || transaction.type === filterStatus;
-    return matchesSearch && matchesType;
-  });
-
-  const filteredGcashTransactions = gcashTransactions.filter(transaction => {
-    const matchesSearch = transaction.phone_number?.includes(searchTerm) ||
-                         transaction.stripe_payment_id?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = filterStatus === 'all' || transaction.status === filterStatus;
-    return matchesSearch && matchesStatus;
-  });
-
   const filteredCustomerServiceLogs = customerServiceLogs.filter(log => {
     const matchesSearch = log.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          log.handler?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -201,7 +149,7 @@ const CardManagement = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-white text-3xl font-bold mb-2">Card Management</h1>
-          <p className="text-white/60">Manage QR cards, temporary tickets, transactions, payments, and customer service</p>
+          <p className="text-white/60">Manage QR cards, temporary tickets, and customer service</p>
         </div>
         <button
           onClick={() => setShowAddModal(true)}
@@ -234,28 +182,6 @@ const CardManagement = () => {
           </div>
           <p className="text-white text-xl font-bold">{tempTickets.length}</p>
           <p className="text-white/40 text-xs">Validated: {tempTickets.filter(t => t.status === 'validated').length}</p>
-        </div>
-
-        <div className="glass-card p-4 border border-green-500/30">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
-              <ArrowLeftRight className="w-4 h-4 text-green-400" />
-            </div>
-            <p className="text-white/60 text-xs">Transactions</p>
-          </div>
-          <p className="text-white text-xl font-bold">{transactions.length}</p>
-          <p className="text-white/40 text-xs">Today: {transactions.filter(t => new Date(t.created_at) > new Date().setHours(0,0,0,0)).length}</p>
-        </div>
-
-        <div className="glass-card p-4 border border-cyan-500/30">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-8 h-8 bg-cyan-500/20 rounded-lg flex items-center justify-center">
-              <Smartphone className="w-4 h-4 text-cyan-400" />
-            </div>
-            <p className="text-white/60 text-xs">Payment Tx</p>
-          </div>
-          <p className="text-white text-xl font-bold">{gcashTransactions.length}</p>
-          <p className="text-white/40 text-xs">Completed: {gcashTransactions.filter(t => t.status === 'completed').length}</p>
         </div>
 
         <div className="glass-card p-4 border border-orange-500/30">
@@ -317,8 +243,6 @@ const CardManagement = () => {
               type="text"
               placeholder={activeTab === 'qr-cards' ? 'Search by card UID or owner name...' :
                        activeTab === 'temp-tickets' ? 'Search by ticket UID or passenger ID...' :
-                       activeTab === 'transactions' ? 'Search by channel or staff name...' :
-                       activeTab === 'payment-transactions' ? 'Search by phone number or payment ID...' :
                        'Search by description, handler, or bus...'}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -350,20 +274,6 @@ const CardManagement = () => {
                 <option value="issued">Issued</option>
                 <option value="validated">Validated</option>
                 <option value="expired">Expired</option>
-              </>
-            )}
-            {activeTab === 'transactions' && (
-              <>
-                <option value="fare_validation">Fare Validation</option>
-                <option value="balance_topup">Balance Top-up</option>
-                <option value="card_issuance">Card Issuance</option>
-              </>
-            )}
-            {activeTab === 'payment-transactions' && (
-              <>
-                <option value="completed">Completed</option>
-                <option value="failed">Failed</option>
-                <option value="pending">Pending</option>
               </>
             )}
             {activeTab === 'customer-service' && (
@@ -488,102 +398,6 @@ const CardManagement = () => {
                   <tr>
                     <td colSpan="8" className="py-8 text-center text-white/60">
                       No temporary tickets found
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Transactions Table */}
-        {activeTab === 'transactions' && (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="text-left text-white/60 border-b border-white/10">
-                  <th className="pb-3 font-medium">Type</th>
-                  <th className="pb-3 font-medium">Amount</th>
-                  <th className="pb-3 font-medium">Channel</th>
-                  <th className="pb-3 font-medium">Staff</th>
-                  <th className="pb-3 font-medium">Created At</th>
-                  <th className="pb-3 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTransactions.length > 0 ? (
-                  filteredTransactions.map((transaction) => (
-                    <tr key={transaction.id} className="border-b border-white/5 hover:bg-white/5">
-                      <td className="py-4">
-                        <span className={`px-3 py-1 rounded-full text-xs border ${transactionTypeColors[transaction.type]}`}>
-                          {transaction.type.replace('_', ' ')}
-                        </span>
-                      </td>
-                      <td className="py-4 text-white font-medium">₱{parseFloat(transaction.amount).toFixed(2)}</td>
-                      <td className="py-4 text-white/70">{transaction.channel}</td>
-                      <td className="py-4 text-white/70">{transaction.staff?.full_name || 'N/A'}</td>
-                      <td className="py-4 text-white/70 text-sm">
-                        {new Date(transaction.created_at).toLocaleString()}
-                      </td>
-                      <td className="py-4">
-                        <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-                          <MoreHorizontal size={16} className="text-white/70" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan="6" className="py-8 text-center text-white/60">
-                      No transactions found
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Payment Transactions Table */}
-        {activeTab === 'payment-transactions' && (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="text-left text-white/60 border-b border-white/10">
-                  <th className="pb-3 font-medium">Date</th>
-                  <th className="pb-3 font-medium">Phone Number</th>
-                  <th className="pb-3 font-medium">Amount</th>
-                  <th className="pb-3 font-medium">Status</th>
-                  <th className="pb-3 font-medium">Payment ID</th>
-                  <th className="pb-3 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredGcashTransactions.length > 0 ? (
-                  filteredGcashTransactions.map((transaction) => (
-                    <tr key={transaction.id} className="border-b border-white/5 hover:bg-white/5">
-                      <td className="py-4 text-white/70 text-sm">
-                        {new Date(transaction.created_at).toLocaleString()}
-                      </td>
-                      <td className="py-4 text-white font-medium">{transaction.phone_number}</td>
-                      <td className="py-4 text-white font-medium">₱{parseFloat(transaction.amount).toFixed(2)}</td>
-                      <td className="py-4">
-                        <span className={`px-3 py-1 rounded-full text-xs border ${gcashStatusColors[transaction.status]}`}>
-                          {transaction.status}
-                        </span>
-                      </td>
-                      <td className="py-4 text-white/70 text-sm">{transaction.stripe_payment_id || 'N/A'}</td>
-                      <td className="py-4">
-                        <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-                          <MoreHorizontal size={16} className="text-white/70" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan="6" className="py-8 text-center text-white/60">
-                      No payment transactions found
                     </td>
                   </tr>
                 )}

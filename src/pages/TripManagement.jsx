@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench } from 'lucide-react';
+import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const TripManagement = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [trips, setTrips] = useState([]);
-  const [conductors, setConductors] = useState([]);
   const [buses, setBuses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedTrip, setSelectedTrip] = useState(null);
@@ -17,6 +16,22 @@ const TripManagement = () => {
     conductor_id: '',
     current_lat: 14.5995,
     current_lng: 120.9842
+  });
+
+  // Trip history state
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyPeriod, setHistoryPeriod] = useState('daily'); // daily, weekly, monthly, yearly, custom
+  const [historyData, setHistoryData] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyStats, setHistoryStats] = useState({
+    totalTrips: 0,
+    totalPassengers: 0,
+    avgPassengers: 0,
+    totalDistance: 0
+  });
+  const [customDateRange, setCustomDateRange] = useState({
+    startDate: '',
+    endDate: ''
   });
 
   // Bus management state
@@ -34,7 +49,6 @@ const TripManagement = () => {
 
   useEffect(() => {
     fetchTrips();
-    fetchConductors();
     fetchBuses();
     
     // Set up real-time subscription for trips
@@ -73,21 +87,6 @@ const TripManagement = () => {
       console.error('Error fetching trips:', error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchConductors = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('staff_users')
-        .select('*')
-        .eq('role', 'conductor')
-        .eq('is_active', true);
-
-      if (error) throw error;
-      setConductors(data || []);
-    } catch (error) {
-      console.error('Error fetching conductors:', error);
     }
   };
 
@@ -238,6 +237,99 @@ const TripManagement = () => {
     }
   };
 
+  // Trip history functions
+  const fetchTripHistory = async (period) => {
+    try {
+      setHistoryLoading(true);
+      let startDate, endDate;
+      const now = new Date();
+
+      switch (period) {
+        case 'daily':
+          startDate = new Date(now.setHours(0, 0, 0, 0));
+          endDate = new Date();
+          break;
+        case 'weekly':
+          startDate = new Date(now.setDate(now.getDate() - 7));
+          endDate = new Date();
+          break;
+        case 'monthly':
+          startDate = new Date(now.setMonth(now.getMonth() - 1));
+          endDate = new Date();
+          break;
+        case 'yearly':
+          startDate = new Date(now.setFullYear(now.getFullYear() - 1));
+          endDate = new Date();
+          break;
+        case 'custom':
+          if (customDateRange.startDate && customDateRange.endDate) {
+            startDate = new Date(customDateRange.startDate);
+            startDate.setHours(0, 0, 0, 0);
+            endDate = new Date(customDateRange.endDate);
+            endDate.setHours(23, 59, 59, 999);
+          } else {
+            startDate = new Date(now.setHours(0, 0, 0, 0));
+            endDate = new Date();
+          }
+          break;
+        default:
+          startDate = new Date(now.setHours(0, 0, 0, 0));
+          endDate = new Date();
+      }
+
+      let query = supabase
+        .from('trips')
+        .select('*, buses(*), conductor_staff:staff_users!conductor_id(*), passenger_counts(count)')
+        .gte('started_at', startDate.toISOString())
+        .order('started_at', { ascending: false });
+
+      if (endDate) {
+        query = query.lte('started_at', endDate.toISOString());
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+      setHistoryData(data || []);
+
+      // Calculate statistics
+      const stats = {
+        totalTrips: data?.length || 0,
+        totalPassengers: 0,
+        avgPassengers: 0,
+        totalDistance: 0
+      };
+
+      if (data && data.length > 0) {
+        const allPassengerCounts = data.flatMap(trip => 
+          trip.passenger_counts?.map(pc => pc.count) || []
+        );
+        stats.totalPassengers = allPassengerCounts.reduce((sum, count) => sum + count, 0);
+        stats.avgPassengers = allPassengerCounts.length > 0 
+          ? Math.round(stats.totalPassengers / allPassengerCounts.length)
+          : 0;
+      }
+
+      setHistoryStats(stats);
+    } catch (error) {
+      console.error('Error fetching trip history:', error);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const handleHistoryPeriodChange = (period) => {
+    setHistoryPeriod(period);
+    fetchTripHistory(period);
+  };
+
+  const toggleHistoryView = () => {
+    setShowHistory(!showHistory);
+    if (!showHistory) {
+      fetchTripHistory(historyPeriod);
+    }
+  };
+
   const filteredTrips = trips.filter(trip => {
     const matchesSearch = trip.buses?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          trip.buses?.route?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -363,15 +455,172 @@ const TripManagement = () => {
           <h1 className="text-white text-3xl font-bold mb-2">Trip & Bus Management</h1>
           <p className="text-white/60">Monitor trips and manage bus fleet</p>
         </div>
-        <button
-          onClick={() => setShowAddBusModal(true)}
-          className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
-        >
-          <Plus size={20} />
-          Add Bus
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={toggleHistoryView}
+            className={`px-4 py-2 rounded-xl flex items-center gap-2 transition-colors ${
+              showHistory 
+                ? 'bg-orange-500 hover:bg-orange-600 text-white' 
+                : 'bg-white/10 hover:bg-white/20 text-white'
+            }`}
+          >
+            {showHistory ? <ArrowLeft size={20} /> : <BarChart3 size={20} />}
+            {showHistory ? 'Back to Trips' : 'Trip History'}
+          </button>
+          <button
+            onClick={() => setShowAddBusModal(true)}
+            className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+          >
+            <Plus size={20} />
+            Add Bus
+          </button>
+        </div>
       </div>
 
+      {/* Trip History View */}
+      {showHistory && (
+        <div className="space-y-6">
+          {/* Period Selector */}
+          <div className="glass-card p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-white text-xl font-bold flex items-center gap-2">
+                <Calendar className="text-orange-400" />
+                Trip History
+              </h2>
+              <div className="flex gap-2">
+                {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((period) => (
+                  <button
+                    key={period}
+                    onClick={() => handleHistoryPeriodChange(period)}
+                    className={`px-4 py-2 rounded-lg capitalize transition-colors ${
+                      historyPeriod === period
+                        ? 'bg-orange-500 text-white'
+                        : 'bg-white/10 text-white hover:bg-white/20'
+                    }`}
+                  >
+                    {period}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Custom Date Range Picker */}
+            {historyPeriod === 'custom' && (
+              <div className="mt-6 mb-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                  <label className="text-white/60 text-sm mb-2 block">Start Date</label>
+                  <input
+                    type="date"
+                    value={customDateRange.startDate}
+                    onChange={(e) => setCustomDateRange({...customDateRange, startDate: e.target.value})}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-white/60 text-sm mb-2 block">End Date</label>
+                  <input
+                    type="date"
+                    value={customDateRange.endDate}
+                    onChange={(e) => setCustomDateRange({...customDateRange, endDate: e.target.value})}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    onClick={() => fetchTripHistory('custom')}
+                    className="w-full px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors"
+                  >
+                    Apply Filter
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Statistics Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-white/5 p-4 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <Bus className="text-orange-400" size={20} />
+                  <span className="text-white/60 text-sm">Total Trips</span>
+                </div>
+                <p className="text-white text-2xl font-bold">{historyStats.totalTrips}</p>
+              </div>
+              <div className="bg-white/5 p-4 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <Users className="text-green-400" size={20} />
+                  <span className="text-white/60 text-sm">Total Passengers</span>
+                </div>
+                <p className="text-white text-2xl font-bold">{historyStats.totalPassengers}</p>
+              </div>
+              <div className="bg-white/5 p-4 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingUp className="text-blue-400" size={20} />
+                  <span className="text-white/60 text-sm">Avg Passengers</span>
+                </div>
+                <p className="text-white text-2xl font-bold">{historyStats.avgPassengers}</p>
+              </div>
+              <div className="bg-white/5 p-4 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <Clock className="text-purple-400" size={20} />
+                  <span className="text-white/60 text-sm">Period</span>
+                </div>
+                <p className="text-white text-2xl font-bold capitalize">{historyPeriod}</p>
+              </div>
+            </div>
+
+            {/* History Table */}
+            {historyLoading ? (
+              <div className="text-center py-8">
+                <p className="text-white/60">Loading trip history...</p>
+              </div>
+            ) : historyData.length === 0 ? (
+              <div className="text-center py-8">
+                <p className="text-white/60">No trips found for this period</p>
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                {historyData.map((trip) => (
+                  <div key={trip.id} className="bg-white/5 p-4 rounded-xl">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <p className="text-white font-medium">{trip.buses?.plate_number || 'N/A'}</p>
+                        <p className="text-white/60 text-sm">{trip.buses?.route || 'N/A'}</p>
+                      </div>
+                      <span className={`px-2 py-1 rounded-full text-xs border ${statusColors[trip.status]}`}>
+                        {trip.status.replace('_', ' ')}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-white/70 text-sm mb-2">
+                      <User size={14} />
+                      <span>{trip.conductor_staff?.full_name || 'N/A'}</span>
+                    </div>
+                    <div className="flex items-center gap-4 text-white/60 text-sm mb-3">
+                      <div className="flex items-center gap-1">
+                        <Clock size={14} />
+                        <span>{new Date(trip.started_at).toLocaleString()}</span>
+                      </div>
+                      {trip.passenger_counts && trip.passenger_counts.length > 0 && (
+                        <div className="flex items-center gap-1">
+                          <Users size={14} />
+                          <span>{trip.passenger_counts[0].count} passengers</span>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => openViewModal(trip)}
+                      className="w-full px-3 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors"
+                    >
+                      View Details
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!showHistory && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Trips Section */}
         <div className="glass-card p-6">
@@ -521,32 +770,10 @@ const TripManagement = () => {
           </div>
         </div>
       </div>
-
-      {/* Active Conductors */}
-      <div className="glass-card p-6">
-        <h2 className="text-white text-xl font-bold mb-4 flex items-center gap-2">
-          <User className="text-orange-400" />
-          Active Conductors
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {conductors.map((conductor) => (
-            <div key={conductor.id} className="bg-white/5 p-4 rounded-xl flex justify-between items-center">
-              <div>
-                <p className="text-white font-medium">{conductor.full_name}</p>
-                <p className="text-white/60 text-sm">{conductor.email}</p>
-              </div>
-              <div className="text-right">
-                <span className={`px-2 py-1 rounded text-xs ${conductor.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-                  {conductor.is_active ? 'Active' : 'Inactive'}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      )}
 
       {/* Edit Trip Modal - GPS Location Update */}
-      {showEditModal && selectedTrip && (
+      {!showHistory && showEditModal && selectedTrip && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="glass-card p-6 rounded-2xl w-full max-w-md">
             <h2 className="text-white text-xl font-bold mb-4">Update GPS Location</h2>
@@ -672,7 +899,7 @@ const TripManagement = () => {
       )}
 
       {/* Add/Edit Bus Modal */}
-      {(showAddBusModal || editingBus) && (
+      {!showHistory && (showAddBusModal || editingBus) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="glass-card p-6 rounded-2xl w-full max-w-md">
             <h2 className="text-white text-xl font-bold mb-4">

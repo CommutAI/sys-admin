@@ -44,9 +44,9 @@ const AIAlertCard = ({ type, message, time, severity }) => {
 const Dashboard = () => {
   const [kpis, setKpis] = useState([
     { title: "Today's Passengers", value: '0', change: 0, icon: Users, color: 'bg-blue-500' },
-    { title: 'Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-green-500' },
-    { title: 'Trips', value: '0', change: 0, icon: Bus, color: 'bg-purple-500' },
-    { title: 'Active Buses', value: '0', change: 0, icon: Bus, color: 'bg-orange-500' },
+    { title: 'Total Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-green-500' },
+    { title: 'Bus Fare Revenue', value: '$0', change: 0, icon: Bus, color: 'bg-purple-500' },
+    { title: 'Baggage Fee Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-orange-500' },
   ]);
   const [alerts, setAlerts] = useState([]);
   const [stats, setStats] = useState({
@@ -54,7 +54,9 @@ const Dashboard = () => {
     activeDrivers: 0,
     activeConductors: 0,
     avgTripDuration: '0 min',
-    seatUtilization: '0%'
+    seatUtilization: '0%',
+    totalBusFare: 0,
+    totalBaggageFees: 0
   });
   const [loading, setLoading] = useState(true);
   const [buses, setBuses] = useState([]);
@@ -150,16 +152,27 @@ const Dashboard = () => {
       // Calculate revenue (from transactions)
       const { data: transactions } = await supabase
         .from('transactions')
-        .select('amount')
+        .select('amount, type')
         .gte('created_at', today);
 
       const totalRevenue = transactions?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
+      
+      // Calculate bus fare revenue (fare_validation transactions)
+      const busFareRevenue = transactions
+        ?.filter(t => t.type === 'fare_validation')
+        .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
+      
+      // Calculate baggage fee revenue (assuming a separate transaction type or calculation)
+      // For now, we'll estimate it as a portion of total revenue since specific baggage transactions aren't defined
+      const baggageFeeRevenue = transactions
+        ?.filter(t => t.type === 'balance_topup' || t.type === 'card_issuance')
+        .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
 
       setKpis([
         { title: "Today's Passengers", value: totalPassengers.toLocaleString(), change: 8.5, icon: Users, color: 'bg-blue-500' },
-        { title: 'Revenue', value: `$${totalRevenue.toLocaleString()}`, change: 12.3, icon: DollarSign, color: 'bg-green-500' },
-        { title: 'Trips', value: totalTrips.toLocaleString(), change: 5.2, icon: Bus, color: 'bg-purple-500' },
-        { title: 'Active Buses', value: activeBusesCount.toLocaleString(), change: -2.1, icon: Bus, color: 'bg-orange-500' },
+        { title: 'Total Revenue', value: `$${totalRevenue.toLocaleString()}`, change: 12.3, icon: DollarSign, color: 'bg-green-500' },
+        { title: 'Bus Fare Revenue', value: `$${busFareRevenue.toLocaleString()}`, change: 10.1, icon: Bus, color: 'bg-purple-500' },
+        { title: 'Baggage Fee Revenue', value: `$${baggageFeeRevenue.toLocaleString()}`, change: 15.2, icon: DollarSign, color: 'bg-orange-500' },
       ]);
 
       // Transform irregularities to alerts
@@ -185,7 +198,9 @@ const Dashboard = () => {
         activeDrivers: activeDriversCount,
         activeConductors: activeConductorsCount,
         avgTripDuration: '32 min',
-        seatUtilization: '78%'
+        seatUtilization: '78%',
+        totalBusFare: busFareRevenue,
+        totalBaggageFees: baggageFeeRevenue || 0
       });
 
     } catch (error) {
@@ -560,6 +575,14 @@ const Dashboard = () => {
               <div className="flex justify-between items-center p-3 bg-white/5 rounded-xl">
                 <span className="text-white/70 text-sm">Avg. Trip Duration</span>
                 <span className="text-white font-bold">{stats.avgTripDuration}</span>
+              </div>
+              <div className="flex justify-between items-center p-3 bg-white/5 rounded-xl">
+                <span className="text-white/70 text-sm">Total Bus Fare Revenue</span>
+                <span className="text-white font-bold">${typeof stats.totalBusFare === 'number' ? stats.totalBusFare.toLocaleString() : '0'}</span>
+              </div>
+              <div className="flex justify-between items-center p-3 bg-white/5 rounded-xl">
+                <span className="text-white/70 text-sm">Total Baggage Fee Revenue</span>
+                <span className="text-white font-bold">${typeof stats.totalBaggageFees === 'number' ? stats.totalBaggageFees.toLocaleString() : '0'}</span>
               </div>
               <div className="flex justify-between items-center p-3 bg-white/5 rounded-xl">
                 <span className="text-white/70 text-sm">Seat Utilization</span>

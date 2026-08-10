@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, Download, Calendar, TrendingUp, Users, DollarSign, Bus, Activity, ArrowUp, ArrowDown } from 'lucide-react';
+import { FileText, Download, Calendar, TrendingUp, Users, DollarSign, Bus, Activity, ArrowUp, ArrowDown, ArrowLeftRight, Search, Filter, MoreHorizontal } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -18,6 +18,18 @@ const Reports = () => {
     tripGrowth: 0,
   });
   const [recentActivity, setRecentActivity] = useState([]);
+  
+  // Transaction state
+  const [transactions, setTransactions] = useState([]);
+  const [transactionSearchTerm, setTransactionSearchTerm] = useState('');
+  const [transactionFilterType, setTransactionFilterType] = useState('all');
+  const [showTransactions, setShowTransactions] = useState(false);
+  
+  // GCash transaction state
+  const [gcashTransactions, setGcashTransactions] = useState([]);
+  const [gcashSearchTerm, setGcashSearchTerm] = useState('');
+  const [gcashFilterStatus, setGcashFilterStatus] = useState('all');
+  const [showGcashTransactions, setShowGcashTransactions] = useState(false);
 
   useEffect(() => {
     fetchStats();
@@ -64,6 +76,60 @@ const Reports = () => {
       console.error('Error fetching recent activity:', error);
     }
   };
+
+  const fetchTransactions = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*, staff:staff_users(*)')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setTransactions(data || []);
+    } catch (error) {
+      console.error('Error fetching transactions:', error);
+    }
+  };
+
+  const transactionTypeColors = {
+    fare_validation: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
+    balance_topup: 'bg-green-500/20 text-green-400 border-green-500/50',
+    card_issuance: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
+  };
+
+  const filteredTransactions = transactions.filter(transaction => {
+    const matchesSearch = transaction.channel?.toLowerCase().includes(transactionSearchTerm.toLowerCase()) ||
+                         transaction.staff?.full_name?.toLowerCase().includes(transactionSearchTerm.toLowerCase()) ||
+                         transaction.fare?.toString().includes(transactionSearchTerm) ||
+                         transaction.baggage?.toString().includes(transactionSearchTerm);
+    const matchesType = transactionFilterType === 'all' || transaction.type === transactionFilterType;
+    return matchesSearch && matchesType;
+  });
+
+  const fetchGcashTransactions = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('gcash_transactions')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setGcashTransactions(data || []);
+    } catch (error) {
+      console.error('Error fetching GCash transactions:', error);
+    }
+  };
+
+  const gcashStatusColors = {
+    completed: 'bg-green-500/20 text-green-400 border-green-500/50',
+    failed: 'bg-red-500/20 text-red-400 border-red-500/50',
+    pending: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50',
+  };
+
+  const filteredGcashTransactions = gcashTransactions.filter(transaction => {
+    const matchesSearch = transaction.phone_number?.includes(gcashSearchTerm) ||
+                         transaction.stripe_payment_id?.toLowerCase().includes(gcashSearchTerm.toLowerCase());
+    const matchesStatus = gcashFilterStatus === 'all' || transaction.status === gcashFilterStatus;
+    return matchesSearch && matchesStatus;
+  });
 
   const handleExportExcel = async () => {
     setLoading(true);
@@ -511,6 +577,192 @@ const Reports = () => {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Transactions Section */}
+      <div className="glass-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-white text-xl font-bold flex items-center gap-2">
+            <ArrowLeftRight className="text-orange-400" />
+            Transactions
+          </h2>
+          <button
+            onClick={() => {
+              setShowTransactions(!showTransactions);
+              if (!showTransactions) fetchTransactions();
+            }}
+            className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors"
+          >
+            {showTransactions ? 'Hide' : 'Show Transactions'}
+          </button>
+        </div>
+
+        {showTransactions && (
+          <>
+            <div className="flex gap-4 mb-4">
+              <div className="flex-1 relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
+                <input
+                  type="text"
+                  placeholder="Search transactions..."
+                  value={transactionSearchTerm}
+                  onChange={(e) => setTransactionSearchTerm(e.target.value)}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <select
+                value={transactionFilterType}
+                onChange={(e) => setTransactionFilterType(e.target.value)}
+                className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+              >
+                <option value="all">All Types</option>
+                <option value="fare_validation">Fare Validation</option>
+                <option value="balance_topup">Balance Top-up</option>
+                <option value="card_issuance">Card Issuance</option>
+              </select>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-left text-white/60 border-b border-white/10">
+                    <th className="pb-3 font-medium">Type</th>
+                    <th className="pb-3 font-medium">Fare</th>
+                    <th className="pb-3 font-medium">Baggage</th>
+                    <th className="pb-3 font-medium">Total Amount</th>
+                    <th className="pb-3 font-medium">Channel</th>
+                    <th className="pb-3 font-medium">Staff</th>
+                    <th className="pb-3 font-medium">Created At</th>
+                    <th className="pb-3 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTransactions.length > 0 ? (
+                    filteredTransactions.map((transaction) => (
+                      <tr key={transaction.id} className="border-b border-white/5 hover:bg-white/5">
+                        <td className="py-4">
+                          <span className={`px-3 py-1 rounded-full text-xs border ${transactionTypeColors[transaction.type]}`}>
+                            {transaction.type.replace('_', ' ')}
+                          </span>
+                        </td>
+                        <td className="py-4 text-white font-medium">₱{parseFloat(transaction.fare || 0).toFixed(2)}</td>
+                        <td className="py-4 text-white font-medium">₱{parseFloat(transaction.baggage || 0).toFixed(2)}</td>
+                        <td className="py-4 text-white font-medium">₱{parseFloat(transaction.amount).toFixed(2)}</td>
+                        <td className="py-4 text-white/70">{transaction.channel}</td>
+                        <td className="py-4 text-white/70">{transaction.staff?.full_name || 'N/A'}</td>
+                        <td className="py-4 text-white/70 text-sm">
+                          {new Date(transaction.created_at).toLocaleString()}
+                        </td>
+                        <td className="py-4">
+                          <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                            <MoreHorizontal size={16} className="text-white/70" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="8" className="py-8 text-center text-white/60">
+                        No transactions found
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* GCash Transactions Section */}
+      <div className="glass-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-white text-xl font-bold flex items-center gap-2">
+            <DollarSign className="text-green-400" />
+            GCash Transactions
+          </h2>
+          <button
+            onClick={() => {
+              setShowGcashTransactions(!showGcashTransactions);
+              if (!showGcashTransactions) fetchGcashTransactions();
+            }}
+            className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors"
+          >
+            {showGcashTransactions ? 'Hide' : 'Show GCash Transactions'}
+          </button>
+        </div>
+
+        {showGcashTransactions && (
+          <>
+            <div className="flex gap-4 mb-4">
+              <div className="flex-1 relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
+                <input
+                  type="text"
+                  placeholder="Search GCash transactions..."
+                  value={gcashSearchTerm}
+                  onChange={(e) => setGcashSearchTerm(e.target.value)}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-green-500"
+                />
+              </div>
+              <select
+                value={gcashFilterStatus}
+                onChange={(e) => setGcashFilterStatus(e.target.value)}
+                className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-green-500"
+              >
+                <option value="all">All Status</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+                <option value="pending">Pending</option>
+              </select>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-left text-white/60 border-b border-white/10">
+                    <th className="pb-3 font-medium">Date</th>
+                    <th className="pb-3 font-medium">Phone Number</th>
+                    <th className="pb-3 font-medium">Amount</th>
+                    <th className="pb-3 font-medium">Status</th>
+                    <th className="pb-3 font-medium">Payment ID</th>
+                    <th className="pb-3 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredGcashTransactions.length > 0 ? (
+                    filteredGcashTransactions.map((transaction) => (
+                      <tr key={transaction.id} className="border-b border-white/5 hover:bg-white/5">
+                        <td className="py-4 text-white/70 text-sm">
+                          {new Date(transaction.created_at).toLocaleString()}
+                        </td>
+                        <td className="py-4 text-white font-medium">{transaction.phone_number}</td>
+                        <td className="py-4 text-white font-medium">₱{parseFloat(transaction.amount).toFixed(2)}</td>
+                        <td className="py-4">
+                          <span className={`px-3 py-1 rounded-full text-xs border ${gcashStatusColors[transaction.status]}`}>
+                            {transaction.status}
+                          </span>
+                        </td>
+                        <td className="py-4 text-white/70 text-sm">{transaction.stripe_payment_id || 'N/A'}</td>
+                        <td className="py-4">
+                          <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                            <MoreHorizontal size={16} className="text-white/70" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="6" className="py-8 text-center text-white/60">
+                        No GCash transactions found
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
