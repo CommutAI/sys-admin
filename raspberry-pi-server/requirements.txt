@@ -1,0 +1,13 @@
+opencv-python==4.8.1.78
+opencv-contrib-python==4.8.1.78
+numpy>=1.26.4
+ultralytics==8.0.196
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+websockets>=11,<13
+pillow>=10.4.0
+pybase64==1.4.0
+supabase==2.3.4
+pyserial==3.5
+requests==2.31.0
+gps==3.19

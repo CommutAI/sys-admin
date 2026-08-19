@@ -4,6 +4,7 @@ A comprehensive system administration dashboard for the CommutAI public transpor
 
 ## Features
 
+- **Authentication**: Secure login system with Supabase Auth
 - **Dashboard**: Real-time overview of passengers, revenue, trips, and active buses
 - **Live Map**: Real-time GPS tracking of all buses with passenger counts
 - **User Management**: Manage admin, conductor, and customer service accounts
@@ -13,7 +14,10 @@ A comprehensive system administration dashboard for the CommutAI public transpor
 - **Emergency Alerts**: Real-time emergency alert monitoring
 - **Fare Irregularities**: Track and resolve fare-related issues
 - **Customer Service**: Manage customer service logs and actions
-- **Reports**: Generate and export various reports
+- **GCash Transactions**: View GCash payment transaction history and statistics
+- **Reports**: Generate and export various reports with charts and analytics
+- **Audit Logs**: Track all system activities and security events
+- **Notifications**: Real-time notification system with database integration
 
 ## Tech Stack
 
@@ -23,6 +27,7 @@ A comprehensive system administration dashboard for the CommutAI public transpor
 - **Backend**: Supabase (PostgreSQL)
 - **Real-time**: Supabase Realtime subscriptions
 - **Icons**: Lucide React
+- **Authentication**: Supabase Auth
 
 ## Setup Instructions
 
@@ -117,6 +122,12 @@ The system uses the following main tables:
 - **fare_irregularities**: Fare compliance tracking
 - **emergency_alerts**: Emergency incident management
 - **customer_service_logs**: Customer service records
+- **gcash_transactions**: GCash payment transaction records
+- **notifications**: System notifications and alerts
+- **audit_logs**: System activity and security event tracking
+- **fare_matrix**: Route fare structure with regular and discounted rates
+- **bus_schedules**: Bus assignment to trips across 10-day rotation
+- **trip_schedules**: Trip timing with arrival and departure windows
 
 ## Row-Level Security
 
