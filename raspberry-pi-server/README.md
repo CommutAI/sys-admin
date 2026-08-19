@@ -26,7 +26,7 @@ This guide will help you set up the EMEET C60E Dual Camera 4K Webcam on a Raspbe
 4. Update the system:
    ```bash
    sudo apt update && sudo apt upgrade -y
-   ```
+   ```  
 
 ### 2. Install System Dependencies
 
@@ -34,7 +34,8 @@ Install required system packages for video processing and AI:
 
 ```bash
 sudo apt install -y python3-pip python3-dev libopencv-dev python3-opencv
-sudo apt install -y libatlas-base-dev libjasper-dev libqtgui4 libqt4-dev
+sudo apt install -y libatlas3-base libhdf5-dev libhdf5-serial-dev libhdf5-103
+sudo apt install -y libqt5gui5 libqt5widgets5 libqt5core5a qtbase5-dev
 sudo apt install -y v4l-utils
 ```
 
@@ -67,18 +68,50 @@ Test the camera:
 v4l2-ctl --list-devices
 ```
 
-### 5. Set Up Python Environment
+### 5. Set Up Project Directory and Transfer Files
 
-Create a dedicated directory for the video server:
+**Option A: Direct Setup on Raspberry Pi**
+
+If you're working directly on the Raspberry Pi:
 
 ```bash
-mkdir -p ~/bus-monitoring
-cd ~/bus-monitoring
+# Create project directory
+mkdir -p ~/raspberry-pi-server
+cd ~/raspberry-pi-server
 ```
 
-Copy the server files to this directory:
+Then copy the server files to this directory:
 - `video_server.py`
 - `requirements.txt`
+
+**Option B: Transfer from Windows to Raspberry Pi**
+
+If you have the project files on a Windows machine:
+
+1. **On Raspberry Pi - Create the directory:**
+   ```bash
+   mkdir -p ~/raspberry-pi-server
+   cd ~/raspberry-pi-server
+   ```
+
+2. **On Raspberry Pi - Get your IP address:**
+   ```bash
+   hostname -I
+   # Note the IP address (e.g., 192.168.1.100)
+   ```
+
+3. **On Windows PowerShell - Transfer files:**
+   ```powershell
+   # Replace 192.168.1.100 with your actual Raspberry Pi IP
+   scp -r C:\Users\lopez\sys-admin\raspberry-pi-server\* pi@192.168.1.100:~/raspberry-pi-server/
+   ```
+
+4. **On Raspberry Pi - Verify files were transferred:**
+   ```bash
+   cd ~/raspberry-pi-server
+   ls -la
+   # You should see video_server.py, requirements.txt, etc.
+   ```
 
 ### 6. Install Python Dependencies
 
@@ -97,7 +130,7 @@ pip3 install --user -r requirements.txt
 Download the lightweight YOLOv8n model (optimized for Raspberry Pi):
 
 ```bash
-cd ~/bus-monitoring
+cd ~/raspberry-pi-server
 wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt
 ```
 
@@ -157,7 +190,7 @@ sudo ufw allow 5000
 To run the server automatically on boot, create a systemd service:
 
 ```bash
-sudo nano /etc/systemd/system/bus-monitoring.service
+sudo nano /etc/systemd/system/raspberry-pi-server.service
 ```
 
 Add the following content:
@@ -170,8 +203,8 @@ After=network.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/bus-monitoring
-ExecStart=/usr/bin/python3 /home/pi/bus-monitoring/video_server.py
+WorkingDirectory=/home/pi/raspberry-pi-server
+ExecStart=/usr/bin/python3 /home/pi/raspberry-pi-server/video_server.py
 Restart=always
 RestartSec=10
 
@@ -183,14 +216,14 @@ Enable and start the service:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable bus-monitoring.service
-sudo systemctl start bus-monitoring.service
+sudo systemctl enable raspberry-pi-server.service
+sudo systemctl start raspberry-pi-server.service
 ```
 
 Check service status:
 
 ```bash
-sudo systemctl status bus-monitoring.service
+sudo systemctl status raspberry-pi-server.service
 ```
 
 ## Web Interface Setup
@@ -284,7 +317,7 @@ sudo kill -9 <PID>
 ### Connection refused from web interface
 ```bash
 # Check if server is running
-sudo systemctl status bus-monitoring.service
+sudo systemctl status raspberry-pi-server.service
 
 # Check firewall
 sudo ufw status
@@ -324,20 +357,20 @@ The EMEET C60E has dual cameras. To use both:
 
 ### Update Dependencies
 ```bash
-cd ~/bus-monitoring
+cd ~/raspberry-pi-server
 pip3 install --upgrade -r requirements.txt
 ```
 
 ### Update YOLO Model
 ```bash
-cd ~/bus-monitoring
+cd ~/raspberry-pi-server
 wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt -O yolov8n.pt
 ```
 
 ### Check Logs
 ```bash
 # If running as service
-sudo journalctl -u bus-monitoring.service -f
+sudo journalctl -u raspberry-pi-server.service -f
 
 # If running manually
 # Logs appear in terminal
