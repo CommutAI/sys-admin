@@ -67,7 +67,7 @@ const Reports = () => {
     try {
       const { data } = await supabase
         .from('trips')
-        .select('*, buses(*), conductor_staff:staff_users!conductor_id(*)')
+        .select('*, buses(*), conductor_staff:staff_users(*)')
         .order('started_at', { ascending: false })
         .limit(5);
 
@@ -141,7 +141,7 @@ const Reports = () => {
         case 'trips':
           const { data: trips } = await supabase
             .from('trips')
-            .select('*, buses(*), conductor_staff:staff_users!conductor_id(*)')
+            .select('*, buses(*), conductor_staff:staff_users(*)')
             .gte('started_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('started_at', dateRange.end || new Date().toISOString())
             .order('started_at', { ascending: false });
@@ -264,7 +264,7 @@ const Reports = () => {
         case 'trips':
           const { data: trips } = await supabase
             .from('trips')
-            .select('*, buses(*), conductor_staff:staff_users!conductor_id(*)')
+            .select('*, buses(*), conductor_staff:staff_users(*)')
             .gte('started_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('started_at', dateRange.end || new Date().toISOString())
             .order('started_at', { ascending: false });

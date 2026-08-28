@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
-import { Users, DollarSign, Bus, AlertTriangle, HeadphonesIcon, Map as MapIcon, Navigation, CheckCircle, Clock, Search, Filter, MapPin } from 'lucide-react';
+import { Users, DollarSign, Bus, AlertTriangle, HeadphonesIcon, Map as MapIcon, Navigation, CheckCircle, Clock, Search, Filter, MapPin, Video, Wifi, WifiOff, Camera, Activity } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import 'leaflet/dist/leaflet.css';
+import VideoMonitoring from './VideoMonitoring';
+import { useRaspberryPi } from '../hooks/useRaspberryPi';
 
 const KPICard = ({ title, value, change, icon: Icon, color }) => (
   <div className="glass-card p-6 hover:scale-105 transition-transform duration-300">
@@ -70,6 +72,19 @@ const Dashboard = () => {
   const [emergencyAlerts, setEmergencyAlerts] = useState([]);
   const [alertFilterStatus, setAlertFilterStatus] = useState('all');
   const [alertSearchTerm, setAlertSearchTerm] = useState('');
+  const [showVideoMonitoring, setShowVideoMonitoring] = useState(false);
+
+  // Raspberry Pi integration
+  const {
+    online: piOnline,
+    connectionStatus: piConnectionStatus,
+    cameraActive: piCameraActive,
+    passengerCount: piPassengerCount,
+    currentTripId: piCurrentTripId,
+    hardwareStatus: piHardwareStatus,
+    emergencyStatus: piEmergencyStatus,
+    location: piLocation
+  } = useRaspberryPi({ autoConnect: false, enableHealthCheck: false });
 
   useEffect(() => {
     fetchDashboardData();
@@ -205,6 +220,23 @@ const Dashboard = () => {
 
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
+      // Set default values on error to prevent UI crashes
+      setKpis([
+        { title: "Today's Passengers", value: '0', change: 0, icon: Users, color: 'bg-blue-500' },
+        { title: 'Total Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-green-500' },
+        { title: 'Bus Fare Revenue', value: '$0', change: 0, icon: Bus, color: 'bg-purple-500' },
+        { title: 'Baggage Fee Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-orange-500' },
+      ]);
+      setAlerts([]);
+      setStats({
+        totalRoutes: 0,
+        activeDrivers: 0,
+        activeConductors: 0,
+        avgTripDuration: '0 min',
+        seatUtilization: '0%',
+        totalBusFare: 0,
+        totalBaggageFees: 0
+      });
     } finally {
       setLoading(false);
     }
@@ -299,13 +331,15 @@ const Dashboard = () => {
     try {
       const { data, error } = await supabase
         .from('emergency_alerts')
-        .select('*, trips(*, buses(*)), conductor_staff:staff_users!conductor_id(*)')
+        .select('*, trips(*, buses(*)), staff_users!conductor_id(*)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setEmergencyAlerts(data || []);
     } catch (error) {
       console.error('Error fetching emergency alerts:', error);
+      // Set empty array on error to prevent UI crashes
+      setEmergencyAlerts([]);
     }
   };
 
@@ -348,7 +382,7 @@ const Dashboard = () => {
   const filteredAlerts = emergencyAlerts.filter(alert => {
     const matchesSearch = alert.notes?.toLowerCase().includes(alertSearchTerm.toLowerCase()) ||
                          alert.trips?.buses?.plate_number?.toLowerCase().includes(alertSearchTerm.toLowerCase()) ||
-                         alert.conductor_staff?.full_name?.toLowerCase().includes(alertSearchTerm.toLowerCase());
+                         alert.staff_users?.full_name?.toLowerCase().includes(alertSearchTerm.toLowerCase());
     const matchesStatus = alertFilterStatus === 'all' || alert.status === alertFilterStatus;
     return matchesSearch && matchesStatus;
   });
@@ -427,6 +461,84 @@ const Dashboard = () => {
         {kpis.map((kpi, index) => (
           <KPICard key={index} {...kpi} />
         ))}
+      </div>
+
+      {/* Raspberry Pi Status Card */}
+      <div className={`glass-card p-6 rounded-xl border ${
+        piOnline ? 'border-green-500/30' : 'border-red-500/30'
+      }`}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className={`w-12 h-12 rounded-xl ${piOnline ? 'bg-green-500/20' : 'bg-red-500/20'} flex items-center justify-center`}>
+              {piOnline ? (
+                <Wifi className="w-6 h-6 text-green-400" />
+              ) : (
+                <WifiOff className="w-6 h-6 text-red-400" />
+              )}
+            </div>
+            <div>
+              <h3 className="text-white font-semibold">Raspberry Pi Status</h3>
+              <p className="text-white/60 text-sm">
+                {piOnline ? 'Connected' : 'Disconnected'} - {piConnectionStatus.charAt(0).toUpperCase() + piConnectionStatus.slice(1)}
+              </p>
+            </div>
+          </div>
+          <Link to="/video-monitoring" className="text-orange-400 hover:text-orange-300 text-sm font-medium">
+            View Live Feed →
+          </Link>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="flex items-center gap-3">
+            <Camera className="w-5 h-5 text-blue-400" />
+            <div>
+              <p className="text-white/60 text-xs">Camera</p>
+              <p className={`text-sm font-medium ${piCameraActive ? 'text-green-400' : 'text-red-400'}`}>
+                {piCameraActive ? 'Active' : 'Inactive'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Users className="w-5 h-5 text-purple-400" />
+            <div>
+              <p className="text-white/60 text-xs">Passengers</p>
+              <p className="text-sm font-medium text-white">{piPassengerCount}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Activity className="w-5 h-5 text-orange-400" />
+            <div>
+              <p className="text-white/60 text-xs">Trip ID</p>
+              <p className="text-sm font-medium text-white">
+                {piCurrentTripId ? `#${piCurrentTripId.slice(0, 8)}` : 'None'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <AlertTriangle className={`w-5 h-5 ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`} />
+            <div>
+              <p className="text-white/60 text-xs">Emergency</p>
+              <p className={`text-sm font-medium ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`}>
+                {piEmergencyStatus.emergency_active ? 'Active' : 'Clear'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {piLocation.latitude && piLocation.longitude && (
+          <div className="mt-4 pt-4 border-t border-white/10">
+            <div className="flex items-center gap-2 text-sm">
+              <MapPin className="w-4 h-4 text-green-400" />
+              <span className="text-white/60">Location:</span>
+              <span className="text-white">
+                {piLocation.latitude.toFixed(4)}, {piLocation.longitude.toFixed(4)}
+              </span>
+              {piLocation.address && (
+                <span className="text-white/40 ml-2">({piLocation.address})</span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Live Map Section */}
@@ -559,6 +671,22 @@ const Dashboard = () => {
               color="bg-blue-500" 
               link="/users"
             />
+            <div 
+              onClick={() => setShowVideoMonitoring(!showVideoMonitoring)}
+              className="glass-card p-4 hover:scale-105 transition-transform duration-300 cursor-pointer"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-purple-500 flex items-center justify-center">
+                    <Video className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <p className="text-white/60 text-xs">Video Feed</p>
+                    <p className="text-white font-bold">{showVideoMonitoring ? 'Hide' : 'Show'}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="mt-6">
@@ -737,6 +865,30 @@ const Dashboard = () => {
             <p className="text-white/60">No recent activity</p>
           )}
         </div>
+      </div>
+
+      {/* Video Monitoring Section */}
+      <div className="glass-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-white text-xl font-bold flex items-center gap-2">
+            <Video className="text-orange-400" />
+            Live Video Monitoring
+          </h2>
+          <button
+            onClick={() => setShowVideoMonitoring(!showVideoMonitoring)}
+            className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg transition-colors"
+          >
+            {showVideoMonitoring ? 'Hide' : 'Show'} Camera Feed
+          </button>
+        </div>
+        
+        {showVideoMonitoring && (
+          <div className="mt-4">
+            <VideoMonitoring 
+              autoConnect={true} 
+            />
+          </div>
+        )}
       </div>
     </div>
   );

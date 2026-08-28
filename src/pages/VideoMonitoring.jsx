@@ -1,303 +1,261 @@
-import { useState, useEffect, useRef } from 'react';
-import { Video, Users, AlertCircle, Wifi, WifiOff, Play, Square, RefreshCw } from 'lucide-react';
-import io from 'socket.io-client';
+import { useState, useEffect } from 'react';
+import { Video, Users, AlertCircle, Wifi, WifiOff, RefreshCw, Tv2, Activity, CheckCircle, Loader2 } from 'lucide-react';
+import { useRaspberryPi } from '../hooks/useRaspberryPi';
+import { getPiVideoFeedUrl } from '../services/raspberryPiApi';
 
-const VideoMonitoring = () => {
-  const [isConnected, setIsConnected] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [passengerCount, setPassengerCount] = useState(0);
-  const [averageCount, setAverageCount] = useState(0);
-  const [lastUpdate, setLastUpdate] = useState(null);
-  const [error, setError] = useState(null);
-  const [serverUrl, setServerUrl] = useState('http://localhost:5000');
-  
-  const socketRef = useRef(null);
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
+// Connection stages and their progress %
+const CONNECTION_STAGES = {
+  disconnected: { pct: 0,   label: 'Disconnected',        color: 'bg-red-500' },
+  connecting:   { pct: 40,  label: 'Connecting to Pi…',   color: 'bg-yellow-400' },
+  connected:    { pct: 70,  label: 'Starting stream…',    color: 'bg-blue-400' },
+  streaming:    { pct: 100, label: 'Streaming',            color: 'bg-green-500' },
+  error:        { pct: 0,   label: 'Connection failed',    color: 'bg-red-500' },
+};
 
+const VideoMonitoring = ({ autoConnect = true }) => {
+  const [useMjpeg, setUseMjpeg] = useState(false);
+
+  const {
+    online,
+    connectionStatus,
+    error,
+    passengerCount,
+    averageCount,
+    isStreaming,
+    lastUpdate,
+    videoRef,
+    refresh,
+    startStream,
+    stopStream,
+    connect,
+  } = useRaspberryPi({ autoConnect, enableHealthCheck: false });
+
+  // Auto-start stream as soon as the WebSocket connects
   useEffect(() => {
-    connectToServer();
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-      }
-    };
-  }, [serverUrl]);
-
-  const connectToServer = () => {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
+    if (online && !isStreaming && !useMjpeg) {
+      startStream();
     }
+  }, [online, isStreaming, useMjpeg, startStream]);
 
-    socketRef.current = io(serverUrl, {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-    });
+  // Derive display stage
+  const displayStage = isStreaming || useMjpeg
+    ? 'streaming'
+    : connectionStatus === 'error'
+    ? 'error'
+    : connectionStatus; // 'disconnected' | 'connecting' | 'connected'
 
-    socketRef.current.on('connect', () => {
-      setIsConnected(true);
-      setError(null);
-      console.log('Connected to video server');
-    });
-
-    socketRef.current.on('disconnect', () => {
-      setIsConnected(false);
-      setIsStreaming(false);
-      console.log('Disconnected from video server');
-    });
-
-    socketRef.current.on('video_frame', (data) => {
-      if (data.frame && videoRef.current) {
-        videoRef.current.src = `data:image/jpeg;base64,${data.frame}`;
-        setIsStreaming(true);
-      }
-    });
-
-    socketRef.current.on('passenger_count', (data) => {
-      setPassengerCount(data.count);
-      setAverageCount(data.average_count.toFixed(1));
-      setLastUpdate(new Date().toLocaleTimeString());
-    });
-
-    socketRef.current.on('status', (data) => {
-      console.log('Server status:', data.message);
-    });
-
-    socketRef.current.on('error', (data) => {
-      setError(data.message);
-      console.error('Server error:', data.message);
-    });
-
-    socketRef.current.on('connect_error', (error) => {
-      setIsConnected(false);
-      setError('Failed to connect to video server');
-      console.error('Connection error:', error);
-    });
-  };
-
-  const startStream = () => {
-    if (socketRef.current && isConnected) {
-      socketRef.current.emit('start_stream');
-    }
-  };
-
-  const stopStream = () => {
-    if (socketRef.current && isConnected) {
-      socketRef.current.emit('stop_stream');
-      setIsStreaming(false);
-    }
-  };
-
-  const refreshConnection = () => {
-    setIsConnected(false);
-    setIsStreaming(false);
-    setError(null);
-    setTimeout(() => connectToServer(), 500);
-  };
+  const stage = CONNECTION_STAGES[displayStage] ?? CONNECTION_STAGES.disconnected;
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">Bus Video Monitoring</h1>
           <p className="text-white/60 mt-1">Live video feed with AI passenger detection</p>
         </div>
-        <div className="flex items-center gap-3">
-          <input
-            type="text"
-            value={serverUrl}
-            onChange={(e) => setServerUrl(e.target.value)}
-            placeholder="Server URL (e.g., http://192.168.1.100:5000)"
-            className="bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500 w-80"
-          />
+        <div className="flex items-center gap-2">
           <button
-            onClick={refreshConnection}
-            className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg transition-colors"
-            title="Refresh Connection"
+            onClick={() => setUseMjpeg(!useMjpeg)}
+            title={useMjpeg ? 'Switch to WebSocket mode' : 'Switch to MJPEG mode (fallback)'}
+            className={`px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors ${
+              useMjpeg ? 'bg-orange-500/30 text-orange-300' : 'bg-white/10 text-white/60 hover:bg-white/20'
+            }`}
           >
-            <RefreshCw size={20} />
+            <Tv2 size={14} />
+            {useMjpeg ? 'MJPEG' : 'WebSocket'}
+          </button>
+          <button
+            onClick={refresh}
+            className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg transition-colors"
+            title="Reconnect"
+          >
+            <RefreshCw size={18} />
           </button>
         </div>
       </div>
 
-      {/* Connection Status */}
-      <div className={`glass-card p-4 rounded-xl flex items-center gap-3 ${
-        isConnected ? 'border-green-500/30' : 'border-red-500/30'
-      }`}>
-        {isConnected ? (
-          <Wifi className="w-5 h-5 text-green-400" />
-        ) : (
-          <WifiOff className="w-5 h-5 text-red-400" />
-        )}
-        <div className="flex-1">
-          <p className="text-white font-medium">
-            {isConnected ? 'Connected to Video Server' : 'Disconnected from Video Server'}
-          </p>
-          <p className="text-white/60 text-sm">{serverUrl}</p>
-        </div>
-        {error && (
-          <div className="flex items-center gap-2 text-red-400">
-            <AlertCircle size={16} />
-            <span className="text-sm">{error}</span>
+      {/* Connection Progress Bar */}
+      <div className="glass-card p-5 rounded-xl space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {displayStage === 'streaming' ? (
+              <CheckCircle className="w-4 h-4 text-green-400" />
+            ) : displayStage === 'connecting' || displayStage === 'connected' ? (
+              <Loader2 className="w-4 h-4 text-yellow-400 animate-spin" />
+            ) : displayStage === 'error' ? (
+              <AlertCircle className="w-4 h-4 text-red-400" />
+            ) : (
+              <WifiOff className="w-4 h-4 text-red-400" />
+            )}
+            <span className="text-white font-medium text-sm">{stage.label}</span>
           </div>
+          <span className="text-white/40 text-xs">{stage.pct}%</span>
+        </div>
+
+        {/* Track */}
+        <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-700 ease-in-out ${stage.color}`}
+            style={{ width: `${stage.pct}%` }}
+          />
+        </div>
+
+        {/* Stage indicators */}
+        <div className="flex justify-between text-xs text-white/30 px-0.5">
+          <span className={displayStage !== 'disconnected' && displayStage !== 'error' ? 'text-white/60' : ''}>Disconnected</span>
+          <span className={displayStage === 'connecting' || displayStage === 'connected' || displayStage === 'streaming' ? 'text-white/60' : ''}>Connecting</span>
+          <span className={displayStage === 'connected' || displayStage === 'streaming' ? 'text-white/60' : ''}>Connected</span>
+          <span className={displayStage === 'streaming' ? 'text-green-400 font-medium' : ''}>Streaming</span>
+        </div>
+
+        {/* Error message */}
+        {error && (
+          <p className="text-red-400 text-xs flex items-center gap-1.5 mt-1">
+            <AlertCircle size={12} />
+            {error}
+          </p>
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Video Feed */}
-        <div className="lg:col-span-2">
-          <div className="glass-card rounded-xl overflow-hidden">
-            <div className="p-4 border-b border-white/10 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Video className="w-5 h-5 text-orange-400" />
-                <h2 className="text-white font-semibold">Live Video Feed</h2>
-              </div>
-              <div className="flex items-center gap-2">
-                {!isStreaming && isConnected && (
-                  <button
-                    onClick={startStream}
-                    className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-                  >
-                    <Play size={16} />
-                    Start Stream
-                  </button>
-                )}
-                {isStreaming && (
-                  <button
-                    onClick={stopStream}
-                    className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-                  >
-                    <Square size={16} />
-                    Stop Stream
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="aspect-video bg-black/50 relative">
-              {isStreaming ? (
-                <img
-                  ref={videoRef}
-                  alt="Live video feed"
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-center">
-                    <Video className="w-16 h-16 text-white/30 mx-auto mb-4" />
-                    <p className="text-white/50">
-                      {isConnected ? 'Click "Start Stream" to begin' : 'Connect to server to start streaming'}
-                    </p>
-                  </div>
-                </div>
-              )}
-              {/* Overlay Info */}
-              {isStreaming && (
-                <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-                    <span className="text-white text-sm font-medium">LIVE</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+      {/* Full-width Video Feed */}
+      <div className="glass-card rounded-xl overflow-hidden">
+        {/* Relative container — 16:9 */}
+        <div className="relative w-full bg-black" style={{ paddingBottom: '56.25%' }}>
+          {/* Always-mounted img for WebSocket frames */}
+          <img
+            ref={videoRef}
+            alt="Live video feed"
+            className={`absolute inset-0 w-full h-full object-contain ${
+              isStreaming && !useMjpeg ? 'block' : 'hidden'
+            }`}
+          />
+          {/* MJPEG direct src */}
+          {useMjpeg && (
+            <img
+              src={getPiVideoFeedUrl()}
+              alt="MJPEG video feed"
+              className="absolute inset-0 w-full h-full object-contain"
+            />
+          )}
 
-        {/* Passenger Count Panel */}
-        <div className="space-y-6">
-          {/* Current Count */}
-          <div className="glass-card rounded-xl p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <Users className="w-6 h-6 text-orange-400" />
-              <h2 className="text-white font-semibold">Passenger Count</h2>
-            </div>
-            <div className="text-center py-8">
-              <div className="text-6xl font-bold text-white mb-2">{passengerCount}</div>
-              <p className="text-white/60">Current Passengers</p>
-            </div>
-            {lastUpdate && (
-              <div className="text-center text-white/40 text-sm">
-                Last updated: {lastUpdate}
+          {/* Placeholder / connecting state */}
+          {!isStreaming && !useMjpeg && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="text-center px-6">
+                {displayStage === 'connecting' || displayStage === 'connected' ? (
+                  <>
+                    <Loader2 className="w-12 h-12 text-orange-400 animate-spin mx-auto mb-4" />
+                    <p className="text-white/60 text-lg">
+                      {displayStage === 'connecting' ? 'Connecting to Raspberry Pi…' : 'Starting stream…'}
+                    </p>
+                  </>
+                ) : displayStage === 'error' ? (
+                  <>
+                    <AlertCircle className="w-16 h-16 text-red-400/50 mx-auto mb-4" />
+                    <p className="text-red-400 font-medium mb-1">Connection failed</p>
+                    <p className="text-white/40 text-sm max-w-sm">{error}</p>
+                    <button
+                      onClick={refresh}
+                      className="mt-4 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm flex items-center gap-2 mx-auto transition-colors"
+                    >
+                      <RefreshCw size={14} />
+                      Retry
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Video className="w-16 h-16 text-white/20 mx-auto mb-4" />
+                    <p className="text-white/40 text-lg">Camera disconnected</p>
+                    <button
+                      onClick={connect}
+                      className="mt-4 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm flex items-center gap-2 mx-auto transition-colors"
+                    >
+                      <Wifi size={14} />
+                      Connect
+                    </button>
+                  </>
+                )}
               </div>
+            </div>
+          )}
+
+          {/* LIVE badge */}
+          {(isStreaming || useMjpeg) && (
+            <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm rounded-lg px-3 py-1.5 flex items-center gap-2">
+              <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
+              <span className="text-white text-sm font-semibold tracking-wide">LIVE</span>
+              {useMjpeg && <span className="text-white/50 text-xs">· MJPEG</span>}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="glass-card rounded-xl p-6 flex items-center gap-4">
+          <div className="w-14 h-14 bg-orange-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Users className="w-7 h-7 text-orange-400" />
+          </div>
+          <div>
+            <p className="text-white/60 text-sm">Current Passengers</p>
+            <p className="text-white text-4xl font-bold leading-none mt-1">{passengerCount}</p>
+            {lastUpdate && (
+              <p className="text-white/30 text-xs mt-1">Updated {lastUpdate}</p>
             )}
           </div>
+        </div>
 
-          {/* Statistics */}
-          <div className="glass-card rounded-xl p-6">
-            <h3 className="text-white font-semibold mb-4">Statistics</h3>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <span className="text-white/60">Average (30 frames)</span>
-                <span className="text-white font-medium">{averageCount}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-white/60">Stream Status</span>
-                <span className={`font-medium ${isStreaming ? 'text-green-400' : 'text-red-400'}`}>
-                  {isStreaming ? 'Active' : 'Inactive'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-white/60">Connection</span>
-                <span className={`font-medium ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
-                  {isConnected ? 'Connected' : 'Disconnected'}
-                </span>
-              </div>
-            </div>
+        <div className="glass-card rounded-xl p-6 flex items-center gap-4">
+          <div className="w-14 h-14 bg-blue-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Activity className="w-7 h-7 text-blue-400" />
           </div>
+          <div>
+            <p className="text-white/60 text-sm">Average (30 frames)</p>
+            <p className="text-white text-4xl font-bold leading-none mt-1">{averageCount}</p>
+            <p className="text-white/30 text-xs mt-1">Rolling average</p>
+          </div>
+        </div>
 
-          {/* Camera Info */}
-          <div className="glass-card rounded-xl p-6">
-            <h3 className="text-white font-semibold mb-4">Camera Information</h3>
-            <div className="space-y-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-white/60">Model</span>
-                <span className="text-white">EMEET C60E</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-white/60">Resolution</span>
-                <span className="text-white">1280x720</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-white/60">FPS</span>
-                <span className="text-white">15</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-white/60">AI Model</span>
-                <span className="text-white">YOLOv8n</span>
-              </div>
-            </div>
+        <div className="glass-card rounded-xl p-6 flex items-center gap-4">
+          <div className={`w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0 ${
+            isStreaming || useMjpeg ? 'bg-green-500/20' : 'bg-white/10'
+          }`}>
+            <Video className={`w-7 h-7 ${isStreaming || useMjpeg ? 'text-green-400' : 'text-white/40'}`} />
+          </div>
+          <div>
+            <p className="text-white/60 text-sm">Stream</p>
+            <p className={`text-xl font-bold leading-none mt-1 ${
+              isStreaming || useMjpeg ? 'text-green-400' : 'text-white/50'
+            }`}>
+              {isStreaming || useMjpeg ? 'Active' : 'Inactive'}
+            </p>
+            <p className="text-white/30 text-xs mt-1">
+              {useMjpeg ? 'MJPEG mode' : 'WebSocket mode'}
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Instructions */}
-      <div className="glass-card rounded-xl p-6">
-        <h3 className="text-white font-semibold mb-4">Setup Instructions</h3>
-        <div className="space-y-4 text-white/70">
+      {/* Camera Info */}
+      <div className="glass-card rounded-xl p-5">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-white/40 mb-3">Camera Info</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
           <div>
-            <p className="font-medium text-white mb-2">1. Raspberry Pi Setup</p>
-            <ul className="list-disc list-inside space-y-1 text-sm">
-              <li>Install dependencies: <code className="bg-white/10 px-2 py-1 rounded">pip install -r requirements.txt</code></li>
-              <li>Download YOLOv8n model to the server directory</li>
-              <li>Run server: <code className="bg-white/10 px-2 py-1 rounded">python video_server.py</code></li>
-            </ul>
+            <p className="text-white/50">Model</p>
+            <p className="text-white font-medium">EMEET C60E</p>
           </div>
           <div>
-            <p className="font-medium text-white mb-2">2. Connect Camera</p>
-            <ul className="list-disc list-inside space-y-1 text-sm">
-              <li>Connect EMEET C60E webcam to Raspberry Pi USB port</li>
-              <li>Ensure camera is recognized: <code className="bg-white/10 px-2 py-1 rounded">ls /dev/video*</code></li>
-            </ul>
+            <p className="text-white/50">Resolution</p>
+            <p className="text-white font-medium">640×480</p>
           </div>
           <div>
-            <p className="font-medium text-white mb-2">3. Connect Web Interface</p>
-            <ul className="list-disc list-inside space-y-1 text-sm">
-              <li>Enter Raspberry Pi IP address above (e.g., http://192.168.1.100:5000)</li>
-              <li>Click "Start Stream" to begin video feed</li>
-              <li>AI detection will automatically count passengers</li>
-            </ul>
+            <p className="text-white/50">FPS</p>
+            <p className="text-white font-medium">10</p>
+          </div>
+          <div>
+            <p className="text-white/50">Detection</p>
+            <p className="text-green-400 font-medium">HOG Person Detector</p>
           </div>
         </div>
       </div>

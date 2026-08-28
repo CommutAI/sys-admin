@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { TrendingUp, Users, Armchair, Calendar, Brain, AlertTriangle, Eye, Scan, XCircle, CheckCircle, Search, Filter, Video, Camera, Wifi, WifiOff, Play, Square, RefreshCw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import io from 'socket.io-client';
+import { useRaspberryPi } from '../hooks/useRaspberryPi';
 
 const PassengerAnalytics = () => {
   const [timeRange, setTimeRange] = useState('daily');
@@ -16,15 +16,6 @@ const PassengerAnalytics = () => {
   const [showCameraFeeds, setShowCameraFeeds] = useState(false);
   const [cameraFeeds, setCameraFeeds] = useState([]);
   const [selectedCamera, setSelectedCamera] = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [passengerCount, setPassengerCount] = useState(0);
-  const [averageCount, setAverageCount] = useState(0);
-  const [lastUpdate, setLastUpdate] = useState(null);
-  const [error, setError] = useState(null);
-  const [serverUrl, setServerUrl] = useState('http://localhost:5000');
-  const socketRef = useRef(null);
-  const videoRef = useRef(null);
   const [stats, setStats] = useState({
     totalPassengers: 0,
     yoloCount: 0,
@@ -33,100 +24,21 @@ const PassengerAnalytics = () => {
     anomaliesDetected: 0
   });
 
-  useEffect(() => {
-    fetchAnalyticsData();
-    // Set up real-time subscription for fare irregularities
-    const subscription = supabase
-      .channel('fare-irregularities-channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'fare_irregularities' }, () => {
-        fetchAnalyticsData();
-      })
-      .subscribe();
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [timeRange]);
-
-  useEffect(() => {
-    connectToServer();
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-      }
-    };
-  }, [serverUrl]);
-
-  const connectToServer = () => {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-    }
-
-    socketRef.current = io(serverUrl, {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-    });
-
-    socketRef.current.on('connect', () => {
-      setIsConnected(true);
-      setError(null);
-    });
-
-    socketRef.current.on('disconnect', () => {
-      setIsConnected(false);
-      setIsStreaming(false);
-    });
-
-    socketRef.current.on('video_frame', (data) => {
-      if (data.frame && videoRef.current) {
-        videoRef.current.src = `data:image/jpeg;base64,${data.frame}`;
-        setIsStreaming(true);
-      }
-    });
-
-    socketRef.current.on('passenger_count', (data) => {
-      setPassengerCount(data.count);
-      setAverageCount(data.average_count.toFixed(1));
-      setLastUpdate(new Date().toLocaleTimeString());
-    });
-
-    socketRef.current.on('status', (data) => {
-      console.log('Server status:', data.message);
-    });
-
-    socketRef.current.on('error', (data) => {
-      setError(data.message);
-      console.error('Server error:', data.message);
-    });
-
-    socketRef.current.on('connect_error', (error) => {
-      setIsConnected(false);
-      setError('Failed to connect to video server');
-      console.error('Connection error:', error);
-    });
-  };
-
-  const startStream = () => {
-    if (socketRef.current && isConnected) {
-      socketRef.current.emit('start_stream');
-    }
-  };
-
-  const stopStream = () => {
-    if (socketRef.current && isConnected) {
-      socketRef.current.emit('stop_stream');
-      setIsStreaming(false);
-    }
-  };
-
-  const refreshConnection = () => {
-    setIsConnected(false);
-    setIsStreaming(false);
-    setError(null);
-    setTimeout(() => connectToServer(), 500);
-  };
+  const {
+    online,
+    connectionStatus,
+    error,
+    passengerCount,
+    averageCount,
+    isStreaming,
+    lastUpdate,
+    videoRef,
+    connect,
+    disconnect,
+    refresh,
+    startStream,
+    stopStream
+  } = useRaspberryPi({ autoConnect: false, enableHealthCheck: false });
 
   const fetchAnalyticsData = async () => {
     try {
@@ -142,36 +54,54 @@ const PassengerAnalytics = () => {
         startDate.setMonth(startDate.getMonth() - 6);
       }
 
-      const { data: counts } = await supabase
-        .from('passenger_counts')
-        .select('*, trips(*, buses(*))')
-        .gte('recorded_at', startDate.toISOString())
-        .order('recorded_at', { ascending: true });
+      let counts = [];
+      let boarded = [];
+      let irregularities = [];
 
-      // Fetch boarded passengers
-      const { data: boarded } = await supabase
-        .from('boarded_passengers')
-        .select('*, trips(*, buses(*))')
-        .gte('boarded_at', startDate.toISOString())
-        .order('boarded_at', { ascending: true });
+      try {
+        const { data: countsData } = await supabase
+          .from('passenger_counts')
+          .select('*, trips(*, buses(*))')
+          .gte('recorded_at', startDate.toISOString())
+          .order('recorded_at', { ascending: true });
+        counts = countsData || [];
+      } catch (err) {
+        console.warn('Failed to fetch passenger counts:', err.message);
+      }
 
-      // Fetch fare irregularities
-      const { data: irregularities } = await supabase
-        .from('fare_irregularities')
-        .select('*, trips(*, buses(*))')
-        .gte('detected_at', startDate.toISOString())
-        .order('detected_at', { ascending: false })
-        .limit(10);
+      try {
+        const { data: boardedData, error: boardedError } = await supabase
+          .from('boarded_passengers')
+          .select('id, boarded_at')
+          .gte('boarded_at', startDate.toISOString())
+          .order('boarded_at', { ascending: true });
+        if (boardedError) console.warn('boarded_passengers query failed:', boardedError.message);
+        boarded = boardedData || [];
+      } catch (err) {
+        console.warn('Failed to fetch boarded passengers:', err.message);
+      }
 
-      setPassengerCounts(counts || []);
-      setBoardedPassengers(boarded || []);
-      setFareIrregularities(irregularities || []);
+      try {
+        const { data: irregularitiesData } = await supabase
+          .from('fare_irregularities')
+          .select('*, trips(*, buses(*))')
+          .gte('detected_at', startDate.toISOString())
+          .order('detected_at', { ascending: false })
+          .limit(10);
+        irregularities = irregularitiesData || [];
+      } catch (err) {
+        console.warn('Failed to fetch fare irregularities:', err.message);
+      }
+
+      setPassengerCounts(counts);
+      setBoardedPassengers(boarded);
+      setFareIrregularities(irregularities);
 
       // Calculate statistics
-      const totalPassengers = (counts || []).reduce((sum, pc) => sum + (pc.count || 0), 0);
-      const yoloCount = (counts || []).reduce((sum, pc) => sum + (pc.ai_count || 0), 0);
-      const qrCount = (boarded || []).length;
-      const anomaliesCount = (irregularities || []).length;
+      const totalPassengers = counts.reduce((sum, pc) => sum + (pc.count || 0), 0);
+      const yoloCount = counts.reduce((sum, pc) => sum + (pc.ai_count || 0), 0);
+      const qrCount = boarded.length;
+      const anomaliesCount = irregularities.length;
 
       // Calculate seat utilization (would need bus capacity data)
       const seatUtilization = totalPassengers > 0 ? Math.round((qrCount / totalPassengers) * 100) : 0;
@@ -186,6 +116,17 @@ const PassengerAnalytics = () => {
 
     } catch (error) {
       console.error('Error fetching analytics data:', error);
+      // Set empty data on error to prevent empty page
+      setPassengerCounts([]);
+      setBoardedPassengers([]);
+      setFareIrregularities([]);
+      setStats({
+        totalPassengers: 0,
+        yoloCount: 0,
+        qrCount: 0,
+        seatUtilization: 0,
+        anomaliesDetected: 0
+      });
     } finally {
       setLoading(false);
     }
@@ -292,6 +233,11 @@ const PassengerAnalytics = () => {
     return matchesSearch && matchesStatus && matchesType;
   });
 
+  // Fetch data on component mount and when time range changes
+  useEffect(() => {
+    fetchAnalyticsData();
+  }, [timeRange]);
+
   const typeColors = {
     double_scan: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
     count_mismatch: 'bg-orange-500/20 text-orange-400 border-orange-500/50',
@@ -311,6 +257,11 @@ const PassengerAnalytics = () => {
       <div className="space-y-6">
         <h1 className="text-white text-3xl font-bold mb-2">Passenger Analytics</h1>
         <p className="text-white/60">Loading analytics data...</p>
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-center py-12">
+            <RefreshCw className="w-8 h-8 text-orange-400 animate-spin" />
+          </div>
+        </div>
       </div>
     );
   }
@@ -404,15 +355,8 @@ const PassengerAnalytics = () => {
             Live Bus Video Monitoring
           </h2>
           <div className="flex items-center gap-3">
-            <input
-              type="text"
-              value={serverUrl}
-              onChange={(e) => setServerUrl(e.target.value)}
-              placeholder="Server URL (e.g., http://192.168.1.100:5000)"
-              className="bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500 w-80"
-            />
             <button
-              onClick={refreshConnection}
+              onClick={refresh}
               className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg transition-colors"
               title="Refresh Connection"
             >
@@ -423,18 +367,20 @@ const PassengerAnalytics = () => {
 
         {/* Connection Status */}
         <div className={`mb-4 p-4 rounded-xl flex items-center gap-3 ${
-          isConnected ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'
+          online ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'
         }`}>
-          {isConnected ? (
+          {online ? (
             <Wifi className="w-5 h-5 text-green-400" />
           ) : (
             <WifiOff className="w-5 h-5 text-red-400" />
           )}
           <div className="flex-1">
             <p className="text-white font-medium">
-              {isConnected ? 'Connected to Video Server' : 'Disconnected from Video Server'}
+              {online ? 'Connected to Raspberry Pi' : 'Disconnected from Raspberry Pi'}
             </p>
-            <p className="text-white/60 text-sm">{serverUrl}</p>
+            <p className="text-white/60 text-sm">
+              Status: {connectionStatus.charAt(0).toUpperCase() + connectionStatus.slice(1)}
+            </p>
           </div>
           {error && (
             <div className="flex items-center gap-2 text-red-400">
@@ -448,19 +394,26 @@ const PassengerAnalytics = () => {
           {/* Video Feed */}
           <div className="lg:col-span-2">
             <div className="bg-black/30 rounded-xl overflow-hidden relative aspect-video">
-              {isStreaming ? (
-                <img
-                  ref={videoRef}
-                  alt="Live video feed"
-                  className="w-full h-full object-contain"
-                />
-              ) : (
+              <img
+                ref={videoRef}
+                alt="Live video feed"
+                className={`w-full h-full object-contain ${isStreaming ? 'block' : 'hidden'}`}
+              />
+              {!isStreaming && (
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-center">
+                  <div className="text-center px-6">
                     <Video className="w-16 h-16 text-white/30 mx-auto mb-4" />
-                    <p className="text-white/50">
-                      {isConnected ? 'Click "Start Stream" to begin' : 'Connect to server to start streaming'}
-                    </p>
+                    {error ? (
+                      <>
+                        <p className="text-red-400 font-medium mb-1">Stream Error</p>
+                        <p className="text-white/50 text-sm">{error}</p>
+                        <p className="text-white/30 text-xs mt-2">Check the camera is connected and yolov8n.pt is present on the Pi</p>
+                      </>
+                    ) : (
+                      <p className="text-white/50">
+                        {online ? 'Click "Start Stream" to begin' : 'Connect to server to start streaming'}
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -475,7 +428,7 @@ const PassengerAnalytics = () => {
               )}
               {/* Stream Controls */}
               <div className="absolute bottom-4 right-4 flex gap-2">
-                {!isStreaming && isConnected && (
+                {!isStreaming && online && (
                   <button
                     onClick={startStream}
                     className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
@@ -530,8 +483,8 @@ const PassengerAnalytics = () => {
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-white/60">Connection</span>
-                  <span className={`font-medium ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
-                    {isConnected ? 'Connected' : 'Disconnected'}
+                  <span className={`font-medium ${online ? 'text-green-400' : 'text-red-400'}`}>
+                    {online ? 'Connected' : 'Disconnected'}
                   </span>
                 </div>
               </div>
@@ -560,6 +513,12 @@ const PassengerAnalytics = () => {
 
       <div className="glass-card p-6">
         <h2 className="text-white text-xl font-bold mb-4">Passenger Count Comparison (YOLO vs QR)</h2>
+        {getChartData().length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-white/40">
+            <TrendingUp className="w-12 h-12 mb-3" />
+            <p>No passenger data available for the selected time range</p>
+          </div>
+        ) : (
         <ResponsiveContainer width="100%" height={400}>
           <BarChart data={getChartData()}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
@@ -574,6 +533,7 @@ const PassengerAnalytics = () => {
             <Bar dataKey="yolo" fill="#8b5cf6" name="YOLO Count" />
           </BarChart>
         </ResponsiveContainer>
+        )}
       </div>
 
       <div className="glass-card p-6">
@@ -710,6 +670,12 @@ const PassengerAnalytics = () => {
 
         <div className="glass-card p-6">
           <h2 className="text-white text-xl font-bold mb-4">Route Utilization</h2>
+          {getRouteUtilization().length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-white/40">
+              <Armchair className="w-12 h-12 mb-3" />
+              <p>No route data available</p>
+            </div>
+          ) : (
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={getRouteUtilization()} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
@@ -723,11 +689,18 @@ const PassengerAnalytics = () => {
               <Bar dataKey="utilization" fill="#f97316" radius={[0, 8, 8, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          )}
         </div>
       </div>
 
       <div className="glass-card p-6">
         <h2 className="text-white text-xl font-bold mb-4">Passenger Trend</h2>
+        {getChartData().length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-white/40">
+            <TrendingUp className="w-12 h-12 mb-3" />
+            <p>No trend data available</p>
+          </div>
+        ) : (
         <ResponsiveContainer width="100%" height={300}>
           <LineChart data={getChartData()}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
@@ -742,6 +715,7 @@ const PassengerAnalytics = () => {
             <Line type="monotone" dataKey="yolo" strokeWidth={2} stroke="#8b5cf6" name="YOLO Count" />
           </LineChart>
         </ResponsiveContainer>
+        )}
       </div>
     </div>
   );

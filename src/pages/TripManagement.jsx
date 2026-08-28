@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { setPiTrip, clearPiTrip } from '../services/raspberryPiApi';
 
 const TripManagement = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -78,7 +79,7 @@ const TripManagement = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('trips')
-        .select('*, buses(*), conductor_staff:staff_users!conductor_id(*)')
+        .select('*, buses(*), staff_users!conductor_id(*)')
         .order('started_at', { ascending: false });
 
       if (error) throw error;
@@ -114,6 +115,10 @@ const TripManagement = () => {
         .eq('id', tripId);
 
       if (error) throw error;
+
+      // Tell the Pi the trip is over so it stops linking counts to this trip
+      await clearPiTrip();
+
       fetchTrips();
     } catch (error) {
       console.error('Error ending trip:', error);
@@ -131,6 +136,10 @@ const TripManagement = () => {
         .eq('id', tripId);
 
       if (error) throw error;
+
+      // Tell the Pi the trip is cancelled
+      await clearPiTrip();
+
       fetchTrips();
     } catch (error) {
       console.error('Error cancelling trip:', error);
@@ -141,7 +150,7 @@ const TripManagement = () => {
   const handleAddTrip = async (e) => {
     e.preventDefault();
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('trips')
         .insert([{
           bus_id: newTrip.bus_id,
@@ -150,9 +159,18 @@ const TripManagement = () => {
           current_lng: newTrip.current_lng,
           status: 'in_progress',
           started_at: new Date().toISOString()
-        }]);
+        }])
+        .select('id')
+        .single();
 
       if (error) throw error;
+
+      // Tell the Pi which trip is now active so it can link passenger counts to this trip
+      if (data?.id) {
+        const piOk = await setPiTrip(data.id);
+        if (!piOk) console.warn('Trip started in DB but Pi was not notified (server may be offline)');
+      }
+
       alert('Trip started successfully!');
       setShowAddModal(false);
       setNewTrip({ bus_id: '', conductor_id: '', current_lat: 14.5995, current_lng: 120.9842 });
@@ -279,7 +297,7 @@ const TripManagement = () => {
 
       let query = supabase
         .from('trips')
-        .select('*, buses(*), conductor_staff:staff_users!conductor_id(*), passenger_counts(count)')
+        .select('*, buses(*), staff_users!conductor_id(*), passenger_counts(count)')
         .gte('started_at', startDate.toISOString())
         .order('started_at', { ascending: false });
 
@@ -333,7 +351,7 @@ const TripManagement = () => {
   const filteredTrips = trips.filter(trip => {
     const matchesSearch = trip.buses?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          trip.buses?.route?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         trip.conductor_staff?.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
+                         trip.staff_users?.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = filterStatus === 'all' || trip.status === filterStatus;
     return matchesSearch && matchesStatus;
   });
@@ -592,7 +610,7 @@ const TripManagement = () => {
                     </div>
                     <div className="flex items-center gap-2 text-white/70 text-sm mb-2">
                       <User size={14} />
-                      <span>{trip.conductor_staff?.full_name || 'N/A'}</span>
+                      <span>{trip.staff_users?.full_name || 'N/A'}</span>
                     </div>
                     <div className="flex items-center gap-4 text-white/60 text-sm mb-3">
                       <div className="flex items-center gap-1">
@@ -665,7 +683,7 @@ const TripManagement = () => {
                 </div>
                 <div className="flex items-center gap-2 text-white/70 text-sm mb-2">
                   <User size={14} />
-                  <span>{trip.conductor_staff?.full_name || 'N/A'}</span>
+                  <span>{trip.staff_users?.full_name || 'N/A'}</span>
                 </div>
                 <div className="flex items-center gap-2 text-white/60 text-sm mb-3">
                   <Clock size={14} />
@@ -781,7 +799,7 @@ const TripManagement = () => {
             <form onSubmit={handleEditTrip} className="space-y-4">
               <div className="bg-white/5 p-3 rounded-xl mb-4">
                 <p className="text-white/60 text-xs">Bus: {selectedTrip.buses?.plate_number}</p>
-                <p className="text-white/60 text-xs">Conductor: {selectedTrip.conductor_staff?.full_name}</p>
+                <p className="text-white/60 text-xs">Conductor: {selectedTrip.staff_users?.full_name}</p>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -856,7 +874,7 @@ const TripManagement = () => {
                 <User className="text-orange-400" />
                 <div>
                   <p className="text-white/60 text-sm">Conductor</p>
-                  <p className="text-white font-medium">{selectedTrip.conductor_staff?.full_name}</p>
+                  <p className="text-white font-medium">{selectedTrip.staff_users?.full_name}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
