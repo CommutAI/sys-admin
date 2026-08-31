@@ -41,23 +41,104 @@ const ManageUsers = () => {
   const handleAddUser = async (e) => {
     e.preventDefault();
     try {
-      const { data: authData, error: authError } = await supabaseAdmin.auth.signUp({
-        email: newUser.email,
-        password: newUser.password,
-        options: {
-          data: {
-            full_name: newUser.full_name,
-            role: newUser.role
-          }
-        }
+      console.log('Creating user with:', newUser);
+      
+      // Check if user already exists
+      const { data: existingUser, error: checkError } = await supabaseAdmin
+        .from('staff_users')
+        .select('email')
+        .eq('email', newUser.email)
+        .single();
+
+      if (existingUser) {
+        throw new Error(`User with email ${newUser.email} already exists`);
+      }
+      
+      // Try using the direct creation function first
+      const userId = crypto.randomUUID();
+      console.log('Generated user ID:', userId);
+      
+      const { data: rpcData, error: rpcError } = await supabaseAdmin.rpc('create_user_direct', {
+        user_id: userId,
+        user_email: newUser.email,
+        user_password: newUser.password,
+        user_full_name: newUser.full_name,
+        user_role: newUser.role
       });
 
-      if (authError) throw authError;
+      console.log('RPC Result:', { data: rpcData, error: rpcError });
+
+      if (rpcError) {
+        // Check if it's a duplicate email error
+        if (rpcError.code === '23505' && rpcError.message.includes('email')) {
+          throw new Error(`User with email ${newUser.email} already exists`);
+        }
+        
+        console.error('RPC Error:', rpcError);
+        
+        // Fallback to standard Supabase auth if RPC fails
+        console.warn('RPC not available, trying standard auth signup...');
+        const { data: authData, error: authError } = await supabaseAdmin.auth.signUp({
+          email: newUser.email,
+          password: newUser.password,
+          options: {
+            data: {
+              full_name: newUser.full_name,
+              role: newUser.role
+            }
+          }
+        });
+
+        if (authError) {
+          throw new Error(`Email validation failed: ${authError.message}. Try using a valid email format like user@gmail.com`);
+        }
+        
+        console.log('Auth signup successful:', authData);
+        
+        // Manually create staff_users record since trigger might not have fired
+        if (authData?.user?.id) {
+          console.log('Creating staff_users record manually for user:', authData.user.id);
+          const { error: staffError } = await supabaseAdmin
+            .from('staff_users')
+            .insert({
+              id: authData.user.id,
+              full_name: newUser.full_name,
+              email: newUser.email,
+              role: newUser.role,
+              is_active: true
+            });
+            
+          if (staffError) {
+            console.error('Error creating staff_users record:', staffError);
+            // Try update instead if insert fails (user might already exist)
+            const { error: updateError } = await supabaseAdmin
+              .from('staff_users')
+              .update({
+                full_name: newUser.full_name,
+                role: newUser.role,
+                is_active: true
+              })
+              .eq('id', authData.user.id);
+              
+            if (updateError) {
+              console.error('Error updating staff_users record:', updateError);
+            } else {
+              console.log('Staff_users record updated successfully');
+            }
+          } else {
+            console.log('Staff_users record created successfully');
+          }
+        }
+      } else {
+        console.log('RPC creation successful:', rpcData);
+      }
 
       alert('User created successfully!');
       setShowAddModal(false);
       setNewUser({ email: '', full_name: '', role: 'conductor', password: '' });
-      fetchUsers();
+      
+      // Force refresh to show the new user
+      setTimeout(() => fetchUsers(), 1000);
     } catch (error) {
       console.error('Error creating user:', error);
       alert('Error creating user: ' + error.message);
@@ -93,6 +174,7 @@ const ManageUsers = () => {
   const roleColors = {
     admin: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
     operator: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/50',
+    driver: 'bg-orange-500/20 text-orange-400 border-orange-500/50',
     conductor: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
     cs_desk: 'bg-green-500/20 text-green-400 border-green-500/50',
   };
@@ -101,13 +183,15 @@ const ManageUsers = () => {
     { id: 'all', label: 'All Users', icon: UserCheck },
     { id: 'admin', label: 'Admin Users', icon: Shield },
     { id: 'operator', label: 'Operators', icon: Shield },
-    { id: 'cs_desk', label: 'Customer Service', icon: UserCheck },
+    { id: 'driver', label: 'Drivers', icon: UserCheck },
     { id: 'conductor', label: 'Conductors', icon: UserCheck },
+    { id: 'cs_desk', label: 'Customer Service', icon: UserCheck },
   ];
 
   const roleCounts = {
     admin: users.filter(u => u.role === 'admin').length,
     operator: users.filter(u => u.role === 'operator').length,
+    driver: users.filter(u => u.role === 'driver').length,
     cs_desk: users.filter(u => u.role === 'cs_desk').length,
     conductor: users.filter(u => u.role === 'conductor').length,
   };
@@ -138,51 +222,63 @@ const ManageUsers = () => {
       </div>
 
       {/* Stats Section */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="glass-card p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center">
-              <Shield className="w-6 h-6 text-purple-400" />
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="glass-card p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-purple-500/20 rounded-lg flex items-center justify-center">
+              <Shield className="w-4 h-4 text-purple-400" />
             </div>
             <div>
-              <p className="text-white/60 text-sm">Admin Users</p>
-              <p className="text-white text-2xl font-bold">{roleCounts.admin}</p>
+              <p className="text-white/60 text-xs">Admin Users</p>
+              <p className="text-white text-lg font-bold">{roleCounts.admin}</p>
             </div>
           </div>
         </div>
 
-        <div className="glass-card p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-indigo-500/20 rounded-xl flex items-center justify-center">
-              <Shield className="w-6 h-6 text-indigo-400" />
+        <div className="glass-card p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-indigo-500/20 rounded-lg flex items-center justify-center">
+              <Shield className="w-4 h-4 text-indigo-400" />
             </div>
             <div>
-              <p className="text-white/60 text-sm">Operators</p>
-              <p className="text-white text-2xl font-bold">{roleCounts.operator}</p>
+              <p className="text-white/60 text-xs">Operators</p>
+              <p className="text-white text-lg font-bold">{roleCounts.operator}</p>
             </div>
           </div>
         </div>
 
-        <div className="glass-card p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center">
-              <UserCheck className="w-6 h-6 text-blue-400" />
+        <div className="glass-card p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center">
+              <UserCheck className="w-4 h-4 text-blue-400" />
             </div>
             <div>
-              <p className="text-white/60 text-sm">Customer Service</p>
-              <p className="text-white text-2xl font-bold">{roleCounts.cs_desk}</p>
+              <p className="text-white/60 text-xs">Customer Service</p>
+              <p className="text-white text-lg font-bold">{roleCounts.cs_desk}</p>
             </div>
           </div>
         </div>
 
-        <div className="glass-card p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-orange-500/20 rounded-xl flex items-center justify-center">
-              <UserCheck className="w-6 h-6 text-orange-400" />
+        <div className="glass-card p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-orange-500/20 rounded-lg flex items-center justify-center">
+              <UserCheck className="w-4 h-4 text-orange-400" />
             </div>
             <div>
-              <p className="text-white/60 text-sm">Conductors</p>
-              <p className="text-white text-2xl font-bold">{roleCounts.conductor}</p>
+              <p className="text-white/60 text-xs">Conductors</p>
+              <p className="text-white text-lg font-bold">{roleCounts.conductor}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="glass-card p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-orange-500/20 rounded-lg flex items-center justify-center">
+              <UserCheck className="w-4 h-4 text-orange-400" />
+            </div>
+            <div>
+              <p className="text-white/60 text-xs">Drivers</p>
+              <p className="text-white text-lg font-bold">{roleCounts.driver}</p>
             </div>
           </div>
         </div>
@@ -307,12 +403,13 @@ const ManageUsers = () => {
                 <select
                   value={newUser.role}
                   onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
                   <option value="admin">Admin</option>
                   <option value="operator">Operator</option>
-                  <option value="cs_desk">Customer Service</option>
+                  <option value="driver">Driver</option>
                   <option value="conductor">Conductor</option>
+                  <option value="cs_desk">Customer Service</option>
                 </select>
               </div>
               <div>

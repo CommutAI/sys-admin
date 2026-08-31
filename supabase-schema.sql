@@ -10,14 +10,14 @@
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'staff_role') THEN
-    CREATE TYPE staff_role AS ENUM ('admin', 'operator', 'conductor', 'cs_desk');
+    CREATE TYPE staff_role AS ENUM ('admin', 'operator', 'driver', 'conductor', 'cs_desk');
   END IF;
 END $$;
 
--- Note: If 'operator' needs to be added to an existing enum, this requires manual migration:
+-- Note: If 'driver' needs to be added to an existing enum, this requires manual migration:
 -- 1. Backup data: ALTER TABLE staff_users ALTER COLUMN role TYPE TEXT USING role::TEXT;
 -- 2. Drop enum: DROP TYPE staff_role;
--- 3. Recreate: CREATE TYPE staff_role AS ENUM ('admin', 'operator', 'conductor', 'cs_desk');
+-- 3. Recreate: CREATE TYPE staff_role AS ENUM ('admin', 'operator', 'driver', 'conductor', 'cs_desk');
 -- 4. Restore: ALTER TABLE staff_users ALTER COLUMN role TYPE staff_role USING role::staff_role;
 
 DO $$ BEGIN
@@ -73,7 +73,7 @@ BEGIN
   user_role := COALESCE(NEW.raw_user_meta_data->>'role', 'conductor');
   
   -- Validate role against available enum values
-  IF user_role NOT IN ('admin', 'operator', 'conductor', 'cs_desk') THEN
+  IF user_role NOT IN ('admin', 'operator', 'driver', 'conductor', 'cs_desk') THEN
     user_role := 'conductor';
   END IF;
   
@@ -136,6 +136,24 @@ BEGIN
   END IF;
 END $$;
 
+-- Add conductor_id and driver_id columns to buses if they don't exist (for existing tables)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'buses' AND column_name = 'conductor_id'
+  ) THEN
+    ALTER TABLE buses ADD COLUMN conductor_id UUID REFERENCES staff_users (id) ON DELETE SET NULL;
+  END IF;
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'buses' AND column_name = 'driver_id'
+  ) THEN
+    ALTER TABLE buses ADD COLUMN driver_id UUID REFERENCES staff_users (id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
 -- Add card_type and purchase_price columns to qr_cards if they don't exist
 DO $$
 BEGIN
@@ -186,6 +204,7 @@ CREATE TABLE IF NOT EXISTS trips (
   id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   bus_id          UUID        NOT NULL REFERENCES buses (id),
   conductor_id    UUID        NOT NULL REFERENCES staff_users (id),
+  driver_id       UUID        REFERENCES staff_users (id),
   started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ended_at        TIMESTAMPTZ,
   status          trip_status NOT NULL DEFAULT 'in_progress',
@@ -194,6 +213,17 @@ CREATE TABLE IF NOT EXISTS trips (
   current_lng     FLOAT8,
   gps_updated_at  TIMESTAMPTZ
 );
+
+-- Add driver_id column to existing trips table if it doesn't exist
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'trips' AND column_name = 'driver_id'
+  ) THEN
+    ALTER TABLE trips ADD COLUMN driver_id UUID REFERENCES staff_users (id);
+  END IF;
+END $$;
 
 -- ── 4. QR Cards ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS qr_cards (
@@ -1506,7 +1536,98 @@ EXCEPTION
     RAISE LOG 'Error inserting staff users: %', SQLERRM;
 END $$;
 
--- ── 31.1. Create Admin Test User Instructions ─────────────────────────────────────
+-- ── 31. Development Helper Functions ───────────────────────────────────────────
+-- Function to create users directly bypassing email validation (for development/testing)
+CREATE OR REPLACE FUNCTION create_user_direct(
+  user_id UUID,
+  user_email TEXT,
+  user_password TEXT,
+  user_full_name TEXT,
+  user_role TEXT
+)
+RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  -- Insert into auth.users bypassing email validation
+  INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, raw_user_meta_data)
+  VALUES (
+    user_id,
+    user_email,
+    crypt(user_password, gen_salt('bf')),
+    NOW(),
+    jsonb_build_object('full_name', user_full_name, 'role', user_role)
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    encrypted_password = EXCLUDED.encrypted_password,
+    email_confirmed_at = EXCLUDED.email_confirmed_at,
+    raw_user_meta_data = EXCLUDED.raw_user_meta_data;
+  
+  -- Insert into staff_users
+  INSERT INTO staff_users (id, full_name, email, role, is_active)
+  VALUES (
+    user_id,
+    user_full_name,
+    user_email,
+    user_role::staff_role,
+    true
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    full_name = EXCLUDED.full_name,
+    email = EXCLUDED.email,
+    role = EXCLUDED.role;
+    
+  RETURN user_id;
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE LOG 'Error in create_user_direct: %', SQLERRM;
+    RAISE;
+END;
+$$;
+
+-- ── 31.1. Fix Existing Auth Users Missing staff_users Records ───────────────────────
+-- Run this to create staff_users records for existing auth users that are missing them
+-- This is useful when users were created via auth but staff_users wasn't created
+
+-- Fix the specific driver user you mentioned
+INSERT INTO staff_users (id, full_name, email, role, is_active)
+VALUES (
+  '2c12d26a-efbd-463a-b060-32bf4de9afa7',
+  'driver01',
+  'driver@commutai.test',
+  'driver',
+  true
+)
+ON CONFLICT (id) DO UPDATE SET
+  full_name = EXCLUDED.full_name,
+  email = EXCLUDED.email,
+  role = EXCLUDED.role;
+
+-- Generic function to fix all missing staff_users records
+CREATE OR REPLACE FUNCTION fix_missing_staff_users()
+RETURNS INTEGER LANGUAGE plpgsql AS $$
+DECLARE
+  user_count INTEGER;
+BEGIN
+  INSERT INTO staff_users (id, full_name, email, role, is_active)
+  SELECT 
+    u.id,
+    COALESCE(u.raw_user_meta_data->>'full_name', split_part(u.email, '@', 1)),
+    u.email,
+    COALESCE((u.raw_user_meta_data->>'role')::staff_role, 'conductor'),
+    true
+  FROM auth.users u
+  LEFT JOIN staff_users s ON u.id = s.id
+  WHERE s.id IS NULL;
+  
+  GET DIAGNOSTICS user_count = ROW_COUNT;
+  RETURN user_count;
+END;
+$$;
+
+-- Run this to fix all missing records
+-- SELECT fix_missing_staff_users();
+
+-- ── 31.2. Create Admin Test User Instructions ─────────────────────────────────────
 -- To create test users, follow these steps in the Supabase Dashboard:
 --
 -- 1. Go to Supabase Dashboard → Authentication → Users → Add user

@@ -214,7 +214,7 @@ const Dashboard = () => {
       const totalTrips = trips?.length || 0;
       const activeBusesCount = buses?.length || 0;
       const activeConductorsCount = staffUsers?.filter(u => u.role === 'conductor').length || 0;
-      const activeDriversCount = activeConductorsCount;
+      const activeDriversCount = staffUsers?.filter(u => u.role === 'driver').length || 0;
 
       const totalRevenue = transactions?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
       
