@@ -139,9 +139,13 @@ DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
 _count_method_default = 'mog2' if DISABLE_AI else 'yolo'
 COUNT_METHOD = os.getenv('COUNT_METHOD', _count_method_default)
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.pt')
-CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))
-IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.45'))
+CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))  # Keep at 0.25 for better detection
+IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.45'))  # Keep at 0.45 for standard NMS
 JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '60'))
+
+# YOLO-specific confidence threshold for person detection
+# This is higher than the general CONFIDENCE_THRESHOLD to reduce false positives
+YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.60'))
 
 # Video Recording configuration
 ENABLE_VIDEO_RECORDING = os.getenv('ENABLE_VIDEO_RECORDING', 'false').lower() == 'true'
@@ -157,6 +161,7 @@ MOG2_MIN_AREA = int(os.getenv('MOG2_MIN_AREA', '1500'))
 PASSENGER_CLASSES = ['person']
 
 print(f"Detection mode: COUNT_METHOD={COUNT_METHOD}, DISABLE_AI={DISABLE_AI}")
+print(f"YOLO confidence threshold: {YOLO_CONFIDENCE_THRESHOLD}")
 print(f"Ultra-low latency settings: ENABLE_REALTIME_MODE={ENABLE_REALTIME_MODE}, SKIP_DETECTION_FRAMES={SKIP_DETECTION_FRAMES}")
 print(f"Camera settings: {CAMERA_WIDTH}x{CAMERA_HEIGHT} @ {FPS}fps, JPEG_QUALITY={JPEG_QUALITY}")
 print(f"Performance optimizations: DISABLE_DRAWING={DISABLE_DRAWING}, DISABLE_DB_WRITES={DISABLE_DB_WRITES}, FRAME_QUEUE_SIZE={FRAME_QUEUE_SIZE}")
@@ -235,6 +240,9 @@ class VideoProcessor:
             buffer_size = int(self.camera.get(cv2.CAP_PROP_BUFFERSIZE))
                 
             print(f"Camera initialized successfully: {actual_width}x{actual_height} @ {actual_fps}fps (buffer: {buffer_size})")
+            print(f"Requested resolution: {CAMERA_WIDTH}x{CAMERA_HEIGHT}, Actual: {actual_width}x{actual_height}")
+            if actual_width != CAMERA_WIDTH or actual_height != CAMERA_HEIGHT:
+                print(f"Note: Camera adjusted resolution (may not support requested {CAMERA_WIDTH}x{CAMERA_HEIGHT})")
             print(f"Real-time mode: {ENABLE_REALTIME_MODE}, Skip frames: {SKIP_DETECTION_FRAMES}")
             self.camera_reconnect_attempts = 0  # Reset counter on successful initialization
             return True
@@ -374,13 +382,13 @@ class VideoProcessor:
             return []
 
     def _detect_yolo(self, frame):
-        """YOLO-based passenger detection."""
+        """YOLO-based passenger detection with improved accuracy and confidence filtering."""
         try:
             # Use original frame for detection to avoid any YOLO drawing
             # Add multiple parameters to completely disable any YOLO visualization
             results = self.model(
                 frame, 
-                conf=CONFIDENCE_THRESHOLD, 
+                conf=CONFIDENCE_THRESHOLD,  # Use general threshold for initial detection
                 iou=IOU_THRESHOLD, 
                 verbose=False,
                 save=False,
@@ -390,9 +398,13 @@ class VideoProcessor:
                 show_conf=False,
                 line_width=None,
                 show_boxes=False,
-                imgsz=320
+                imgsz=320,
+                max_det=20  # Limit maximum detections to avoid overcounting
             )
-            passenger_detections = []
+            
+            raw_person_detections = []
+            confidence_filtered_detections = []
+            all_person_detections = []
 
             for result in results:
                 # Clear any plot/visualization data from result
@@ -408,29 +420,118 @@ class VideoProcessor:
                         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                         confidence = float(box.conf[0])
 
-                        passenger_detections.append({
+                        raw_person_detections.append({
                             'bbox': [int(x1), int(y1), int(x2), int(y2)],
                             'confidence': confidence,
                             'class': class_name
                         })
 
-            # Debug: always print count so we know YOLO is running
-            if passenger_detections:
-                print(f"[YOLO] Detected {len(passenger_detections)} person(s), "
-                      f"confidences: {[round(d['confidence'],2) for d in passenger_detections]}")
-            else:
-                # Print all detected classes so we can see what YOLO is finding
-                all_classes = []
-                for result in results:
-                    for box in result.boxes:
-                        all_classes.append(self.model.names[int(box.cls[0])])
-                if all_classes:
-                    print(f"[YOLO] No persons — detected: {all_classes}")
+                        # CRITICAL: Apply YOLO-specific confidence threshold BEFORE any further processing
+                        # This ensures low-confidence detections never reach the counting logic
+                        if confidence < YOLO_CONFIDENCE_THRESHOLD:
+                            continue
+
+                        confidence_filtered_detections.append({
+                            'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                            'confidence': confidence,
+                            'class': class_name
+                        })
+
+                        # Filter out very small detections (likely false positives)
+                        box_width = x2 - x1
+                        box_height = y2 - y1
+                        box_area = box_width * box_height
+                        frame_area = frame.shape[0] * frame.shape[1]
+                        
+                        # Minimum size: should be at least 2% of frame area
+                        if box_area < frame_area * 0.02:
+                            continue
+                        
+                        # Aspect ratio check: people are typically taller than wide
+                        aspect_ratio = box_height / box_width if box_width > 0 else 0
+                        if aspect_ratio < 0.5 or aspect_ratio > 4.0:
+                            continue
+
+                        all_person_detections.append({
+                            'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                            'confidence': confidence,
+                            'class': class_name
+                        })
+
+            # Apply additional non-maximum suppression to remove overlapping detections
+            passenger_detections = self._apply_nms(all_person_detections)
+
+            # CRITICAL: Only return the filtered detections - this is what gets counted
+            # The counting logic uses len(returned_value), so this MUST be the filtered count
+            final_count = len(passenger_detections)
+
+            # Enhanced logging for confidence filtering
+            raw_confidences = [round(d['confidence'], 2) for d in raw_person_detections]
+            confidence_filtered_confidences = [round(d['confidence'], 2) for d in confidence_filtered_detections]
+            final_confidences = [round(d['confidence'], 2) for d in passenger_detections]
+            rejected_confidences = [c for c in raw_confidences if c < YOLO_CONFIDENCE_THRESHOLD]
+            
+            print(f"[YOLO] Raw detections: {len(raw_person_detections)}")
+            print(f"[YOLO] Accepted detections: {len(confidence_filtered_detections)}")
+            print(f"[YOLO] Rejected detections: {len(rejected_confidences)}")
+            print(f"[YOLO] Accepted confidences: {confidence_filtered_confidences}")
+            if rejected_confidences:
+                print(f"[YOLO] Rejected confidences: {rejected_confidences}")
+            print(f"[YOLO] Final detections (used for counting): {final_count}")
+            print(f"[YOLO] Final confidences (used for counting): {final_confidences}")
 
             return passenger_detections
         except Exception as e:
             print(f"[YOLO] Detection error: {e}")
             return []
+
+    def _apply_nms(self, detections, iou_threshold=0.45):
+        """Apply Non-Maximum Suppression to remove overlapping detections."""
+        if not detections:
+            return detections
+        
+        # Sort by confidence (highest first)
+        detections_sorted = sorted(detections, key=lambda x: x['confidence'], reverse=True)
+        
+        final_detections = []
+        while detections_sorted:
+            # Keep the highest confidence detection
+            current = detections_sorted.pop(0)
+            final_detections.append(current)
+            
+            # Remove detections that overlap significantly with current
+            remaining = []
+            for det in detections_sorted:
+                iou = self._calculate_iou(current['bbox'], det['bbox'])
+                if iou < iou_threshold:
+                    remaining.append(det)
+            
+            detections_sorted = remaining
+        
+        return final_detections
+
+    def _calculate_iou(self, box1, box2):
+        """Calculate Intersection over Union (IoU) between two bounding boxes."""
+        x1_1, y1_1, x2_1, y2_1 = box1
+        x1_2, y1_2, x2_2, y2_2 = box2
+        
+        # Calculate intersection
+        x1_i = max(x1_1, x1_2)
+        y1_i = max(y1_1, y1_2)
+        x2_i = min(x2_1, x2_2)
+        y2_i = min(y2_1, y2_2)
+        
+        if x2_i <= x1_i or y2_i <= y1_i:
+            return 0.0
+        
+        intersection_area = (x2_i - x1_i) * (y2_i - y1_i)
+        
+        # Calculate union
+        area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
+        area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
+        union_area = area1 + area2 - intersection_area
+        
+        return intersection_area / union_area if union_area > 0 else 0.0
     
     def draw_detections(self, frame, detections):
         """Draw bounding boxes on detected passengers.
@@ -438,26 +539,18 @@ class VideoProcessor:
         as WebSocket JSON data and displayed in the UI panel instead.
         """
         
-        # First, clear any existing text/annotations in the area where we'll draw
-        # This removes any YOLO confidence scores that might have been drawn
-        for detection in detections:
-            x1, y1, x2, y2 = detection['bbox']
-            # Clear area above the bounding box where labels typically appear
-            clear_height = 30
-            if y1 - clear_height >= 0:
-                cv2.rectangle(frame, (x1 - 5, y1 - clear_height), 
-                            (x2 + 5, y1), (0, 0, 0), -1)
-        
         for i, detection in enumerate(detections, 1):
             x1, y1, x2, y2 = detection['bbox']
             confidence = detection['confidence']
 
-            # Bounding box
+            # Bounding box with better visibility
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
 
             # Person number badge above the box (instead of confidence)
             label = f"Person {i}"
             label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            
+            # Draw background for label (orange instead of black)
             cv2.rectangle(frame, (x1, y1 - label_size[1] - 6),
                          (x1 + label_size[0] + 4, y1), (0, 165, 255), -1)
             cv2.putText(frame, label, (x1 + 2, y1 - 3),
@@ -712,6 +805,14 @@ class VideoProcessor:
                         import copy
                         detection_frame = copy.deepcopy(frame)
                         detections = self.detect_passengers(detection_frame)
+                        
+                        # SAFEGUARD: Double-check that all detections meet confidence threshold
+                        if COUNT_METHOD == 'yolo':
+                            valid_detections = [d for d in detections if d.get('confidence', 0) >= YOLO_CONFIDENCE_THRESHOLD]
+                            if len(valid_detections) != len(detections):
+                                print(f"[SAFEGUARD] Found {len(detections) - len(valid_detections)} low-confidence detections that slipped through!")
+                                detections = valid_detections
+                        
                         self.passenger_count = len(detections)
                         self.last_detections = detections
                         self.last_detection_count = self.frame_count
@@ -723,12 +824,20 @@ class VideoProcessor:
                     import copy
                     detection_frame = copy.deepcopy(frame)
                     detections = self.detect_passengers(detection_frame)
+                    
+                    # SAFEGUARD: Double-check that all detections meet confidence threshold
+                    if COUNT_METHOD == 'yolo':
+                        valid_detections = [d for d in detections if d.get('confidence', 0) >= YOLO_CONFIDENCE_THRESHOLD]
+                        if len(valid_detections) != len(detections):
+                            print(f"[SAFEGUARD] Found {len(detections) - len(valid_detections)} low-confidence detections that slipped through!")
+                            detections = valid_detections
+                    
                     self.passenger_count = len(detections)
                     self.last_detections = detections
                 
                 # Only print passenger count periodically to reduce overhead
-                if self.passenger_count > 0 and self.frame_count % 30 == 0:
-                    print(f"[COUNT] {self.passenger_count} passenger(s) in frame")
+                if self.frame_count % 30 == 0:
+                    print(f"[COUNT] {self.passenger_count} passenger(s) in frame (using YOLO confidence-filtered detections)")
                 
                 # Store detection history (reduced from 30 to 10 for less memory)
                 self.detection_history.append(self.passenger_count)

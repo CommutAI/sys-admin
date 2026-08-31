@@ -4,7 +4,7 @@ import { Users, DollarSign, Bus, AlertTriangle, Map as MapIcon, CheckCircle, Clo
 import { supabaseAdmin } from '../lib/supabase';
 import 'leaflet/dist/leaflet.css';
 import { useRaspberryPi } from '../hooks/useRaspberryPi';
-import VideoMonitoring from './VideoMonitoring';
+import { getPiVideoFeedUrl } from '../services/raspberryPiApi';
 
 const KPICard = ({ title, value, change, icon: Icon, color }) => (
   <div className="glass-card p-6 hover:scale-105 transition-transform duration-300">
@@ -20,6 +20,80 @@ const KPICard = ({ title, value, change, icon: Icon, color }) => (
     <p className="text-white text-3xl font-bold">{value}</p>
   </div>
 );
+
+// Compact video widget for the dashboard — smaller than the full VideoMonitoring page
+const CompactVideoFeed = () => {
+  const [useMjpeg, setUseMjpeg] = useState(false);
+  const { online, connectionStatus, error, passengerCount, isStreaming, videoRef, refresh, startStream, connect } = useRaspberryPi({ autoConnect: true, enableHealthCheck: false });
+
+  useEffect(() => {
+    if (online && !isStreaming && !useMjpeg) startStream();
+  }, [online, isStreaming, useMjpeg, startStream]);
+
+  const statusColor = isStreaming || useMjpeg ? 'text-green-400' : online ? 'text-yellow-400' : 'text-red-400';
+  const statusLabel = isStreaming || useMjpeg ? 'Live' : online ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting…' : 'Offline';
+
+  return (
+    <div>
+      {/* Header row */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Video className="w-4 h-4 text-orange-400" />
+          <h2 className="text-white font-semibold text-sm">Bus Video Monitoring</h2>
+          <span className={`text-xs ${statusColor}`}>· {statusLabel}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setUseMjpeg(v => !v)}
+            className={`text-xs px-2 py-1 rounded-lg transition-colors ${useMjpeg ? 'bg-orange-500/30 text-orange-300' : 'bg-white/10 text-white/50 hover:bg-white/20'}`}
+          >
+            {useMjpeg ? 'MJPEG' : 'WS'}
+          </button>
+          <button onClick={refresh} className="bg-white/10 hover:bg-white/20 text-white p-1.5 rounded-lg transition-colors">
+            <RefreshCw size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Video — fixed height for compact size */}
+      <div className="relative bg-black rounded-xl overflow-hidden" style={{ height: '500px' }}>
+        <img ref={videoRef} alt="Live feed" className={`w-full h-full object-contain ${isStreaming && !useMjpeg ? 'block' : 'hidden'}`} />
+        {useMjpeg && <img src={getPiVideoFeedUrl()} alt="MJPEG feed" className="w-full h-full object-contain" />}
+
+        {!isStreaming && !useMjpeg && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <Video className="w-10 h-10 text-white/20" />
+            {error ? (
+              <p className="text-red-400 text-xs text-center px-4">{error}</p>
+            ) : online ? (
+              <p className="text-white/40 text-xs">Starting stream…</p>
+            ) : (
+              <button onClick={connect} className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-xs rounded-lg transition-colors">
+                Connect
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* LIVE badge */}
+        {(isStreaming || useMjpeg) && (
+          <div className="absolute top-2 left-2 bg-black/70 rounded px-2 py-0.5 flex items-center gap-1.5">
+            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+            <span className="text-white text-xs font-medium">LIVE</span>
+          </div>
+        )}
+
+        {/* Passenger count badge */}
+        {(isStreaming || useMjpeg) && (
+          <div className="absolute top-2 right-2 bg-black/70 rounded px-2 py-0.5 flex items-center gap-1.5">
+            <Users className="w-3 h-3 text-orange-400" />
+            <span className="text-white text-xs font-bold">{passengerCount}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const Dashboard = () => {
   const [kpis, setKpis] = useState([
@@ -60,7 +134,8 @@ const Dashboard = () => {
     passengerCount: piPassengerCount,
     currentTripId: piCurrentTripId,
     emergencyStatus: piEmergencyStatus,
-  } = useRaspberryPi({ autoConnect: false, enableHealthCheck: false });
+    hardwareStatus: piHardwareStatus,
+  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
 
   useEffect(() => {
     fetchDashboardData();
@@ -289,7 +364,7 @@ const Dashboard = () => {
     try {
       const { data, error } = await supabaseAdmin
         .from('emergency_alerts')
-        .select('id, status, notes, created_at, acknowledged_at, resolved_at, triggered_at, bus_id, conductor_id, lat, lng, buses(plate_number, route), staff_users!conductor_id(full_name)')
+        .select('id, status, notes, created_at, acknowledged_at, resolved_at, triggered_at, bus_id, conductor_id, lat, lng, buses(plate_number, route)')
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -418,67 +493,74 @@ const Dashboard = () => {
         ))}
       </div>
 
-      {/* Live Video Monitoring — uses VideoMonitoring component for proper auto-stream */}
-      <div className="glass-card p-6 rounded-xl">
-        <VideoMonitoring autoConnect={true} />
-      </div>
+      {/* Live Video Monitoring and Raspberry Pi Status — Side by Side */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Live Video Monitoring — compact widget */}
+        <div className="glass-card p-4 rounded-xl lg:col-span-2">
+          <CompactVideoFeed />
+        </div>
 
-      {/* Raspberry Pi Status Indicators */}
-      <div className="glass-card p-6 rounded-xl">
-        <h2 className="text-white text-lg font-bold mb-4 flex items-center gap-2">
-          <Camera className="text-orange-400" size={20} />
-          Raspberry Pi Status
-        </h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <div className="bg-white/5 p-4 rounded-xl">
-            <div className="flex items-center gap-2 mb-2">
-              <Camera className="w-4 h-4 text-blue-400" />
-              <p className="text-white/60 text-xs">Camera</p>
+        {/* Raspberry Pi Status Indicators */}
+        <div className="glass-card p-6 rounded-xl">
+          <h2 className="text-white text-lg font-bold mb-4 flex items-center gap-2">
+            <Camera className="text-orange-400" size={20} />
+            Raspberry Pi Status
+          </h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white/5 p-4 rounded-xl">
+              <div className="flex items-center gap-2 mb-2">
+                <Video className="w-4 h-4 text-indigo-400" />
+                <p className="text-white/60 text-xs">Server</p>
+              </div>
+              <p className={`text-lg font-bold ${piOnline ? 'text-green-400' : 'text-red-400'}`}>
+                {piOnline ? 'Online' : 'Offline'}
+              </p>
+              <p className="text-white/40 text-xs mt-1">{piConnectionStatus}</p>
             </div>
-            <p className={`text-lg font-bold ${piCameraActive ? 'text-green-400' : 'text-red-400'}`}>
-              {piCameraActive ? 'Active' : 'Inactive'}
-            </p>
-          </div>
-          <div className="bg-white/5 p-4 rounded-xl">
-            <div className="flex items-center gap-2 mb-2">
-              <Users className="w-4 h-4 text-purple-400" />
-              <p className="text-white/60 text-xs">Passengers</p>
+            <div className="bg-white/5 p-4 rounded-xl">
+              <div className="flex items-center gap-2 mb-2">
+                <Camera className="w-4 h-4 text-blue-400" />
+                <p className="text-white/60 text-xs">Camera</p>
+              </div>
+              <p className={`text-lg font-bold ${piCameraActive ? 'text-green-400' : 'text-red-400'}`}>
+                {piCameraActive ? 'Active' : 'Inactive'}
+              </p>
             </div>
-            <p className="text-lg font-bold text-white">{piPassengerCount}</p>
-          </div>
-          <div className="bg-white/5 p-4 rounded-xl">
-            <div className="flex items-center gap-2 mb-2">
-              <Activity className="w-4 h-4 text-orange-400" />
-              <p className="text-white/60 text-xs">Trip ID</p>
+            <div className="bg-white/5 p-4 rounded-xl">
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="w-4 h-4 text-purple-400" />
+                <p className="text-white/60 text-xs">Passengers</p>
+              </div>
+              <p className="text-lg font-bold text-white">{piPassengerCount}</p>
+              <p className="text-white/40 text-xs mt-1">Current count</p>
             </div>
-            <p className="text-lg font-bold text-white">
-              {piCurrentTripId ? `#${piCurrentTripId.slice(0, 8)}` : 'None'}
-            </p>
-          </div>
-          <div className="bg-white/5 p-4 rounded-xl">
-            <div className="flex items-center gap-2 mb-2">
-              <Brain className="w-4 h-4 text-purple-400" />
-              <p className="text-white/60 text-xs">Detection</p>
+            <div className="bg-white/5 p-4 rounded-xl">
+              <div className="flex items-center gap-2 mb-2">
+                <Activity className="w-4 h-4 text-orange-400" />
+                <p className="text-white/60 text-xs">Trip ID</p>
+              </div>
+              <p className="text-lg font-bold text-white">
+                {piCurrentTripId ? `#${piCurrentTripId.slice(0, 8)}` : 'None'}
+              </p>
+              <p className="text-white/40 text-xs mt-1">Active trip</p>
             </div>
-            <p className="text-lg font-bold text-white">YOLO</p>
-          </div>
-          <div className="bg-white/5 p-4 rounded-xl">
-            <div className="flex items-center gap-2 mb-2">
-              <AlertTriangle className={`w-4 h-4 ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`} />
-              <p className="text-white/60 text-xs">Emergency</p>
+            <div className="bg-white/5 p-4 rounded-xl">
+              <div className="flex items-center gap-2 mb-2">
+                <Brain className="w-4 h-4 text-purple-400" />
+                <p className="text-white/60 text-xs">Detection</p>
+              </div>
+              <p className="text-lg font-bold text-white">YOLO</p>
+              <p className="text-white/40 text-xs mt-1">AI Model</p>
             </div>
-            <p className={`text-lg font-bold ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`}>
-              {piEmergencyStatus.emergency_active ? 'Active' : 'Clear'}
-            </p>
-          </div>
-          <div className="bg-white/5 p-4 rounded-xl">
-            <div className="flex items-center gap-2 mb-2">
-              <Video className="w-4 h-4 text-indigo-400" />
-              <p className="text-white/60 text-xs">Server</p>
+            <div className="bg-white/5 p-4 rounded-xl">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertTriangle className={`w-4 h-4 ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`} />
+                <p className="text-white/60 text-xs">Emergency</p>
+              </div>
+              <p className={`text-lg font-bold ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`}>
+                {piEmergencyStatus.emergency_active ? 'Active' : 'Clear'}
+              </p>
             </div>
-            <p className={`text-lg font-bold ${piOnline ? 'text-green-400' : 'text-red-400'}`}>
-              {piOnline ? 'Online' : 'Offline'}
-            </p>
           </div>
         </div>
       </div>
@@ -599,8 +681,10 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Emergency Alerts — full width */}
-      <div className="glass-card p-4">
+      {/* Emergency Alerts and Recent Activity — Split Screen */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Emergency Alerts */}
+        <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-white text-lg font-bold flex items-center gap-2">
               <AlertTriangle className="text-orange-400" />
@@ -670,7 +754,7 @@ const Dashboard = () => {
           </div>
 
           {/* Alerts List */}
-          <div className="space-y-2 max-h-[250px] overflow-y-auto">
+          <div className="space-y-2 max-h-[300px] overflow-y-auto">
             {filteredAlerts.length > 0 ? (
               filteredAlerts.slice(0, 5).map((alert) => {
                 const StatusIcon = alertStatusIcons[alert.status];
@@ -732,30 +816,31 @@ const Dashboard = () => {
               </div>
             )}
           </div>
-      </div>
+        </div>
 
-      {/* Recent Activity */}
-      <div className="glass-card p-4">
-        <h2 className="text-white text-lg font-bold mb-3">Recent Activity</h2>
-        {alerts.length > 0 ? (
-          <div className="divide-y divide-white/5">
-            {alerts.slice(0, 10).map((alert, index) => (
-              <div key={index} className="flex items-center gap-3 py-2.5">
-                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  alert.severity === 'high' ? 'bg-red-400' :
-                  alert.severity === 'medium' ? 'bg-orange-400' : 'bg-yellow-400'
-                }`} />
-                <div className="flex-1 min-w-0">
-                  <span className="text-white/80 text-sm font-medium">{alert.type}</span>
-                  <span className="text-white/50 text-xs ml-2 truncate">{alert.message}</span>
+        {/* Recent Activity */}
+        <div className="glass-card p-4">
+          <h2 className="text-white text-lg font-bold mb-3">Recent Activity</h2>
+          {alerts.length > 0 ? (
+            <div className="divide-y divide-white/5 max-h-[300px] overflow-y-auto">
+              {alerts.slice(0, 10).map((alert, index) => (
+                <div key={index} className="flex items-center gap-3 py-2.5">
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    alert.severity === 'high' ? 'bg-red-400' :
+                    alert.severity === 'medium' ? 'bg-orange-400' : 'bg-yellow-400'
+                  }`} />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-white/80 text-sm font-medium">{alert.type}</span>
+                    <span className="text-white/50 text-xs ml-2 truncate">{alert.message}</span>
+                  </div>
+                  <span className="text-white/30 text-xs flex-shrink-0">{alert.time}</span>
                 </div>
-                <span className="text-white/30 text-xs flex-shrink-0">{alert.time}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-white/40 text-sm py-2">No recent activity</p>
-        )}
+              ))}
+            </div>
+          ) : (
+            <p className="text-white/40 text-sm py-2">No recent activity</p>
+          )}
+        </div>
       </div>
     </div>
   );
