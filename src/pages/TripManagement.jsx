@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabase';
 import { setPiTrip, clearPiTrip } from '../services/raspberryPiApi';
 
 const TripManagement = () => {
@@ -53,7 +53,7 @@ const TripManagement = () => {
     fetchBuses();
     
     // Set up real-time subscription for trips
-    const tripsSubscription = supabase
+    const tripsSubscription = supabaseAdmin
       .channel('trips-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trips' }, () => {
         fetchTrips();
@@ -61,7 +61,7 @@ const TripManagement = () => {
       .subscribe();
 
     // Set up real-time subscription for buses
-    const busesSubscription = supabase
+    const busesSubscription = supabaseAdmin
       .channel('buses-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'buses' }, () => {
         fetchBuses();
@@ -77,7 +77,7 @@ const TripManagement = () => {
   const fetchTrips = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('trips')
         .select('*, buses(*), staff_users!conductor_id(*)')
         .order('started_at', { ascending: false });
@@ -93,7 +93,7 @@ const TripManagement = () => {
 
   const fetchBuses = async () => {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('buses')
         .select('*')
         .order('created_at', { ascending: false });
@@ -109,7 +109,7 @@ const TripManagement = () => {
     if (!confirm('Are you sure you want to end this trip?')) return;
 
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('trips')
         .update({ status: 'completed', ended_at: new Date().toISOString() })
         .eq('id', tripId);
@@ -130,7 +130,7 @@ const TripManagement = () => {
     if (!confirm('Are you sure you want to cancel this trip?')) return;
 
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('trips')
         .update({ status: 'cancelled', ended_at: new Date().toISOString() })
         .eq('id', tripId);
@@ -150,7 +150,7 @@ const TripManagement = () => {
   const handleAddTrip = async (e) => {
     e.preventDefault();
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('trips')
         .insert([{
           bus_id: newTrip.bus_id,
@@ -184,7 +184,7 @@ const TripManagement = () => {
   const handleEditTrip = async (e) => {
     e.preventDefault();
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('trips')
         .update({
           current_lat: newTrip.current_lat,
@@ -208,7 +208,7 @@ const TripManagement = () => {
     if (!confirm('Are you sure you want to delete this trip? This action cannot be undone.')) return;
 
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('trips')
         .delete()
         .eq('id', tripId);
@@ -240,7 +240,7 @@ const TripManagement = () => {
 
   const fetchTripPassengers = async (tripId) => {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('passenger_counts')
         .select('count')
         .eq('trip_id', tripId)
@@ -295,7 +295,7 @@ const TripManagement = () => {
           endDate = new Date();
       }
 
-      let query = supabase
+      let query = supabaseAdmin
         .from('trips')
         .select('*, buses(*), staff_users!conductor_id(*), passenger_counts(count)')
         .gte('started_at', startDate.toISOString())
@@ -360,7 +360,7 @@ const TripManagement = () => {
   const handleAddBus = async (e) => {
     e.preventDefault();
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('buses')
         .insert([newBus]);
 
@@ -379,7 +379,7 @@ const TripManagement = () => {
   const handleUpdateBus = async (e) => {
     e.preventDefault();
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('buses')
         .update(newBus)
         .eq('id', editingBus.id);
@@ -398,7 +398,7 @@ const TripManagement = () => {
 
   const handleUpdateBusStatus = async (busId, newStatus) => {
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('buses')
         .update({ status: newStatus })
         .eq('id', busId);
@@ -414,7 +414,7 @@ const TripManagement = () => {
     if (!confirm('Are you sure you want to delete this bus?')) return;
 
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('buses')
         .delete()
         .eq('id', busId);

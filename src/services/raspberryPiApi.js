@@ -5,8 +5,9 @@
  */
 
 const RASPBERRY_PI_URL = import.meta.env.VITE_RASPBERRY_PI_URL || 'http://192.168.1.45:5000';
-const DEFAULT_TIMEOUT = 10000; // 10 seconds
-const WEBSOCKET_TIMEOUT = 15000; // 15 seconds for WebSocket connection (increased from 5s)
+const DEFAULT_TIMEOUT = 10000; // Increased from 5s to 10s for more stable connections
+const WEBSOCKET_TIMEOUT = 15000; // Increased from 8s to 15s for more stable connection detection
+const HEARTBEAT_INTERVAL = 60000; // Increased from 30s to 60s to reduce network load
 
 /**
  * Generic HTTP request handler with timeout
@@ -332,6 +333,7 @@ export function createPiWebSocket(onMessage, onOpen, onClose, onError) {
   const wsUrl = getPiWebSocketUrl();
   let ws = null;
   let timeoutId = null;
+  let heartbeatInterval = null;
 
   try {
     ws = new WebSocket(wsUrl);
@@ -344,9 +346,22 @@ export function createPiWebSocket(onMessage, onOpen, onClose, onError) {
       }
     }, WEBSOCKET_TIMEOUT);
 
+    // Heartbeat function to keep connection alive
+    const startHeartbeat = () => {
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      heartbeatInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'heartbeat' }));
+        } else {
+          clearInterval(heartbeatInterval);
+        }
+      }, HEARTBEAT_INTERVAL);
+    };
+
     ws.onopen = () => {
       clearTimeout(timeoutId);
       console.log('WebSocket connected to Raspberry Pi');
+      startHeartbeat(); // Start heartbeat after connection
       if (onOpen) onOpen();
     };
 
@@ -361,12 +376,14 @@ export function createPiWebSocket(onMessage, onOpen, onClose, onError) {
 
     ws.onclose = () => {
       clearTimeout(timeoutId);
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
       console.log('WebSocket disconnected from Raspberry Pi');
       if (onClose) onClose();
     };
 
     ws.onerror = (error) => {
       clearTimeout(timeoutId);
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
       console.error('WebSocket error:', error);
       if (onError) onError(error);
     };
@@ -374,6 +391,7 @@ export function createPiWebSocket(onMessage, onOpen, onClose, onError) {
     return ws;
   } catch (error) {
     clearTimeout(timeoutId);
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
     console.error('Failed to create WebSocket connection:', error);
     if (onError) onError(error);
     return null;

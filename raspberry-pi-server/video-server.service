@@ -4,23 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/raspberry-pi-server
-Environment="SUPABASE_URL=your_supabase_url"
-Environment="SUPABASE_KEY=your_supabase_key"
-Environment="ENABLE_SMS=true"
-Environment="ENABLE_GPS=true"
-Environment="ENABLE_EMERGENCY_BUTTON=true"
-Environment="ENABLE_GEOLOCATION=true"
-Environment="SIM900A_PORT=/dev/ttyS0"
-Environment="SIM900A_BAUDRATE=9600"
-Environment="NEO6M_PORT=/dev/ttyS1"
-Environment="NEO6M_BAUDRATE=9600"
-Environment="EMERGENCY_BUTTON_PIN=18"
-Environment="OSM_USER_AGENT=BusMonitoringSystem"
-Environment="EMERGENCY_CONTACTS="
-Environment="ADMIN_CONTACTS="
-ExecStart=/usr/bin/python3 /home/pi/raspberry-pi-server/video_server_fastapi.py
+User=chichi
+WorkingDirectory=/home/chichi/raspberry-pi-server
+Environment="PATH=/home/chichi/raspberry-pi-server/venv/bin"
+ExecStart=/home/chichi/raspberry-pi-server/venv/bin/python video_server_fastapi.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

@@ -38,7 +38,7 @@ const PassengerAnalytics = () => {
     refresh,
     startStream,
     stopStream
-  } = useRaspberryPi({ autoConnect: false, enableHealthCheck: false });
+  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
 
   const fetchAnalyticsData = async () => {
     try {
@@ -499,11 +499,15 @@ const PassengerAnalytics = () => {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-white/60">Resolution</span>
-                  <span className="text-white">1280x720</span>
+                  <span className="text-white">320x240</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-white/60">AI Model</span>
                   <span className="text-white">YOLOv8n</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-white/60">Detection Method</span>
+                  <span className="text-white">YOLO</span>
                 </div>
               </div>
             </div>

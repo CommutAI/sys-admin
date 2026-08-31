@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { FileText, Download, Calendar, TrendingUp, Users, DollarSign, Bus, Activity, ArrowUp, ArrowDown, ArrowLeftRight, Search, Filter, MoreHorizontal } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -39,10 +39,10 @@ const Reports = () => {
   const fetchStats = async () => {
     try {
       const [revenueData, tripsData, passengersData, busesData] = await Promise.all([
-        supabase.from('transactions').select('amount').eq('status', 'completed'),
-        supabase.from('trips').select('*'),
-        supabase.from('passenger_counts').select('count'),
-        supabase.from('buses').select('*').eq('status', 'active'),
+        supabaseAdmin.from('transactions').select('amount').eq('status', 'completed'),
+        supabaseAdmin.from('trips').select('*'),
+        supabaseAdmin.from('passenger_counts').select('count'),
+        supabaseAdmin.from('buses').select('*').eq('status', 'active'),
       ]);
 
       const totalRevenue = (revenueData.data || []).reduce((sum, t) => sum + (t.amount || 0), 0);
@@ -65,7 +65,7 @@ const Reports = () => {
 
   const fetchRecentActivity = async () => {
     try {
-      const { data } = await supabase
+      const { data } = await supabaseAdmin
         .from('trips')
         .select('*, buses(*), conductor_staff:staff_users(*)')
         .order('started_at', { ascending: false })
@@ -79,7 +79,7 @@ const Reports = () => {
 
   const fetchTransactions = async () => {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('transactions')
         .select('*, staff:staff_users(*)')
         .order('created_at', { ascending: false });
@@ -107,7 +107,7 @@ const Reports = () => {
 
   const fetchGcashTransactions = async () => {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('gcash_transactions')
         .select('*')
         .order('created_at', { ascending: false });
@@ -139,7 +139,7 @@ const Reports = () => {
 
       switch (reportType) {
         case 'trips':
-          const { data: trips } = await supabase
+          const { data: trips } = await supabaseAdmin
             .from('trips')
             .select('*, buses(*), conductor_staff:staff_users(*)')
             .gte('started_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
@@ -161,7 +161,7 @@ const Reports = () => {
           break;
 
         case 'passengers':
-          const { data: passengerCounts } = await supabase
+          const { data: passengerCounts } = await supabaseAdmin
             .from('passenger_counts')
             .select('*, trips(*, buses(*))')
             .gte('recorded_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
@@ -182,7 +182,7 @@ const Reports = () => {
           break;
 
         case 'revenue':
-          const { data: transactions } = await supabase
+          const { data: transactions } = await supabaseAdmin
             .from('transactions')
             .select('*, trips(*, buses(*))')
             .gte('created_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
@@ -202,7 +202,7 @@ const Reports = () => {
           break;
 
         case 'buses':
-          const { data: buses } = await supabase
+          const { data: buses } = await supabaseAdmin
             .from('buses')
             .select('*')
             .order('created_at', { ascending: false });
@@ -219,7 +219,7 @@ const Reports = () => {
           break;
 
         case 'irregularities':
-          const { data: irregularities } = await supabase
+          const { data: irregularities } = await supabaseAdmin
             .from('fare_irregularities')
             .select('*, trips(*, buses(*))')
             .gte('detected_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
@@ -262,7 +262,7 @@ const Reports = () => {
 
       switch (reportType) {
         case 'trips':
-          const { data: trips } = await supabase
+          const { data: trips } = await supabaseAdmin
             .from('trips')
             .select('*, buses(*), conductor_staff:staff_users(*)')
             .gte('started_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
@@ -282,7 +282,7 @@ const Reports = () => {
           break;
 
         case 'passengers':
-          const { data: passengerCounts } = await supabase
+          const { data: passengerCounts } = await supabaseAdmin
             .from('passenger_counts')
             .select('*, trips(*, buses(*))')
             .gte('recorded_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
@@ -302,7 +302,7 @@ const Reports = () => {
           break;
 
         case 'revenue':
-          const { data: transactions } = await supabase
+          const { data: transactions } = await supabaseAdmin
             .from('transactions')
             .select('*, trips(*, buses(*))')
             .gte('created_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
@@ -322,7 +322,7 @@ const Reports = () => {
           break;
 
         case 'buses':
-          const { data: buses } = await supabase
+          const { data: buses } = await supabaseAdmin
             .from('buses')
             .select('*')
             .order('created_at', { ascending: false });
@@ -339,7 +339,7 @@ const Reports = () => {
           break;
 
         case 'irregularities':
-          const { data: irregularities } = await supabase
+          const { data: irregularities } = await supabaseAdmin
             .from('fare_irregularities')
             .select('*, trips(*, buses(*))')
             .gte('detected_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())

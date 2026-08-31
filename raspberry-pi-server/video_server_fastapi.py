@@ -11,10 +11,11 @@ import base64
 import json
 import time
 import asyncio
+import uuid
 from typing import Optional
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
 import queue
@@ -103,22 +104,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Camera configuration
+# Camera configuration - Ultra-low latency
 CAMERA_ID = int(os.getenv('CAMERA_ID', '0'))
-CAMERA_WIDTH = int(os.getenv('CAMERA_WIDTH', '640'))   # lowered default: 1280 OOMs the Pi
-CAMERA_HEIGHT = int(os.getenv('CAMERA_HEIGHT', '480'))  # lowered default: 720 OOMs the Pi
-FPS = int(os.getenv('FPS', '10'))                        # lowered default: 15 wastes RAM on queue
+CAMERA_WIDTH = int(os.getenv('CAMERA_WIDTH', '320'))   # ultra-low resolution
+CAMERA_HEIGHT = int(os.getenv('CAMERA_HEIGHT', '240'))  # ultra-low resolution
+FPS = int(os.getenv('FPS', '30'))                        # high frame rate
+
+# Ultra-low latency optimization settings
+ENABLE_REALTIME_MODE = os.getenv('ENABLE_REALTIME_MODE', 'true').lower() == 'true'
+SKIP_DETECTION_FRAMES = int(os.getenv('SKIP_DETECTION_FRAMES', '5'))  # Skip more frames
+FRAME_QUEUE_SIZE = int(os.getenv('FRAME_QUEUE_SIZE', '1'))  # Minimal queue
+DISABLE_DRAWING = os.getenv('DISABLE_DRAWING', 'false').lower() == 'true'
+DISABLE_DB_WRITES = os.getenv('DISABLE_DB_WRITES', 'true').lower() == 'true'
+SKIP_WEBSOCKET_THROTTLE = os.getenv('SKIP_WEBSOCKET_THROTTLE', 'true').lower() == 'true'
 
 # AI Model configuration
 DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
 # COUNT_METHOD: read from env first, then fall back based on DISABLE_AI
-# Default is 'hog' — built into OpenCV, detects still people, no model file needed
-_count_method_default = 'mog2' if DISABLE_AI else 'hog'
+# Default is 'yolo' — more accurate detection using YOLOv8 model
+_count_method_default = 'mog2' if DISABLE_AI else 'yolo'
 COUNT_METHOD = os.getenv('COUNT_METHOD', _count_method_default)
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.pt')
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.45'))
-JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '60'))
+JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '25'))    # very low quality for speed
+
+# Video Recording configuration
+ENABLE_VIDEO_RECORDING = os.getenv('ENABLE_VIDEO_RECORDING', 'false').lower() == 'true'
+VIDEO_STORAGE_PATH = os.getenv('VIDEO_STORAGE_PATH', './recordings')
+MAX_VIDEO_DURATION = int(os.getenv('MAX_VIDEO_DURATION', '300'))  # 5 minutes max per recording
+VIDEO_FORMAT = os.getenv('VIDEO_FORMAT', 'mp4')
+VIDEO_BITRATE = int(os.getenv('VIDEO_BITRATE', '1000000'))  # 1 Mbps
 
 # Minimum contour area (pixels²) for MOG2 to count as a person
 MOG2_MIN_AREA = int(os.getenv('MOG2_MIN_AREA', '1500'))
@@ -127,6 +143,9 @@ MOG2_MIN_AREA = int(os.getenv('MOG2_MIN_AREA', '1500'))
 PASSENGER_CLASSES = ['person']
 
 print(f"Detection mode: COUNT_METHOD={COUNT_METHOD}, DISABLE_AI={DISABLE_AI}")
+print(f"Ultra-low latency settings: ENABLE_REALTIME_MODE={ENABLE_REALTIME_MODE}, SKIP_DETECTION_FRAMES={SKIP_DETECTION_FRAMES}")
+print(f"Camera settings: {CAMERA_WIDTH}x{CAMERA_HEIGHT} @ {FPS}fps, JPEG_QUALITY={JPEG_QUALITY}")
+print(f"Performance optimizations: DISABLE_DRAWING={DISABLE_DRAWING}, DISABLE_DB_WRITES={DISABLE_DB_WRITES}, FRAME_QUEUE_SIZE={FRAME_QUEUE_SIZE}")
 
 class VideoProcessor:
     def __init__(self):
@@ -134,7 +153,7 @@ class VideoProcessor:
         self.model = None
         self.bg_subtractor = None   # used when COUNT_METHOD == 'mog2'
         self.hog = None             # used when COUNT_METHOD == 'hog'
-        self.frame_queue = queue.Queue(maxsize=5)  # small queue — Pi has limited RAM
+        self.frame_queue = queue.Queue(maxsize=FRAME_QUEUE_SIZE)  # Optimized queue size
         self.running = False
         self.passenger_count = 0
         self.detection_history = []
@@ -146,25 +165,58 @@ class VideoProcessor:
         self.max_reconnect_attempts = 5
         self.reconnect_delay = 2  # seconds
         
+        # Real-time optimization attributes
+        self.frame_count = 0
+        self.last_detection_count = 0
+        self.last_detections = []
+        
+        # Video recording attributes
+        self.video_writer = None
+        self.recording = False
+        self.recording_start_time = None
+        self.current_video_path = None
+        self.recording_frame_count = 0
+        
     def initialize_camera(self):
-        """Initialize the EMEET C60E webcam"""
+        """Initialize the EMEET C60E webcam - Optimized for real-time performance"""
         try:
             if self.camera is not None:
                 self.camera.release()
 
-            # On Raspberry Pi, OpenCV must be told to use the V4L2 backend
-            # explicitly, otherwise it tries GStreamer/obs-sensor which fails.
-            self.camera = cv2.VideoCapture(CAMERA_ID, cv2.CAP_V4L2)
+            # Cross-platform camera initialization
+            # On Raspberry Pi, use V4L2 backend; on Windows/Mac, use default backend
+            import platform
+            if platform.system() == 'Linux':
+                # On Raspberry Pi, OpenCV must be told to use the V4L2 backend
+                # explicitly, otherwise it tries GStreamer/obs-sensor which fails.
+                self.camera = cv2.VideoCapture(CAMERA_ID, cv2.CAP_V4L2)
+            else:
+                # On Windows/Mac, use default backend (DirectShow/MSMF/AVFoundation)
+                self.camera = cv2.VideoCapture(CAMERA_ID)
 
             if not self.camera.isOpened():
                 print(f"Error: Could not open camera with ID {CAMERA_ID} (V4L2)")
                 self._list_available_cameras()
                 return False
-                
+            
+            # Ultra-low latency: Set camera buffer size to absolute minimum
+            self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer for lowest latency
+            
             # Set camera properties
             self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
             self.camera.set(cv2.CAP_PROP_FPS, FPS)
+            
+            # Ultra-low latency optimizations
+            self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))  # Use MJPG for fastest capture
+            self.camera.set(cv2.CAP_PROP_AUTOFOCUS, 0)  # Disable autofocus
+            self.camera.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0)  # Disable auto exposure if supported
+            
+            # Disable all processing features that add latency
+            try:
+                self.camera.set(cv2.CAP_PROP_CONVERT_RGB, 0)  # Skip color conversion if possible
+            except:
+                pass  # Some cameras don't support this
             
             # Verify camera is still open after setting properties
             if not self.camera.isOpened():
@@ -177,8 +229,15 @@ class VideoProcessor:
                 print("Error: Could not read test frame from camera")
                 self.camera.release()
                 return False
+            
+            # Get actual camera settings
+            actual_width = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_height = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            actual_fps = int(self.camera.get(cv2.CAP_PROP_FPS))
+            buffer_size = int(self.camera.get(cv2.CAP_PROP_BUFFERSIZE))
                 
-            print(f"Camera initialized successfully: {CAMERA_WIDTH}x{CAMERA_HEIGHT} @ {FPS}fps")
+            print(f"Camera initialized successfully: {actual_width}x{actual_height} @ {actual_fps}fps (buffer: {buffer_size})")
+            print(f"Real-time mode: {ENABLE_REALTIME_MODE}, Skip frames: {SKIP_DETECTION_FRAMES}")
             self.camera_reconnect_attempts = 0  # Reset counter on successful initialization
             return True
         except Exception as e:
@@ -188,9 +247,14 @@ class VideoProcessor:
     def _list_available_cameras(self):
         """List available camera devices"""
         print("Attempting to find available cameras...")
+        import platform
         for i in range(4):
             try:
-                test_cam = cv2.VideoCapture(i, cv2.CAP_V4L2)
+                if platform.system() == 'Linux':
+                    test_cam = cv2.VideoCapture(i, cv2.CAP_V4L2)
+                else:
+                    test_cam = cv2.VideoCapture(i)
+                    
                 if test_cam.isOpened():
                     ret, frame = test_cam.read()
                     if ret:
@@ -318,10 +382,29 @@ class VideoProcessor:
     def _detect_yolo(self, frame):
         """YOLO-based passenger detection."""
         try:
-            results = self.model(frame, conf=CONFIDENCE_THRESHOLD, iou=IOU_THRESHOLD, verbose=False)
+            # Use original frame for detection to avoid any YOLO drawing
+            # Add multiple parameters to completely disable any YOLO visualization
+            results = self.model(
+                frame, 
+                conf=CONFIDENCE_THRESHOLD, 
+                iou=IOU_THRESHOLD, 
+                verbose=False,
+                save=False,
+                show=False,
+                stream=False,
+                show_labels=False,
+                show_conf=False,
+                line_width=None,
+                boxes=False,
+                imgsz=320
+            )
             passenger_detections = []
 
             for result in results:
+                # Clear any plot/visualization data from result
+                if hasattr(result, 'plot'):
+                    result.plot = None
+                
                 boxes = result.boxes
                 for box in boxes:
                     class_id = int(box.cls[0])
@@ -360,27 +443,54 @@ class VideoProcessor:
         The passenger count is NOT rendered onto the frame — it is sent
         as WebSocket JSON data and displayed in the UI panel instead.
         """
+        print(f"[DRAW] Drawing {len(detections)} detections with custom labels")
+        
+        # First, clear any existing text/annotations in the area where we'll draw
+        # This removes any YOLO confidence scores that might have been drawn
         for detection in detections:
+            x1, y1, x2, y2 = detection['bbox']
+            # Clear area above the bounding box where labels typically appear
+            clear_height = 30
+            if y1 - clear_height >= 0:
+                cv2.rectangle(frame, (x1 - 5, y1 - clear_height), 
+                            (x2 + 5, y1), (0, 0, 0), -1)
+        
+        for i, detection in enumerate(detections, 1):
             x1, y1, x2, y2 = detection['bbox']
             confidence = detection['confidence']
 
             # Bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
 
-            # Small confidence badge above the box
-            label = f"Person: {confidence:.2f}"
+            # Person number badge above the box (instead of confidence)
+            label = f"Person {i}"
             label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
             cv2.rectangle(frame, (x1, y1 - label_size[1] - 6),
                          (x1 + label_size[0] + 4, y1), (0, 165, 255), -1)
             cv2.putText(frame, label, (x1 + 2, y1 - 3),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
 
+            print(f"[DRAW] Drew label: {label} at position ({x1}, {y1})")
         return frame
     
     def encode_frame(self, frame):
-        """Encode frame to base64 for streaming"""
+        """Encode frame to base64 for streaming - Ultra-low latency"""
         try:
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+            # Ultra-low latency: Use fastest possible encoding
+            encode_params = [
+                cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY,
+                cv2.IMWRITE_JPEG_OPTIMIZE, 0,  # Disable optimization
+                cv2.IMWRITE_JPEG_PROGRESSIVE, 0,  # Disable progressive
+                cv2.IMWRITE_JPEG_LUMA_QUALITY, JPEG_QUALITY  # Set luma quality
+            ]
+            
+            # Try-except for encoding with fallback
+            try:
+                _, buffer = cv2.imencode('.jpg', frame, encode_params)
+            except:
+                # Fallback to basic encoding if optimized params fail
+                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+            
             frame_base64 = base64.b64encode(buffer).decode('utf-8')
             return frame_base64
         except Exception as e:
@@ -428,9 +538,156 @@ class VideoProcessor:
         self.current_trip_id = None
         print("Current trip ID cleared")
     
+    def start_recording(self):
+        """Start video recording to file"""
+        if not ENABLE_VIDEO_RECORDING:
+            print("Video recording is disabled in configuration")
+            return False
+        
+        if self.recording:
+            print("Recording already in progress")
+            return False
+        
+        if not self.camera or not self.camera.isOpened():
+            print("Camera not available for recording")
+            return False
+        
+        try:
+            # Create recordings directory if it doesn't exist
+            os.makedirs(VIDEO_STORAGE_PATH, exist_ok=True)
+            
+            # Generate filename with timestamp
+            timestamp = time.strftime('%Y%m%d_%H%M%S')
+            trip_suffix = f"_trip_{self.current_trip_id}" if self.current_trip_id else ""
+            filename = f"video_{timestamp}{trip_suffix}.{VIDEO_FORMAT}"
+            self.current_video_path = os.path.join(VIDEO_STORAGE_PATH, filename)
+            
+            # Initialize video writer
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v') if VIDEO_FORMAT == 'mp4' else cv2.VideoWriter_fourcc(*'XVID')
+            self.video_writer = cv2.VideoWriter(
+                self.current_video_path,
+                fourcc,
+                FPS,
+                (CAMERA_WIDTH, CAMERA_HEIGHT)
+            )
+            
+            if not self.video_writer.isOpened():
+                print("Failed to initialize video writer")
+                return False
+            
+            self.recording = True
+            self.recording_start_time = time.time()
+            self.recording_frame_count = 0
+            print(f"Recording started: {self.current_video_path}")
+            return True
+            
+        except Exception as e:
+            print(f"Error starting recording: {e}")
+            return False
+    
+    def stop_recording(self):
+        """Stop video recording and save metadata to database"""
+        if not self.recording:
+            print("No recording in progress")
+            return None
+        
+        try:
+            self.recording = False
+            
+            if self.video_writer:
+                self.video_writer.release()
+                self.video_writer = None
+            
+            # Calculate duration
+            duration = int(time.time() - self.recording_start_time) if self.recording_start_time else 0
+            
+            # Get file size
+            file_size = 0
+            if self.current_video_path and os.path.exists(self.current_video_path):
+                file_size = os.path.getsize(self.current_video_path)
+            
+            print(f"Recording stopped: {self.current_video_path}")
+            print(f"Duration: {duration}s, Frames: {self.recording_frame_count}, Size: {file_size} bytes")
+            
+            # Save metadata to database
+            recording_id = self.save_video_metadata(duration, file_size)
+            
+            result = {
+                'file_path': self.current_video_path,
+                'duration': duration,
+                'frame_count': self.recording_frame_count,
+                'file_size': file_size,
+                'recording_id': recording_id
+            }
+            
+            self.current_video_path = None
+            self.recording_start_time = None
+            self.recording_frame_count = 0
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error stopping recording: {e}")
+            return None
+    
+    def save_video_metadata(self, duration, file_size):
+        """Save video recording metadata to Supabase database"""
+        if not supabase:
+            print("Database not available - skipping metadata save")
+            return None
+        
+        try:
+            data = {
+                'trip_id': self.current_trip_id,
+                'file_name': os.path.basename(self.current_video_path) if self.current_video_path else 'unknown',
+                'file_path': self.current_video_path,
+                'file_size': file_size,
+                'duration': duration,
+                'format': VIDEO_FORMAT,
+                'storage_type': 'local',
+                'status': 'completed',
+                'metadata': {
+                    'resolution': f"{CAMERA_WIDTH}x{CAMERA_HEIGHT}",
+                    'fps': FPS,
+                    'frame_count': self.recording_frame_count,
+                    'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(self.recording_start_time)) if self.recording_start_time else None
+                }
+            }
+            
+            result = supabase.table('video_recordings').insert(data).execute()
+            if result and result.data:
+                recording_id = result.data[0].get('id')
+                print(f"[DB] Video metadata saved with ID: {recording_id}")
+                return str(recording_id) if recording_id else None
+            else:
+                print("[DB] Video metadata save returned no data")
+                return None
+        except Exception as e:
+            print(f"Error saving video metadata to database: {e}")
+            return None
+    
+    def write_frame_to_video(self, frame):
+        """Write frame to video file if recording is active"""
+        if self.recording and self.video_writer and self.video_writer.isOpened():
+            try:
+                self.video_writer.write(frame)
+                self.recording_frame_count += 1
+                
+                # Check max duration
+                if self.recording_start_time and (time.time() - self.recording_start_time) >= MAX_VIDEO_DURATION:
+                    print("Max recording duration reached, stopping recording")
+                    self.stop_recording()
+                    
+            except Exception as e:
+                print(f"Error writing frame to video: {e}")
+    
     async def process_frames(self):
-        """Main processing loop"""
-        print("Starting video processing...")
+        """Main processing loop - Optimized for real-time performance"""
+        print("Starting video processing (real-time optimized)...")
+        
+        # Performance monitoring
+        last_fps_time = time.time()
+        frame_counter = 0
         
         while self.running:
             try:
@@ -445,73 +702,149 @@ class VideoProcessor:
                         await asyncio.sleep(5)
                         continue
                 
-                # Detect passengers
-                detections = self.detect_passengers(frame)
-                self.passenger_count = len(detections)
-                if self.passenger_count > 0:
+                self.frame_count += 1
+                frame_counter += 1
+                
+                # Calculate actual FPS for monitoring
+                current_time = time.time()
+                if current_time - last_fps_time >= 1.0:
+                    actual_fps = frame_counter / (current_time - last_fps_time)
+                    if self.frame_count % 30 == 0:  # Print every 30 frames
+                        print(f"[PERF] Actual FPS: {actual_fps:.1f}, Queue size: {self.frame_queue.qsize()}")
+                    frame_counter = 0
+                    last_fps_time = current_time
+                
+                # Real-time optimization: Skip detection on some frames
+                if ENABLE_REALTIME_MODE and SKIP_DETECTION_FRAMES > 0:
+                    if self.frame_count % (SKIP_DETECTION_FRAMES + 1) == 0:
+                        # Detect passengers only on specified frames (use deep copy to prevent YOLO drawing)
+                        import copy
+                        detection_frame = copy.deepcopy(frame)
+                        detections = self.detect_passengers(detection_frame)
+                        self.passenger_count = len(detections)
+                        self.last_detections = detections
+                        self.last_detection_count = self.frame_count
+                    else:
+                        # Use last known detections
+                        detections = self.last_detections
+                else:
+                    # Detect passengers on every frame (use deep copy to prevent YOLO drawing)
+                    import copy
+                    detection_frame = copy.deepcopy(frame)
+                    detections = self.detect_passengers(detection_frame)
+                    self.passenger_count = len(detections)
+                    self.last_detections = detections
+                
+                # Only print passenger count periodically to reduce overhead
+                if self.passenger_count > 0 and self.frame_count % 10 == 0:
                     print(f"[COUNT] {self.passenger_count} passenger(s) in frame")
                 
-                # Store detection history (last 30 frames)
+                # Store detection history (reduced from 30 to 10 for less memory)
                 self.detection_history.append(self.passenger_count)
-                if len(self.detection_history) > 30:
+                if len(self.detection_history) > 10:
                     self.detection_history.pop(0)
                 
-                # Save passenger count to database
-                self.save_passenger_count_to_db(self.passenger_count)
+                # Save passenger count to database (can be disabled for ultra-low latency)
+                if not DISABLE_DB_WRITES and self.frame_count % (FPS * self.db_save_interval) == 0:
+                    self.save_passenger_count_to_db(self.passenger_count)
                 
-                # Draw detections on frame
-                annotated_frame = self.draw_detections(frame.copy(), detections)
+                # Real-time optimization: Optional drawing
+                if DISABLE_DRAWING:
+                    print(f"[DRAW] Drawing disabled by config")
+                    annotated_frame = frame
+                else:
+                    print(f"[DRAW] Drawing enabled, applying custom labels")
+                    # Always use original clean frame for our custom drawing
+                    annotated_frame = self.draw_detections(frame, detections)
                 
-                # Encode frame
+                # Write frame to video if recording (can be disabled for max speed)
+                if ENABLE_VIDEO_RECORDING:
+                    self.write_frame_to_video(annotated_frame)
+                
+                # Encode frame for streaming
                 frame_base64 = self.encode_frame(annotated_frame)
                 
                 if frame_base64:
-                    # Put frame in queue for streaming
+                    # Put frame in queue for streaming (drop old frames if queue is full)
                     if self.frame_queue.full():
-                        self.frame_queue.get_nowait()
+                        try:
+                            self.frame_queue.get_nowait()
+                        except queue.Empty:
+                            pass
                     self.frame_queue.put(frame_base64)
                     
-                    # Emit passenger count via WebSocket
-                    passenger_data = {
-                        'count': self.passenger_count,
-                        'timestamp': time.time(),
-                        'average_count': sum(self.detection_history) / len(self.detection_history) if self.detection_history else 0
-                    }
-                    
-                    # Send to all connected clients
-                    disconnected_clients = set()
-                    for client in self.websocket_clients:
-                        try:
-                            await client.send_json(passenger_data)
-                        except:
-                            disconnected_clients.add(client)
-                    
-                    # Remove disconnected clients
-                    self.websocket_clients -= disconnected_clients
+                    # Emit passenger count via WebSocket (throttled unless disabled)
+                    if SKIP_WEBSOCKET_THROTTLE or self.frame_count % 5 == 0:
+                        passenger_data = {
+                            'count': self.passenger_count,
+                            'timestamp': time.time(),
+                            'average_count': sum(self.detection_history) / len(self.detection_history) if self.detection_history else 0,
+                            'fps': FPS,
+                            'realtime_mode': ENABLE_REALTIME_MODE
+                        }
+                        
+                        # Send to all connected clients
+                        disconnected_clients = set()
+                        for client in self.websocket_clients:
+                            try:
+                                await client.send_json(passenger_data)
+                            except:
+                                disconnected_clients.add(client)
+                        
+                        # Remove disconnected clients
+                        self.websocket_clients -= disconnected_clients
                 
-                # Control frame rate
-                await asyncio.sleep(1.0 / FPS)
+                # Minimal frame rate control - rely on camera's natural timing
+                if ENABLE_REALTIME_MODE:
+                    await asyncio.sleep(0.001)  # Minimal sleep for real-time
+                else:
+                    await asyncio.sleep(1.0 / FPS)
                 
             except Exception as e:
                 print(f"Processing error: {e}")
                 await asyncio.sleep(0.1)
     
     async def stream_frames(self):
-        """Background task to stream frames"""
+        """Background task to stream frames - Optimized for low latency"""
+        # Performance monitoring
+        last_stream_time = time.time()
+        stream_counter = 0
+        
         while self.running:
             try:
                 if not self.frame_queue.empty():
                     frame_base64 = self.frame_queue.get_nowait()
+                    stream_counter += 1
                     
-                    disconnected_clients = set()
-                    for client in self.websocket_clients:
-                        try:
-                            await client.send_json({'video_frame': frame_base64})
-                        except:
-                            disconnected_clients.add(client)
+                    # Batch send to all clients to reduce overhead
+                    if self.websocket_clients:
+                        disconnected_clients = set()
+                        for client in self.websocket_clients:
+                            try:
+                                await client.send_json({'video_frame': frame_base64})
+                            except:
+                                disconnected_clients.add(client)
+                        
+                        self.websocket_clients -= disconnected_clients
                     
-                    self.websocket_clients -= disconnected_clients
-                await asyncio.sleep(1.0 / FPS)
+                    # Calculate streaming FPS for monitoring
+                    current_time = time.time()
+                    if current_time - last_stream_time >= 1.0:
+                        stream_fps = stream_counter / (current_time - last_stream_time)
+                        if self.frame_count % 30 == 0:  # Print every 30 frames
+                            print(f"[STREAM] Streaming FPS: {stream_fps:.1f}, Clients: {len(self.websocket_clients)}")
+                        stream_counter = 0
+                        last_stream_time = current_time
+                    
+                    # In real-time mode, process frames as fast as possible
+                    if ENABLE_REALTIME_MODE:
+                        continue  # Don't sleep, process next frame immediately
+                
+                # Only sleep in non-real-time mode
+                if not ENABLE_REALTIME_MODE:
+                    await asyncio.sleep(1.0 / FPS)
+                else:
+                    await asyncio.sleep(0.001)  # Minimal sleep for real-time
             except Exception as e:
                 print(f"Streaming error: {e}")
                 await asyncio.sleep(0.1)
@@ -521,10 +854,15 @@ class VideoProcessor:
         cam_ok = self.initialize_camera()
         if not cam_ok:
             # Try auto-detecting a working camera index before giving up
+            import platform
             for idx in range(4):
                 if idx == CAMERA_ID:
                     continue
-                self.camera = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+                if platform.system() == 'Linux':
+                    self.camera = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+                else:
+                    self.camera = cv2.VideoCapture(idx)
+                    
                 if self.camera.isOpened():
                     ret, _ = self.camera.read()
                     if ret:
@@ -606,6 +944,100 @@ async def clear_trip():
     if hardware_manager:
         hardware_manager.clear_current_trip()
     return JSONResponse({'status': 'success', 'message': 'Trip cleared'})
+
+@app.post("/start-recording")
+async def start_recording():
+    """Start video recording"""
+    success = video_processor.start_recording()
+    if success:
+        return JSONResponse({
+            'status': 'success', 
+            'message': 'Recording started',
+            'file_path': video_processor.current_video_path
+        })
+    else:
+        return JSONResponse({
+            'status': 'error', 
+            'message': 'Failed to start recording'
+        }, status_code=500)
+
+@app.post("/stop-recording")
+async def stop_recording():
+    """Stop video recording"""
+    result = video_processor.stop_recording()
+    if result:
+        return JSONResponse({
+            'status': 'success', 
+            'message': 'Recording stopped',
+            'recording_info': result
+        })
+    else:
+        return JSONResponse({
+            'status': 'error', 
+            'message': 'Failed to stop recording or no recording in progress'
+        }, status_code=500)
+
+@app.get("/recordings")
+async def get_recordings(limit: int = 50, offset: int = 0):
+    """Get list of video recordings from database"""
+    if not supabase:
+        return JSONResponse({'status': 'error', 'message': 'Database not available'}, status_code=503)
+    
+    try:
+        loop = asyncio.get_event_loop()
+        
+        def fetch_data():
+            query = supabase.table('video_recordings').select('*').order('recorded_at', {'ascending': False})
+            return query.range(offset, offset + limit - 1).execute()
+        
+        data, error = await loop.run_in_executor(None, fetch_data)
+        
+        if error:
+            return JSONResponse({'status': 'error', 'message': error.message}, status_code=500)
+        
+        return JSONResponse({'status': 'success', 'data': data[1] if data else []})
+    except Exception as e:
+        return JSONResponse({'status': 'error', 'message': str(e)}, status_code=500)
+
+@app.get("/recordings/{recording_id}")
+async def get_recording(recording_id: str):
+    """Get specific recording details"""
+    if not supabase:
+        return JSONResponse({'status': 'error', 'message': 'Database not available'}, status_code=503)
+    
+    try:
+        loop = asyncio.get_event_loop()
+        data, error = await loop.run_in_executor(
+            None,
+            lambda: supabase.table('video_recordings').select('*').eq('id', recording_id).execute()
+        )
+        
+        if error:
+            return JSONResponse({'status': 'error', 'message': error.message}, status_code=500)
+        
+        if not data or not data[1]:
+            return JSONResponse({'status': 'error', 'message': 'Recording not found'}, status_code=404)
+        
+        return JSONResponse({'status': 'success', 'data': data[1][0]})
+    except Exception as e:
+        return JSONResponse({'status': 'error', 'message': str(e)}, status_code=500)
+
+@app.get("/download-video/{filename}")
+async def download_video(filename: str):
+    """Download a video file"""
+    file_path = os.path.join(VIDEO_STORAGE_PATH, filename)
+    
+    if not os.path.exists(file_path):
+        return JSONResponse({'status': 'error', 'message': 'File not found'}, status_code=404)
+    
+    try:
+        return FileResponse(
+            file_path,
+            media_type='video/mp4',
+            filename=filename
+        )
+    except Exception as e:
+        return JSONResponse({'status': 'error', 'message': str(e)}, status_code=500)
 
 @app.get("/location")
 async def get_location():
@@ -1083,6 +1515,26 @@ async def websocket_endpoint(websocket: WebSocket):
             elif message.get('action') == 'stop_stream':
                 video_processor.stop()
                 await websocket.send_json({"status": "Video stream stopped"})
+            
+            elif message.get('action') == 'start_recording':
+                success = video_processor.start_recording()
+                if success:
+                    await websocket.send_json({
+                        "status": "Recording started",
+                        "file_path": video_processor.current_video_path
+                    })
+                else:
+                    await websocket.send_json({"error": "Failed to start recording"})
+            
+            elif message.get('action') == 'stop_recording':
+                result = video_processor.stop_recording()
+                if result:
+                    await websocket.send_json({
+                        "status": "Recording stopped",
+                        "recording_info": result
+                    })
+                else:
+                    await websocket.send_json({"error": "Failed to stop recording"})
 
     except WebSocketDisconnect:
         print("Client disconnected")

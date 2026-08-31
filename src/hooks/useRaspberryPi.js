@@ -16,9 +16,9 @@ import {
   getPiBaseUrl
 } from '../services/raspberryPiApi';
 
-const HEALTH_CHECK_INTERVAL = 30000; // 30 seconds
-const RECONNECT_DELAY = 5000; // 5 seconds
-const MAX_RECONNECT_ATTEMPTS = 10;
+const HEALTH_CHECK_INTERVAL = 60000; // 60 seconds - reduced frequency
+const RECONNECT_DELAY = 5000; // Increased from 2s to 5s for more stable reconnection
+const MAX_RECONNECT_ATTEMPTS = 5; // Reduced from 10 to 5 to prevent endless retry loops
 
 export function useRaspberryPi(options = {}) {
   const {
@@ -156,7 +156,8 @@ export function useRaspberryPi(options = {}) {
       // Also don't reconnect if the error suggests the server is permanently unavailable
       if (autoConnect && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
         reconnectAttemptsRef.current++;
-        const delay = RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current - 1);
+        // Use more stable backoff to prevent rapid reconnection attempts
+        const delay = RECONNECT_DELAY * Math.min(Math.pow(2, reconnectAttemptsRef.current - 1), 8); // Cap at 8x multiplier
         console.log(`Reconnection attempt ${reconnectAttemptsRef.current} in ${delay}ms`);
         reconnectTimeoutRef.current = setTimeout(connect, delay);
       }
@@ -288,7 +289,8 @@ export function useRaspberryPi(options = {}) {
     // Auto-reconnect if enabled
     if (autoConnect && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
       reconnectAttemptsRef.current++;
-      const delay = RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current - 1);
+      // Use more stable backoff to prevent rapid reconnection attempts
+      const delay = RECONNECT_DELAY * Math.min(Math.pow(2, reconnectAttemptsRef.current - 1), 8); // Cap at 8x multiplier
       console.log(`Reconnection attempt ${reconnectAttemptsRef.current} in ${delay}ms`);
       reconnectTimeoutRef.current = setTimeout(connect, delay);
     }

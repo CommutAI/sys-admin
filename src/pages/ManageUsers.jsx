@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { UserPlus, Search, Edit, Trash2, Shield, UserCheck, MoreVertical } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseAdmin } from '../lib/supabase';
 
 const ManageUsers = () => {
   const [userType, setUserType] = useState('all');
@@ -22,7 +22,9 @@ const ManageUsers = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
+      // Use supabaseAdmin (service_role) to bypass RLS and read all staff users
+      // Must call .auth.signOut() equivalent — service role client has no session by default
+      const { data, error } = await supabaseAdmin
         .from('staff_users')
         .select('*')
         .order('created_at', { ascending: false });
@@ -39,7 +41,7 @@ const ManageUsers = () => {
   const handleAddUser = async (e) => {
     e.preventDefault();
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      const { data: authData, error: authError } = await supabaseAdmin.auth.signUp({
         email: newUser.email,
         password: newUser.password,
         options: {
@@ -64,7 +66,7 @@ const ManageUsers = () => {
 
   const handleToggleStatus = async (userId, currentStatus) => {
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('staff_users')
         .update({ is_active: !currentStatus })
         .eq('id', userId);
@@ -90,19 +92,22 @@ const ManageUsers = () => {
 
   const roleColors = {
     admin: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
+    operator: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/50',
     conductor: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
     cs_desk: 'bg-green-500/20 text-green-400 border-green-500/50',
   };
 
   const userTypes = [
     { id: 'all', label: 'All Users', icon: UserCheck },
-    { id: 'admin', label: 'Admin', icon: Shield },
+    { id: 'admin', label: 'Admin Users', icon: Shield },
+    { id: 'operator', label: 'Operators', icon: Shield },
     { id: 'cs_desk', label: 'Customer Service', icon: UserCheck },
     { id: 'conductor', label: 'Conductors', icon: UserCheck },
   ];
 
   const roleCounts = {
     admin: users.filter(u => u.role === 'admin').length,
+    operator: users.filter(u => u.role === 'operator').length,
     cs_desk: users.filter(u => u.role === 'cs_desk').length,
     conductor: users.filter(u => u.role === 'conductor').length,
   };
@@ -133,7 +138,7 @@ const ManageUsers = () => {
       </div>
 
       {/* Stats Section */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="glass-card p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center">
@@ -142,6 +147,18 @@ const ManageUsers = () => {
             <div>
               <p className="text-white/60 text-sm">Admin Users</p>
               <p className="text-white text-2xl font-bold">{roleCounts.admin}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="glass-card p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-12 h-12 bg-indigo-500/20 rounded-xl flex items-center justify-center">
+              <Shield className="w-6 h-6 text-indigo-400" />
+            </div>
+            <div>
+              <p className="text-white/60 text-sm">Operators</p>
+              <p className="text-white text-2xl font-bold">{roleCounts.operator}</p>
             </div>
           </div>
         </div>
@@ -210,32 +227,52 @@ const ManageUsers = () => {
           </div>
         </div>
 
-        <div className="space-y-3 max-h-[500px] overflow-y-auto">
-          {filteredUsers.slice(0, 10).map((user) => (
-            <div key={user.id} className="bg-white/5 p-4 rounded-xl">
-              <div className="flex justify-between items-start mb-2">
-                <div>
-                  <p className="text-white font-medium">{user.full_name}</p>
-                  <p className="text-white/60 text-sm">{user.email}</p>
-                </div>
-                <span className={`px-2 py-1 rounded-full text-xs border ${roleColors[user.role]}`}>
-                  {user.role}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 text-white/70 text-sm mb-3">
-                <span className={`px-2 py-1 rounded text-xs ${user.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-                  {user.is_active ? 'Active' : 'Inactive'}
-                </span>
-                <span className="text-white/60">{new Date(user.created_at).toLocaleDateString()}</span>
-              </div>
-              <button
-                onClick={() => handleToggleStatus(user.id, user.is_active)}
-                className="w-full px-3 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors"
-              >
-                {user.is_active ? 'Deactivate' : 'Activate'}
-              </button>
-            </div>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="text-left text-white/60 border-b border-white/10">
+                <th className="pb-3 font-medium">Name</th>
+                <th className="pb-3 font-medium">Email</th>
+                <th className="pb-3 font-medium">Role</th>
+                <th className="pb-3 font-medium">Status</th>
+                <th className="pb-3 font-medium">Created</th>
+                <th className="pb-3 font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredUsers.map((user) => (
+                <tr key={user.id} className="border-b border-white/5 hover:bg-white/5">
+                  <td className="py-4">
+                    <p className="text-white font-medium">{user.full_name}</p>
+                  </td>
+                  <td className="py-4">
+                    <p className="text-white/70 text-sm">{user.email}</p>
+                  </td>
+                  <td className="py-4">
+                    <span className={`px-2 py-1 rounded-full text-xs border ${roleColors[user.role] || 'bg-gray-500/20 text-gray-400 border-gray-500/50'}`}>
+                      {user.role}
+                    </span>
+                  </td>
+                  <td className="py-4">
+                    <span className={`px-2 py-1 rounded text-xs ${user.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                      {user.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td className="py-4">
+                    <p className="text-white/60 text-sm">{new Date(user.created_at).toLocaleDateString()}</p>
+                  </td>
+                  <td className="py-4">
+                    <button
+                      onClick={() => handleToggleStatus(user.id, user.is_active)}
+                      className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors"
+                    >
+                      {user.is_active ? 'Deactivate' : 'Activate'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -273,6 +310,7 @@ const ManageUsers = () => {
                   className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
                   <option value="admin">Admin</option>
+                  <option value="operator">Operator</option>
                   <option value="cs_desk">Customer Service</option>
                   <option value="conductor">Conductor</option>
                 </select>

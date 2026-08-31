@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { CreditCard, Ticket, Plus, Search, Filter, Edit, X, MoreHorizontal, HeadphonesIcon, TrendingUp } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabase';
 
 const CardManagement = () => {
   const [activeTab, setActiveTab] = useState('qr-cards');
@@ -38,7 +38,7 @@ const CardManagement = () => {
   };
 
   const fetchQrCards = async () => {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('qr_cards')
       .select('*, issuer:staff_users!issued_by(*)')
       .order('created_at', { ascending: false });
@@ -47,7 +47,7 @@ const CardManagement = () => {
   };
 
   const fetchTempTickets = async () => {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('temporary_tickets')
       .select('*, issuer:staff_users!issued_by(*), trips(*, buses(*))')
       .order('issued_at', { ascending: false });
@@ -56,7 +56,7 @@ const CardManagement = () => {
   };
 
   const fetchCustomerServiceLogs = async () => {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('customer_service_logs')
       .select('*, trips(*, buses(*)), handler:staff_users!handled_by(*)')
       .order('created_at', { ascending: false });
