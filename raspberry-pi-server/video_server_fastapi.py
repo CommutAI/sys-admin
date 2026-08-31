@@ -105,36 +105,50 @@ app.add_middleware(
 )
 
 # Camera configuration - Ultra-low latency
-CAMERA_ID = int(os.getenv('CAMERA_ID', '0'))
-CAMERA_WIDTH = int(os.getenv('CAMERA_WIDTH', '320'))   # ultra-low resolution
-CAMERA_HEIGHT = int(os.getenv('CAMERA_HEIGHT', '240'))  # ultra-low resolution
-FPS = int(os.getenv('FPS', '30'))                        # high frame rate
+# Camera configuration
+# CAMERA_DEVICE accepts either an integer index (0) or a full path ('/dev/video0')
+# On some Pi + OpenCV builds, opening by path is required when index fails.
+_camera_device_env = os.getenv('CAMERA_DEVICE', '')
+_camera_id_env = os.getenv('CAMERA_ID', '0')
+if _camera_device_env:
+    # Explicit device path takes priority
+    CAMERA_DEVICE = _camera_device_env        # e.g. '/dev/video0'
+    CAMERA_ID = _camera_device_env
+else:
+    # Try to parse as integer; fall back to path string
+    try:
+        CAMERA_ID = int(_camera_id_env)
+        CAMERA_DEVICE = f'/dev/video{CAMERA_ID}'  # path equivalent
+    except ValueError:
+        CAMERA_ID = _camera_id_env
+        CAMERA_DEVICE = _camera_id_env
+CAMERA_WIDTH = int(os.getenv('CAMERA_WIDTH', '640'))
+CAMERA_HEIGHT = int(os.getenv('CAMERA_HEIGHT', '480'))
+FPS = int(os.getenv('FPS', '10'))
 
-# Ultra-low latency optimization settings
-ENABLE_REALTIME_MODE = os.getenv('ENABLE_REALTIME_MODE', 'true').lower() == 'true'
-SKIP_DETECTION_FRAMES = int(os.getenv('SKIP_DETECTION_FRAMES', '5'))  # Skip more frames
-FRAME_QUEUE_SIZE = int(os.getenv('FRAME_QUEUE_SIZE', '1'))  # Minimal queue
+# Performance settings
+ENABLE_REALTIME_MODE = os.getenv('ENABLE_REALTIME_MODE', 'false').lower() == 'true'
+SKIP_DETECTION_FRAMES = int(os.getenv('SKIP_DETECTION_FRAMES', '2'))
+FRAME_QUEUE_SIZE = int(os.getenv('FRAME_QUEUE_SIZE', '5'))
 DISABLE_DRAWING = os.getenv('DISABLE_DRAWING', 'false').lower() == 'true'
-DISABLE_DB_WRITES = os.getenv('DISABLE_DB_WRITES', 'true').lower() == 'true'
-SKIP_WEBSOCKET_THROTTLE = os.getenv('SKIP_WEBSOCKET_THROTTLE', 'true').lower() == 'true'
+DISABLE_DB_WRITES = os.getenv('DISABLE_DB_WRITES', 'false').lower() == 'true'
+SKIP_WEBSOCKET_THROTTLE = os.getenv('SKIP_WEBSOCKET_THROTTLE', 'false').lower() == 'true'
 
 # AI Model configuration
 DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
-# COUNT_METHOD: read from env first, then fall back based on DISABLE_AI
-# Default is 'yolo' — more accurate detection using YOLOv8 model
 _count_method_default = 'mog2' if DISABLE_AI else 'yolo'
 COUNT_METHOD = os.getenv('COUNT_METHOD', _count_method_default)
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.pt')
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.45'))
-JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '25'))    # very low quality for speed
+JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '60'))
 
 # Video Recording configuration
 ENABLE_VIDEO_RECORDING = os.getenv('ENABLE_VIDEO_RECORDING', 'false').lower() == 'true'
 VIDEO_STORAGE_PATH = os.getenv('VIDEO_STORAGE_PATH', './recordings')
-MAX_VIDEO_DURATION = int(os.getenv('MAX_VIDEO_DURATION', '300'))  # 5 minutes max per recording
+MAX_VIDEO_DURATION = int(os.getenv('MAX_VIDEO_DURATION', '300'))
 VIDEO_FORMAT = os.getenv('VIDEO_FORMAT', 'mp4')
-VIDEO_BITRATE = int(os.getenv('VIDEO_BITRATE', '1000000'))  # 1 Mbps
+VIDEO_BITRATE = int(os.getenv('VIDEO_BITRATE', '1000000'))
 
 # Minimum contour area (pixels²) for MOG2 to count as a person
 MOG2_MIN_AREA = int(os.getenv('MOG2_MIN_AREA', '1500'))
@@ -178,53 +192,37 @@ class VideoProcessor:
         self.recording_frame_count = 0
         
     def initialize_camera(self):
-        """Initialize the EMEET C60E webcam - Optimized for real-time performance"""
+        """Initialize the EMEET C60E webcam"""
         try:
             if self.camera is not None:
                 self.camera.release()
 
-            # Cross-platform camera initialization
-            # On Raspberry Pi, use V4L2 backend; on Windows/Mac, use default backend
-            import platform
-            if platform.system() == 'Linux':
-                # On Raspberry Pi, OpenCV must be told to use the V4L2 backend
-                # explicitly, otherwise it tries GStreamer/obs-sensor which fails.
-                self.camera = cv2.VideoCapture(CAMERA_ID, cv2.CAP_V4L2)
-            else:
-                # On Windows/Mac, use default backend (DirectShow/MSMF/AVFoundation)
-                self.camera = cv2.VideoCapture(CAMERA_ID)
+            # Open by device path string — works on this Pi/OpenCV combination.
+            self.camera = cv2.VideoCapture(CAMERA_DEVICE)
 
             if not self.camera.isOpened():
-                print(f"Error: Could not open camera with ID {CAMERA_ID} (V4L2)")
+                print(f"Error: Could not open camera at {CAMERA_DEVICE}")
                 self._list_available_cameras()
                 return False
-            
-            # Ultra-low latency: Set camera buffer size to absolute minimum
-            self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer for lowest latency
-            
-            # Set camera properties
+
+            # Force MJPG pixel format BEFORE setting resolution/fps.
+            # The EMEET outputs YUYV by default which the ffmpeg backend
+            # can't decode cleanly — MJPG is natively supported and faster.
+            self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+
+            self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
             self.camera.set(cv2.CAP_PROP_FPS, FPS)
-            
-            # Ultra-low latency optimizations
-            self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))  # Use MJPG for fastest capture
-            self.camera.set(cv2.CAP_PROP_AUTOFOCUS, 0)  # Disable autofocus
-            self.camera.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0)  # Disable auto exposure if supported
-            
-            # Disable all processing features that add latency
-            try:
-                self.camera.set(cv2.CAP_PROP_CONVERT_RGB, 0)  # Skip color conversion if possible
-            except:
-                pass  # Some cameras don't support this
-            
-            # Verify camera is still open after setting properties
+            self.camera.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+
             if not self.camera.isOpened():
                 print("Error: Camera closed after setting properties")
                 return False
-                
-            # Test reading a frame
-            ret, test_frame = self.camera.read()
+
+            # Test read — discard first few frames (they can be garbage after format change)
+            for _ in range(3):
+                ret, test_frame = self.camera.read()
             if not ret or test_frame is None:
                 print("Error: Could not read test frame from camera")
                 self.camera.release()
@@ -247,21 +245,17 @@ class VideoProcessor:
     def _list_available_cameras(self):
         """List available camera devices"""
         print("Attempting to find available cameras...")
-        import platform
         for i in range(4):
+            path = f'/dev/video{i}'
             try:
-                if platform.system() == 'Linux':
-                    test_cam = cv2.VideoCapture(i, cv2.CAP_V4L2)
-                else:
-                    test_cam = cv2.VideoCapture(i)
-                    
+                test_cam = cv2.VideoCapture(path)
                 if test_cam.isOpened():
                     ret, frame = test_cam.read()
-                    if ret:
-                        print(f"Found working camera at index {i}")
+                    if ret and frame is not None:
+                        print(f"Found working camera at {path}")
                     test_cam.release()
             except Exception as e:
-                print(f"Error checking camera index {i}: {e}")
+                print(f"Error checking {path}: {e}")
     
     def reconnect_camera(self):
         """Attempt to reconnect the camera"""
@@ -395,7 +389,7 @@ class VideoProcessor:
                 show_labels=False,
                 show_conf=False,
                 line_width=None,
-                boxes=False,
+                show_boxes=False,
                 imgsz=320
             )
             passenger_detections = []
@@ -443,7 +437,6 @@ class VideoProcessor:
         The passenger count is NOT rendered onto the frame — it is sent
         as WebSocket JSON data and displayed in the UI panel instead.
         """
-        print(f"[DRAW] Drawing {len(detections)} detections with custom labels")
         
         # First, clear any existing text/annotations in the area where we'll draw
         # This removes any YOLO confidence scores that might have been drawn
@@ -470,7 +463,6 @@ class VideoProcessor:
             cv2.putText(frame, label, (x1 + 2, y1 - 3),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
 
-            print(f"[DRAW] Drew label: {label} at position ({x1}, {y1})")
         return frame
     
     def encode_frame(self, frame):
@@ -705,12 +697,11 @@ class VideoProcessor:
                 self.frame_count += 1
                 frame_counter += 1
                 
-                # Calculate actual FPS for monitoring
+                # Calculate actual FPS for monitoring (print only every 150 frames)
                 current_time = time.time()
-                if current_time - last_fps_time >= 1.0:
+                if current_time - last_fps_time >= 5.0:
                     actual_fps = frame_counter / (current_time - last_fps_time)
-                    if self.frame_count % 30 == 0:  # Print every 30 frames
-                        print(f"[PERF] Actual FPS: {actual_fps:.1f}, Queue size: {self.frame_queue.qsize()}")
+                    print(f"[PERF] FPS: {actual_fps:.1f}")
                     frame_counter = 0
                     last_fps_time = current_time
                 
@@ -736,7 +727,7 @@ class VideoProcessor:
                     self.last_detections = detections
                 
                 # Only print passenger count periodically to reduce overhead
-                if self.passenger_count > 0 and self.frame_count % 10 == 0:
+                if self.passenger_count > 0 and self.frame_count % 30 == 0:
                     print(f"[COUNT] {self.passenger_count} passenger(s) in frame")
                 
                 # Store detection history (reduced from 30 to 10 for less memory)
@@ -750,11 +741,8 @@ class VideoProcessor:
                 
                 # Real-time optimization: Optional drawing
                 if DISABLE_DRAWING:
-                    print(f"[DRAW] Drawing disabled by config")
                     annotated_frame = frame
                 else:
-                    print(f"[DRAW] Drawing enabled, applying custom labels")
-                    # Always use original clean frame for our custom drawing
                     annotated_frame = self.draw_detections(frame, detections)
                 
                 # Write frame to video if recording (can be disabled for max speed)
@@ -827,12 +815,11 @@ class VideoProcessor:
                         
                         self.websocket_clients -= disconnected_clients
                     
-                    # Calculate streaming FPS for monitoring
+                    # Calculate streaming FPS for monitoring (infrequent)
                     current_time = time.time()
-                    if current_time - last_stream_time >= 1.0:
+                    if current_time - last_stream_time >= 5.0:
                         stream_fps = stream_counter / (current_time - last_stream_time)
-                        if self.frame_count % 30 == 0:  # Print every 30 frames
-                            print(f"[STREAM] Streaming FPS: {stream_fps:.1f}, Clients: {len(self.websocket_clients)}")
+                        print(f"[STREAM] Streaming FPS: {stream_fps:.1f}, Clients: {len(self.websocket_clients)}")
                         stream_counter = 0
                         last_stream_time = current_time
                     
@@ -853,26 +840,22 @@ class VideoProcessor:
         """Start video processing. Returns (success, error_message)."""
         cam_ok = self.initialize_camera()
         if not cam_ok:
-            # Try auto-detecting a working camera index before giving up
-            import platform
+            # Try other video device paths before giving up
             for idx in range(4):
-                if idx == CAMERA_ID:
+                path = f'/dev/video{idx}'
+                if path == CAMERA_DEVICE:
                     continue
-                if platform.system() == 'Linux':
-                    self.camera = cv2.VideoCapture(idx, cv2.CAP_V4L2)
-                else:
-                    self.camera = cv2.VideoCapture(idx)
-                    
+                self.camera = cv2.VideoCapture(path)
                 if self.camera.isOpened():
                     ret, _ = self.camera.read()
                     if ret:
-                        print(f"Camera found at index {idx} (configured index {CAMERA_ID} failed)")
+                        print(f"Camera found at {path} (configured {CAMERA_DEVICE} failed)")
                         cam_ok = True
                         break
                     self.camera.release()
 
         if not cam_ok:
-            return False, f"Camera not found. Tried indices 0-3. Check USB connection and run: ls /dev/video*"
+            return False, f"Camera not found. Tried /dev/video0-3. Check USB connection and run: ls /dev/video*"
 
         # Model is optional - allow streaming without AI detection
         if not self.initialize_model():

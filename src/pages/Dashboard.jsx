@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
-import { Users, DollarSign, Bus, AlertTriangle, HeadphonesIcon, Map as MapIcon, Navigation, CheckCircle, Clock, Search, Filter, MapPin, Video, Camera, Activity, WifiOff, Loader2, Brain, Play, Square, RefreshCw } from 'lucide-react';
+import { Users, DollarSign, Bus, AlertTriangle, Map as MapIcon, CheckCircle, Clock, Search, Video, Camera, Activity, Brain, RefreshCw } from 'lucide-react';
 import { supabaseAdmin } from '../lib/supabase';
 import 'leaflet/dist/leaflet.css';
 import { useRaspberryPi } from '../hooks/useRaspberryPi';
+import VideoMonitoring from './VideoMonitoring';
 
 const KPICard = ({ title, value, change, icon: Icon, color }) => (
   <div className="glass-card p-6 hover:scale-105 transition-transform duration-300">
@@ -20,27 +20,6 @@ const KPICard = ({ title, value, change, icon: Icon, color }) => (
     <p className="text-white text-3xl font-bold">{value}</p>
   </div>
 );
-
-const AIAlertCard = ({ type, message, time, severity }) => {
-  const severityColors = {
-    high: 'bg-red-500/20 border-red-500/50',
-    medium: 'bg-orange-500/20 border-orange-500/50',
-    low: 'bg-yellow-500/20 border-yellow-500/50',
-  };
-
-  return (
-    <div className={`glass-card p-4 border ${severityColors[severity]} mb-3`}>
-      <div className="flex items-start gap-3">
-        <AlertTriangle className={`w-5 h-5 mt-0.5 ${severity === 'high' ? 'text-red-400' : severity === 'medium' ? 'text-orange-400' : 'text-yellow-400'}`} />
-        <div className="flex-1">
-          <p className="text-white font-medium text-sm">{type}</p>
-          <p className="text-white/60 text-sm mt-1">{message}</p>
-          <p className="text-white/40 text-xs mt-2">{time}</p>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 const Dashboard = () => {
   const [kpis, setKpis] = useState([
@@ -72,23 +51,16 @@ const Dashboard = () => {
   const [alertFilterStatus, setAlertFilterStatus] = useState('all');
   const [alertSearchTerm, setAlertSearchTerm] = useState('');
 
-  // Raspberry Pi integration
+  // Raspberry Pi status for the dashboard status indicators only
+  // Video stream is handled by the VideoMonitoring component below
   const {
     online: piOnline,
     connectionStatus: piConnectionStatus,
     cameraActive: piCameraActive,
     passengerCount: piPassengerCount,
     currentTripId: piCurrentTripId,
-    hardwareStatus: piHardwareStatus,
     emergencyStatus: piEmergencyStatus,
-    location: piLocation,
-    videoRef,
-    isStreaming,
-    error: error,
-    refresh: refresh,
-    startStream: startStream,
-    stopStream: stopStream
-  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
+  } = useRaspberryPi({ autoConnect: false, enableHealthCheck: false });
 
   useEffect(() => {
     fetchDashboardData();
@@ -243,52 +215,44 @@ const Dashboard = () => {
 
   const fetchLiveMapData = async () => {
     try {
-      // Parallelize queries for better performance
+      // Fetch all buses on the route regardless of status — show on map with their current state
       const [
-        { data: activeTrips },
-        { data: allBuses }
+        { data: allBuses },
+        { data: activeTrips }
       ] = await Promise.all([
-        // Fetch active trips with bus information
+        supabaseAdmin.from('buses').select('*').order('bus_number', { ascending: true }),
         supabaseAdmin.from('trips')
           .select('*, buses(*)')
           .eq('status', 'in_progress')
-          .order('started_at', { ascending: false }),
-
-        // Fetch all buses
-        supabaseAdmin.from('buses').select('*')
+          .order('started_at', { ascending: false })
       ]);
 
-      // Transform trips to bus markers
-      const busMarkers = (activeTrips || []).map(trip => ({
-        id: trip.id,
-        plate: trip.buses?.plate_number || 'Unknown',
-        route: trip.buses?.route || 'Unknown',
-        lat: trip.current_lat || 14.5995,
-        lng: trip.current_lng || 120.9842,
-        passengers: 0,
-        status: 'active',
-        busId: trip.bus_id,
-        tripId: trip.id
-      }));
+      // Map active trip IDs to their trip data for quick lookup
+      const tripByBusId = {};
+      (activeTrips || []).forEach(trip => {
+        tripByBusId[trip.bus_id] = trip;
+      });
 
-      // Add inactive buses
-      const inactiveBuses = (allBuses || [])
-        .filter(bus => bus.status !== 'active' || !activeTrips?.some(t => t.bus_id === bus.id))
-        .map(bus => ({
+      // Build a marker for every bus — active trip buses use GPS coords
+      const busMarkers = (allBuses || []).map(bus => {
+        const trip = tripByBusId[bus.id];
+        return {
           id: bus.id,
           plate: bus.plate_number,
           route: bus.route,
-          lat: 14.5995,
-          lng: 120.9842,
+          lat: trip?.current_lat || 8.43,
+          lng: trip?.current_lng || 124.76,
           passengers: 0,
-          status: bus.status === 'maintenance' ? 'maintenance' : 'idle',
-          busId: bus.id
-        }));
+          status: trip ? 'active' : bus.status,
+          busId: bus.id,
+          tripId: trip?.id || null
+        };
+      });
 
-      // Fetch passenger counts for active trips
+      // Fetch latest passenger count for each active trip
       const tripIds = (activeTrips || []).map(t => t.id);
       let totalPassengers = 0;
-      
+
       if (tripIds.length > 0) {
         const { data: passengerCounts } = await supabaseAdmin
           .from('passenger_counts')
@@ -298,31 +262,23 @@ const Dashboard = () => {
 
         const latestCounts = {};
         (passengerCounts || []).forEach(pc => {
-          if (!latestCounts[pc.trip_id]) {
-            latestCounts[pc.trip_id] = pc.count;
-          }
+          if (!latestCounts[pc.trip_id]) latestCounts[pc.trip_id] = pc.count;
         });
 
         busMarkers.forEach(bus => {
-          if (latestCounts[bus.tripId]) {
+          if (bus.tripId && latestCounts[bus.tripId]) {
             bus.passengers = latestCounts[bus.tripId];
             totalPassengers += latestCounts[bus.tripId];
           }
         });
       }
 
-      setBuses([...busMarkers, ...inactiveBuses]);
-
-      // Calculate stats
-      const uniqueRoutes = [...new Set((allBuses || []).map(b => b.route))];
-      const activeBusesCount = (allBuses || []).filter(b => b.status === 'active').length;
-      const maintenanceBusesCount = (allBuses || []).filter(b => b.status === 'maintenance').length;
-
+      setBuses(busMarkers);
       setMapStats({
         totalPassengers,
-        activeBuses: activeBusesCount,
-        totalRoutes: uniqueRoutes.length,
-        maintenanceBuses: maintenanceBusesCount
+        activeBuses: (activeTrips || []).length,
+        totalRoutes: 1,
+        maintenanceBuses: (allBuses || []).filter(b => b.status === 'maintenance').length
       });
     } catch (error) {
       console.error('Error fetching live map data:', error);
@@ -331,17 +287,25 @@ const Dashboard = () => {
 
   const fetchEmergencyAlerts = async () => {
     try {
-      // Simplified query to avoid 400 error
       const { data, error } = await supabaseAdmin
         .from('emergency_alerts')
-        .select('*')
+        .select('id, status, notes, created_at, acknowledged_at, resolved_at, triggered_at, bus_id, conductor_id, lat, lng, buses(plate_number, route), staff_users!conductor_id(full_name)')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        // Fallback: minimal columns if join fails
+        console.warn('Emergency alerts join failed, trying minimal select:', error.message);
+        const { data: minimal, error: err2 } = await supabaseAdmin
+          .from('emergency_alerts')
+          .select('id, status, notes, created_at, acknowledged_at, resolved_at, bus_id')
+          .order('created_at', { ascending: false });
+        if (err2) throw err2;
+        setEmergencyAlerts(minimal || []);
+        return;
+      }
       setEmergencyAlerts(data || []);
     } catch (error) {
       console.error('Error fetching emergency alerts:', error);
-      // Set empty array on error to prevent UI crashes
       setEmergencyAlerts([]);
     }
   };
@@ -383,9 +347,10 @@ const Dashboard = () => {
   };
 
   const filteredAlerts = emergencyAlerts.filter(alert => {
-    const matchesSearch = alert.notes?.toLowerCase().includes(alertSearchTerm.toLowerCase()) ||
-                         alert.trips?.buses?.plate_number?.toLowerCase().includes(alertSearchTerm.toLowerCase()) ||
-                         alert.staff_users?.full_name?.toLowerCase().includes(alertSearchTerm.toLowerCase());
+    const matchesSearch = !alertSearchTerm ||
+      alert.notes?.toLowerCase().includes(alertSearchTerm.toLowerCase()) ||
+      alert.buses?.plate_number?.toLowerCase().includes(alertSearchTerm.toLowerCase()) ||
+      alert.staff_users?.full_name?.toLowerCase().includes(alertSearchTerm.toLowerCase());
     const matchesStatus = alertFilterStatus === 'all' || alert.status === alertFilterStatus;
     return matchesSearch && matchesStatus;
   });
@@ -431,91 +396,14 @@ const Dashboard = () => {
     </Marker>
   );
 
-  const center = buses.length > 0 && buses[0].lat
-    ? [buses[0].lat, buses[0].lng]
-    : [14.5995, 120.9842];
+  // Route: Manolo Fortich Terminal ↔ Agora Terminal, Cagayan de Oro
+  // Midpoint of the route is roughly 8.43°N, 124.76°E — zoom 11 shows the full route
+  const ROUTE_CENTER = [8.43, 124.76];
+  const ROUTE_ZOOM = 11;
 
 
 
-  // Simplified embedded video feed component for dashboard - using same approach as PassengerAnalytics
-  const EmbeddedVideoFeed = () => {
-    return (
-      <div className="relative w-full h-full bg-black rounded-xl overflow-hidden">
-        {piOnline ? (
-          <>
-            <img
-              ref={videoRef}
-              alt="Live video feed"
-              className={`w-full h-full object-contain ${isStreaming ? 'block' : 'hidden'}`}
-            />
-            {!isStreaming && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center px-6">
-                  <Video className="w-16 h-16 text-white/30 mx-auto mb-4" />
-                  {error ? (
-                    <>
-                      <p className="text-red-400 font-medium mb-1">Stream Error</p>
-                      <p className="text-white/50 text-sm">{error}</p>
-                      <p className="text-white/30 text-xs mt-2">Check the camera is connected and yolov8n.pt is present on the Pi</p>
-                    </>
-                  ) : (
-                    <p className="text-white/50">
-                      {piOnline ? 'Click "Start Stream" to begin' : 'Connect to server to start streaming'}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-            {/* Live indicator */}
-            {isStreaming && (
-              <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-                  <span className="text-white text-sm font-medium">LIVE</span>
-                </div>
-              </div>
-            )}
-            {/* Stream controls */}
-            <div className="absolute bottom-4 right-4 flex gap-2">
-              {!isStreaming && piOnline && (
-                <button
-                  onClick={startStream}
-                  className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-                >
-                  <Play size={16} />
-                  Start Stream
-                </button>
-              )}
-              {isStreaming && (
-                <button
-                  onClick={stopStream}
-                  className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-                >
-                  <Square size={16} />
-                  Stop Stream
-                </button>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50">
-            <WifiOff className="w-8 h-8 text-red-400 mb-2" />
-            <p className="text-white/60 text-sm">Camera disconnected</p>
-          </div>
-        )}
-        
-        {/* Passenger count overlay */}
-        {piOnline && (
-          <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-sm px-3 py-1.5 rounded-lg">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-purple-400" />
-              <span className="text-white font-bold">{piPassengerCount}</span>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
+  // VideoMonitoring handles its own connection — no inline video code needed here
 
   return (
     <div className="space-y-6">
@@ -530,107 +418,67 @@ const Dashboard = () => {
         ))}
       </div>
 
-      {/* Live Video Monitoring with Raspberry Pi Status */}
-      <div className={`glass-card p-6 rounded-xl border ${
-        piOnline ? 'border-green-500/30' : 'border-red-500/30'
-      }`}>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className={`w-12 h-12 rounded-xl ${piOnline ? 'bg-green-500/20' : 'bg-red-500/20'} flex items-center justify-center`}>
-              <Video className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <p className="text-white/60 text-sm">
-                {piOnline ? 'Connected' : 'Disconnected'} - {piConnectionStatus.charAt(0).toUpperCase() + piConnectionStatus.slice(1)}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={refresh}
-              className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg transition-colors"
-              title="Refresh Connection"
-            >
-              <RefreshCw size={20} />
-            </button>
-          </div>
-        </div>
+      {/* Live Video Monitoring — uses VideoMonitoring component for proper auto-stream */}
+      <div className="glass-card p-6 rounded-xl">
+        <VideoMonitoring autoConnect={true} />
+      </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Video Feed - Simplified embedded version */}
-          <div className="relative bg-black/30 rounded-xl overflow-hidden aspect-video">
-            <EmbeddedVideoFeed />
-          </div>
-
-          {/* Status Indicators */}
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-white/5 p-4 rounded-xl">
-                <div className="flex items-center gap-2 mb-2">
-                  <Camera className="w-4 h-4 text-blue-400" />
-                  <p className="text-white/60 text-xs">Camera</p>
-                </div>
-                <p className={`text-lg font-bold ${piCameraActive ? 'text-green-400' : 'text-red-400'}`}>
-                  {piCameraActive ? 'Active' : 'Inactive'}
-                </p>
-              </div>
-              <div className="bg-white/5 p-4 rounded-xl">
-                <div className="flex items-center gap-2 mb-2">
-                  <Video className="w-4 h-4 text-purple-400" />
-                  <p className="text-white/60 text-xs">Stream</p>
-                </div>
-                <p className={`text-lg font-bold ${isStreaming ? 'text-green-400' : 'text-red-400'}`}>
-                  {isStreaming ? 'Active' : 'Inactive'}
-                </p>
-              </div>
-              <div className="bg-white/5 p-4 rounded-xl">
-                <div className="flex items-center gap-2 mb-2">
-                  <Users className="w-4 h-4 text-purple-400" />
-                  <p className="text-white/60 text-xs">Passengers</p>
-                </div>
-                <p className="text-lg font-bold text-white">{piPassengerCount}</p>
-              </div>
-              <div className="bg-white/5 p-4 rounded-xl">
-                <div className="flex items-center gap-2 mb-2">
-                  <Activity className="w-4 h-4 text-orange-400" />
-                  <p className="text-white/60 text-xs">Trip ID</p>
-                </div>
-                <p className="text-lg font-bold text-white">
-                  {piCurrentTripId ? `#${piCurrentTripId.slice(0, 8)}` : 'None'}
-                </p>
-              </div>
-              <div className="bg-white/5 p-4 rounded-xl">
-                <div className="flex items-center gap-2 mb-2">
-                  <Brain className="w-4 h-4 text-purple-400" />
-                  <p className="text-white/60 text-xs">Detection</p>
-                </div>
-                <p className="text-lg font-bold text-white">YOLO</p>
-              </div>
-              <div className="bg-white/5 p-4 rounded-xl">
-                <div className="flex items-center gap-2 mb-2">
-                  <AlertTriangle className={`w-4 h-4 ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`} />
-                  <p className="text-white/60 text-xs">Emergency</p>
-                </div>
-                <p className={`text-lg font-bold ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`}>
-                  {piEmergencyStatus.emergency_active ? 'Active' : 'Clear'}
-                </p>
-              </div>
+      {/* Raspberry Pi Status Indicators */}
+      <div className="glass-card p-6 rounded-xl">
+        <h2 className="text-white text-lg font-bold mb-4 flex items-center gap-2">
+          <Camera className="text-orange-400" size={20} />
+          Raspberry Pi Status
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="bg-white/5 p-4 rounded-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <Camera className="w-4 h-4 text-blue-400" />
+              <p className="text-white/60 text-xs">Camera</p>
             </div>
-
-            {piLocation.latitude && piLocation.longitude && (
-              <div className="bg-white/5 p-4 rounded-xl">
-                <div className="flex items-center gap-2 text-sm">
-                  <MapPin className="w-4 h-4 text-green-400" />
-                  <span className="text-white/60">Location:</span>
-                  <span className="text-white">
-                    {piLocation.latitude.toFixed(4)}, {piLocation.longitude.toFixed(4)}
-                  </span>
-                  {piLocation.address && (
-                    <span className="text-white/40 ml-2">({piLocation.address})</span>
-                  )}
-                </div>
-              </div>
-            )}
+            <p className={`text-lg font-bold ${piCameraActive ? 'text-green-400' : 'text-red-400'}`}>
+              {piCameraActive ? 'Active' : 'Inactive'}
+            </p>
+          </div>
+          <div className="bg-white/5 p-4 rounded-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <Users className="w-4 h-4 text-purple-400" />
+              <p className="text-white/60 text-xs">Passengers</p>
+            </div>
+            <p className="text-lg font-bold text-white">{piPassengerCount}</p>
+          </div>
+          <div className="bg-white/5 p-4 rounded-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <Activity className="w-4 h-4 text-orange-400" />
+              <p className="text-white/60 text-xs">Trip ID</p>
+            </div>
+            <p className="text-lg font-bold text-white">
+              {piCurrentTripId ? `#${piCurrentTripId.slice(0, 8)}` : 'None'}
+            </p>
+          </div>
+          <div className="bg-white/5 p-4 rounded-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <Brain className="w-4 h-4 text-purple-400" />
+              <p className="text-white/60 text-xs">Detection</p>
+            </div>
+            <p className="text-lg font-bold text-white">YOLO</p>
+          </div>
+          <div className="bg-white/5 p-4 rounded-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className={`w-4 h-4 ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`} />
+              <p className="text-white/60 text-xs">Emergency</p>
+            </div>
+            <p className={`text-lg font-bold ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`}>
+              {piEmergencyStatus.emergency_active ? 'Active' : 'Clear'}
+            </p>
+          </div>
+          <div className="bg-white/5 p-4 rounded-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <Video className="w-4 h-4 text-indigo-400" />
+              <p className="text-white/60 text-xs">Server</p>
+            </div>
+            <p className={`text-lg font-bold ${piOnline ? 'text-green-400' : 'text-red-400'}`}>
+              {piOnline ? 'Online' : 'Offline'}
+            </p>
           </div>
         </div>
       </div>
@@ -646,9 +494,9 @@ const Dashboard = () => {
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           <div className="lg:col-span-3">
             <div className="h-[400px] rounded-xl overflow-hidden">
-              <MapContainer center={center} zoom={13} style={{ height: '100%', width: '100%' }}>
+              <MapContainer center={ROUTE_CENTER} zoom={ROUTE_ZOOM} style={{ height: '100%', width: '100%' }}>
                 <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  attribution=""
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 {buses.map((bus) => (
@@ -661,11 +509,15 @@ const Dashboard = () => {
               <div className="flex gap-6 text-xs">
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full bg-green-400" />
-                  <span className="text-white/70">Active Bus</span>
+                  <span className="text-white/70">On Active Trip</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full bg-gray-400" />
-                  <span className="text-white/70">Idle Bus</span>
+                  <span className="text-white/70">Inactive / Idle</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-yellow-400" />
+                  <span className="text-white/70">Maintenance</span>
                 </div>
               </div>
             </div>
@@ -676,40 +528,46 @@ const Dashboard = () => {
               <div className="bg-white/5 p-4 rounded-xl">
                 <p className="text-white/60 text-xs">Active Buses</p>
                 <p className="text-white text-2xl font-bold">{mapStats.activeBuses}</p>
+                <p className="text-white/40 text-xs mt-1">on trip now</p>
+              </div>
+              <div className="bg-white/5 p-4 rounded-xl">
+                <p className="text-white/60 text-xs">Fleet</p>
+                <p className="text-white text-2xl font-bold">{buses.length}</p>
+                <p className="text-white/40 text-xs mt-1">total buses</p>
               </div>
               <div className="bg-white/5 p-4 rounded-xl">
                 <p className="text-white/60 text-xs">Passengers</p>
                 <p className="text-white text-2xl font-bold">{mapStats.totalPassengers}</p>
               </div>
               <div className="bg-white/5 p-4 rounded-xl">
-                <p className="text-white/60 text-xs">Routes</p>
-                <p className="text-white text-2xl font-bold">{mapStats.totalRoutes}</p>
+                <p className="text-white/60 text-xs">Route</p>
+                <p className="text-white text-sm font-bold">Manolo Fortich ↔ Agora</p>
               </div>
             </div>
-            
-            {/* Active Buses Dropdown */}
+
+            {/* All Buses List */}
             <div className="bg-white/5 p-4 rounded-xl">
               <h3 className="text-white text-sm font-bold mb-3 flex items-center gap-2">
                 <Bus className="text-orange-400" size={16} />
-                Active Buses
+                Fleet
               </h3>
               <div className="space-y-3">
-                <select
-                  value={selectedBus || ''}
-                  onChange={(e) => setSelectedBus(e.target.value)}
-                  className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-orange-500"
-                >
-                  <option value="">Select a bus...</option>
-                  {buses.length > 0 ? (
-                    buses.slice(0, 5).map((bus) => (
+                {buses.length > 0 ? (
+                  <select
+                    value={selectedBus || ''}
+                    onChange={(e) => setSelectedBus(e.target.value)}
+                    className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="">Select a bus…</option>
+                    {buses.map((bus) => (
                       <option key={bus.id} value={bus.id}>
-                        {bus.plate} - {bus.route}
+                        {bus.plate} — {bus.status === 'active' ? '🟢 on trip' : bus.status}
                       </option>
-                    ))
-                  ) : (
-                    <option disabled>No active buses</option>
-                  )}
-                </select>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-white/40 text-sm text-center py-2">No buses found</p>
+                )}
                 {selectedBus && buses.find(b => b.id === selectedBus) && (
                   <div className="p-3 bg-black/30 rounded-lg border border-white/10">
                     {(() => {
@@ -720,6 +578,15 @@ const Dashboard = () => {
                           <div className="flex items-center gap-2 text-white/70 text-sm">
                             <Users size={14} />
                             <span>{bus.passengers} passengers</span>
+                          </div>
+                          <div className="mt-1">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${
+                              bus.status === 'active' ? 'bg-green-500/20 text-green-400' :
+                              bus.status === 'maintenance' ? 'bg-yellow-500/20 text-yellow-400' :
+                              'bg-white/10 text-white/50'
+                            }`}>
+                              {bus.status === 'active' ? 'On Trip' : bus.status}
+                            </span>
                           </div>
                         </>
                       );
@@ -732,31 +599,8 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Quick Actions and Emergency Alerts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="glass-card p-4">
-          <h2 className="text-white text-lg font-bold mb-3">Quick Actions</h2>
-          <div className="grid grid-cols-2 gap-3">
-            <Link to="/analytics" className="bg-purple-500/20 hover:bg-purple-500/30 p-3 rounded-xl text-center transition-colors">
-              <Navigation className="w-5 h-5 text-purple-400 mx-auto mb-1" />
-              <p className="text-white text-xs font-medium">Analytics</p>
-            </Link>
-            <Link to="/fare-irregularities" className="bg-yellow-500/20 hover:bg-yellow-500/30 p-3 rounded-xl text-center transition-colors">
-              <AlertTriangle className="w-5 h-5 text-yellow-400 mx-auto mb-1" />
-              <p className="text-white text-xs font-medium">Fare Issues</p>
-            </Link>
-            <Link to="/users" className="bg-blue-500/20 hover:bg-blue-500/30 p-3 rounded-xl text-center transition-colors">
-              <HeadphonesIcon className="w-5 h-5 text-blue-400 mx-auto mb-1" />
-              <p className="text-white text-xs font-medium">Users</p>
-            </Link>
-            <Link to="/trips" className="bg-green-500/20 hover:bg-green-500/30 p-3 rounded-xl text-center transition-colors">
-              <Bus className="w-5 h-5 text-green-400 mx-auto mb-1" />
-              <p className="text-white text-xs font-medium">Trips</p>
-            </Link>
-          </div>
-        </div>
-
-        <div className="lg:col-span-2 glass-card p-4">
+      {/* Emergency Alerts — full width */}
+      <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-white text-lg font-bold flex items-center gap-2">
               <AlertTriangle className="text-orange-400" />
@@ -845,7 +689,13 @@ const Dashboard = () => {
                             </span>
                           </div>
                           <p className="text-white/70 text-xs mb-1">{alert.notes || 'No description provided'}</p>
-                          <div className="flex items-center gap-2 text-white/60 text-xs">
+                          <div className="flex items-center gap-3 text-white/60 text-xs">
+                            {alert.buses?.plate_number && (
+                              <span className="flex items-center gap-1">
+                                <Bus size={10} />
+                                {alert.buses.plate_number}
+                              </span>
+                            )}
                             <div className="flex items-center gap-1">
                               <Clock size={10} />
                               <span>{new Date(alert.created_at).toLocaleString()}</span>
@@ -882,21 +732,30 @@ const Dashboard = () => {
               </div>
             )}
           </div>
-        </div>
       </div>
 
       {/* Recent Activity */}
       <div className="glass-card p-4">
         <h2 className="text-white text-lg font-bold mb-3">Recent Activity</h2>
-        <div className="space-y-2 max-h-[200px] overflow-y-auto">
-          {alerts.length > 0 ? (
-            alerts.slice(0, 5).map((alert, index) => (
-              <AIAlertCard key={index} {...alert} />
-            ))
-          ) : (
-            <p className="text-white/60 text-sm">No recent activity</p>
-          )}
-        </div>
+        {alerts.length > 0 ? (
+          <div className="divide-y divide-white/5">
+            {alerts.slice(0, 10).map((alert, index) => (
+              <div key={index} className="flex items-center gap-3 py-2.5">
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                  alert.severity === 'high' ? 'bg-red-400' :
+                  alert.severity === 'medium' ? 'bg-orange-400' : 'bg-yellow-400'
+                }`} />
+                <div className="flex-1 min-w-0">
+                  <span className="text-white/80 text-sm font-medium">{alert.type}</span>
+                  <span className="text-white/50 text-xs ml-2 truncate">{alert.message}</span>
+                </div>
+                <span className="text-white/30 text-xs flex-shrink-0">{alert.time}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-white/40 text-sm py-2">No recent activity</p>
+        )}
       </div>
     </div>
   );

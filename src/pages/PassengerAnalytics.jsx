@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { TrendingUp, Users, Armchair, Calendar, Brain, AlertTriangle, Eye, Scan, XCircle, CheckCircle, Search, Filter, Video, Camera, Wifi, WifiOff, Play, Square, RefreshCw } from 'lucide-react';
+import { TrendingUp, Users, Armchair, Calendar, Brain, AlertTriangle, Eye, Scan, XCircle, CheckCircle, Search, Filter, Video, Camera, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useRaspberryPi } from '../hooks/useRaspberryPi';
 
@@ -38,7 +38,14 @@ const PassengerAnalytics = () => {
     refresh,
     startStream,
     stopStream
-  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
+  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: false });
+
+  // Auto-start stream as soon as the WebSocket connects
+  useEffect(() => {
+    if (online && !isStreaming) {
+      startStream();
+    }
+  }, [online, isStreaming, startStream]);
 
   const fetchAnalyticsData = async () => {
     try {
@@ -407,17 +414,15 @@ const PassengerAnalytics = () => {
                       <>
                         <p className="text-red-400 font-medium mb-1">Stream Error</p>
                         <p className="text-white/50 text-sm">{error}</p>
-                        <p className="text-white/30 text-xs mt-2">Check the camera is connected and yolov8n.pt is present on the Pi</p>
                       </>
                     ) : (
                       <p className="text-white/50">
-                        {online ? 'Click "Start Stream" to begin' : 'Connect to server to start streaming'}
+                        {online ? 'Connecting to stream…' : 'Connect to server to start streaming'}
                       </p>
                     )}
                   </div>
                 </div>
               )}
-              {/* Overlay Info */}
               {isStreaming && (
                 <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-2">
                   <div className="flex items-center gap-2">
@@ -426,27 +431,6 @@ const PassengerAnalytics = () => {
                   </div>
                 </div>
               )}
-              {/* Stream Controls */}
-              <div className="absolute bottom-4 right-4 flex gap-2">
-                {!isStreaming && online && (
-                  <button
-                    onClick={startStream}
-                    className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-                  >
-                    <Play size={16} />
-                    Start Stream
-                  </button>
-                )}
-                {isStreaming && (
-                  <button
-                    onClick={stopStream}
-                    className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-                  >
-                    <Square size={16} />
-                    Stop Stream
-                  </button>
-                )}
-              </div>
             </div>
           </div>
 
