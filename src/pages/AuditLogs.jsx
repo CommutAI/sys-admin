@@ -69,6 +69,7 @@ const AuditLogs = () => {
     UPDATE: 'bg-blue-500/20 text-blue-400',
     DELETE: 'bg-red-500/20 text-red-400',
     LOGIN: 'bg-purple-500/20 text-purple-400',
+    LOGOUT: 'bg-pink-500/20 text-pink-400',
     VIEW: 'bg-gray-500/20 text-gray-400',
     EXPORT: 'bg-orange-500/20 text-orange-400',
   };
@@ -177,6 +178,7 @@ const AuditLogs = () => {
                 <option value="UPDATE" className="bg-gray-800 text-white">Update</option>
                 <option value="DELETE" className="bg-gray-800 text-white">Delete</option>
                 <option value="LOGIN" className="bg-gray-800 text-white">Login</option>
+                <option value="LOGOUT" className="bg-gray-800 text-white">Logout</option>
                 <option value="VIEW" className="bg-gray-800 text-white">View</option>
                 <option value="EXPORT" className="bg-gray-800 text-white">Export</option>
               </select>

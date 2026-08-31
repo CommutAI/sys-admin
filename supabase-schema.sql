@@ -661,7 +661,7 @@ CREATE TABLE IF NOT EXISTS trip_schedules (
 CREATE TABLE IF NOT EXISTS audit_logs (
   id          BIGSERIAL PRIMARY KEY,
   username    TEXT        NOT NULL,
-  action      TEXT        DEFAULT 'info' CHECK (action IN ('CREATE', 'UPDATE', 'DELETE', 'LOGIN', 'VIEW', 'EXPORT')),
+  action      TEXT        DEFAULT 'info' CHECK (action IN ('CREATE', 'UPDATE', 'DELETE', 'LOGIN', 'LOGOUT', 'VIEW', 'EXPORT')),
   module      TEXT,
   details     TEXT,
   ip_address  TEXT,

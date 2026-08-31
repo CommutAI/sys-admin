@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { UserPlus, Search, Edit, Trash2, Shield, UserCheck, MoreVertical } from 'lucide-react';
 import { supabase, supabaseAdmin } from '../lib/supabase';
+import AuditService from '../services/auditService';
 
 const ManageUsers = () => {
   const [userType, setUserType] = useState('all');
@@ -17,6 +18,8 @@ const ManageUsers = () => {
 
   useEffect(() => {
     fetchUsers();
+    // Log page view to audit logs
+    AuditService.logPageView('Manage Users');
   }, []);
 
   const fetchUsers = async () => {
@@ -133,6 +136,9 @@ const ManageUsers = () => {
         console.log('RPC creation successful:', rpcData);
       }
 
+      // Log user creation to audit logs
+      await AuditService.logUserCreated(newUser.email, newUser.role, newUser.full_name);
+
       alert('User created successfully!');
       setShowAddModal(false);
       setNewUser({ email: '', full_name: '', role: 'conductor', password: '' });
@@ -147,12 +153,20 @@ const ManageUsers = () => {
 
   const handleToggleStatus = async (userId, currentStatus) => {
     try {
+      const user = users.find(u => u.id === userId);
+      const email = user?.email || 'unknown';
+      const newStatus = !currentStatus;
+
       const { error } = await supabaseAdmin
         .from('staff_users')
-        .update({ is_active: !currentStatus })
+        .update({ is_active: newStatus })
         .eq('id', userId);
 
       if (error) throw error;
+
+      // Log user status change to audit logs
+      await AuditService.logUserStatusChanged(userId, email, currentStatus ? 'active' : 'inactive', newStatus ? 'active' : 'inactive');
+
       fetchUsers();
     } catch (error) {
       console.error('Error updating user status:', error);

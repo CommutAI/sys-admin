@@ -5,6 +5,7 @@ import { supabaseAdmin } from '../lib/supabase';
 import 'leaflet/dist/leaflet.css';
 import { useRaspberryPi } from '../hooks/useRaspberryPi';
 import { getPiVideoFeedUrl } from '../services/raspberryPiApi';
+import AuditService from '../services/auditService';
 
 const KPICard = ({ title, value, change, icon: Icon, color }) => (
   <div className="glass-card p-6 hover:scale-105 transition-transform duration-300">
@@ -141,6 +142,10 @@ const Dashboard = () => {
     fetchDashboardData();
     fetchLiveMapData();
     fetchEmergencyAlerts();
+    
+    // Log page view to audit logs
+    AuditService.logPageView('Dashboard');
+    
     // Set up real-time subscription for trips
     const tripsSubscription = supabaseAdmin
       .channel('trips-channel')
@@ -396,6 +401,14 @@ const Dashboard = () => {
         .eq('id', alertId);
 
       if (error) throw error;
+
+      // Log alert acknowledgment to audit logs
+      await AuditService.logAuditEvent({
+        action: 'UPDATE',
+        module: 'Emergency Alerts',
+        details: `Acknowledged emergency alert ${alertId}`,
+      });
+
       fetchEmergencyAlerts();
     } catch (error) {
       console.error('Error acknowledging alert:', error);
@@ -405,6 +418,9 @@ const Dashboard = () => {
 
   const handleResolveAlert = async (alertId) => {
     try {
+      const alert = emergencyAlerts.find(a => a.id === alertId);
+      const notes = alert?.notes || 'No notes provided';
+
       const { error } = await supabaseAdmin
         .from('emergency_alerts')
         .update({ 
@@ -414,6 +430,10 @@ const Dashboard = () => {
         .eq('id', alertId);
 
       if (error) throw error;
+
+      // Log alert resolution to audit logs
+      await AuditService.logEmergencyAlertResolved(alertId, notes);
+
       fetchEmergencyAlerts();
     } catch (error) {
       console.error('Error resolving alert:', error);

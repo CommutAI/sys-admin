@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft } from 'lucide-react';
 import { supabaseAdmin } from '../lib/supabase';
 import { clearPiTrip } from '../services/raspberryPiApi';
+import AuditService from '../services/auditService';
 
 const TripManagement = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -77,6 +78,9 @@ const TripManagement = () => {
       })
       .subscribe();
 
+    // Log page view to audit logs
+    AuditService.logPageView('Trip Management');
+
     return () => {
       tripsSubscription.unsubscribe();
       busesSubscription.unsubscribe();
@@ -151,12 +155,18 @@ const TripManagement = () => {
     if (!confirm('Are you sure you want to end this trip?')) return;
 
     try {
+      const trip = trips.find(t => t.id === tripId);
+      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+
       const { error } = await supabaseAdmin
         .from('trips')
         .update({ status: 'completed', ended_at: new Date().toISOString() })
         .eq('id', tripId);
 
       if (error) throw error;
+
+      // Log trip end to audit logs
+      await AuditService.logTripEnded(tripId, busInfo);
 
       // Tell the Pi the trip is over so it stops linking counts to this trip
       await clearPiTrip();
@@ -172,12 +182,18 @@ const TripManagement = () => {
     if (!confirm('Are you sure you want to cancel this trip?')) return;
 
     try {
+      const trip = trips.find(t => t.id === tripId);
+      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+
       const { error } = await supabaseAdmin
         .from('trips')
         .update({ status: 'cancelled', ended_at: new Date().toISOString() })
         .eq('id', tripId);
 
       if (error) throw error;
+
+      // Log trip cancellation to audit logs
+      await AuditService.logTripCancelled(tripId, busInfo);
 
       // Tell the Pi the trip is cancelled
       await clearPiTrip();
@@ -203,6 +219,10 @@ const TripManagement = () => {
         .eq('id', selectedTrip.id);
 
       if (error) throw error;
+
+      // Log trip update to audit logs
+      await AuditService.logTripUpdated(selectedTrip.id, `Updated GPS location to ${selectedTrip.current_lat}, ${selectedTrip.current_lng}`);
+
       alert('Trip location updated successfully!');
       setShowEditModal(false);
       setSelectedTrip(null);
@@ -217,12 +237,19 @@ const TripManagement = () => {
     if (!confirm('Are you sure you want to delete this trip? This action cannot be undone.')) return;
 
     try {
+      const trip = trips.find(t => t.id === tripId);
+      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+
       const { error } = await supabaseAdmin
         .from('trips')
         .delete()
         .eq('id', tripId);
 
       if (error) throw error;
+
+      // Log trip deletion to audit logs
+      await AuditService.logTripDeleted(tripId, busInfo);
+
       alert('Trip deleted successfully!');
       fetchTrips();
     } catch (error) {
@@ -392,6 +419,9 @@ const TripManagement = () => {
 
       if (error) throw error;
 
+      // Log bus creation to audit logs
+      await AuditService.logBusCreated(newBus.bus_number || 'N/A', newBus.plate_number);
+
       alert('Bus added successfully!');
       setShowAddBusModal(false);
       setNewBus({ plate_number: '', bus_number: '', route: '', seat_capacity: 35, status: 'active', conductor_id: '', driver_id: '' });
@@ -430,6 +460,9 @@ const TripManagement = () => {
 
       if (error) throw error;
 
+      // Log bus update to audit logs
+      await AuditService.logBusUpdated(editingBus.id, `Updated bus #${newBus.bus_number} (${newBus.plate_number})`);
+
       alert('Bus updated successfully!');
       setEditingBus(null);
       setNewBus({ plate_number: '', bus_number: '', route: '', seat_capacity: 35, status: 'active', conductor_id: '', driver_id: '' });
@@ -442,12 +475,19 @@ const TripManagement = () => {
 
   const handleUpdateBusStatus = async (busId, newStatus) => {
     try {
+      const bus = buses.find(b => b.id === busId);
+      const oldStatus = bus?.status || 'unknown';
+
       const { error } = await supabaseAdmin
         .from('buses')
         .update({ status: newStatus })
         .eq('id', busId);
 
       if (error) throw error;
+
+      // Log bus status change to audit logs
+      await AuditService.logBusStatusChanged(busId, oldStatus, newStatus);
+
       fetchBuses();
     } catch (error) {
       console.error('Error updating bus status:', error);
@@ -458,12 +498,19 @@ const TripManagement = () => {
     if (!confirm('Are you sure you want to delete this bus?')) return;
 
     try {
+      const bus = buses.find(b => b.id === busId);
+      const plateNumber = bus?.plate_number || 'Unknown';
+
       const { error } = await supabaseAdmin
         .from('buses')
         .delete()
         .eq('id', busId);
 
       if (error) throw error;
+
+      // Log bus deletion to audit logs
+      await AuditService.logBusDeleted(busId, plateNumber);
+
       fetchBuses();
     } catch (error) {
       console.error('Error deleting bus:', error);

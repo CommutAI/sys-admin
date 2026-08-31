@@ -2,10 +2,16 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Save, Settings as SettingsIcon, Bell, Shield, LogOut } from 'lucide-react';
+import AuditService from '../services/auditService';
 
 const Settings = () => {
   const [activeTab, setActiveTab] = useState('notifications');
   const navigate = useNavigate();
+
+  // Log page view on mount
+  useEffect(() => {
+    AuditService.logPageView('Settings');
+  }, []);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();

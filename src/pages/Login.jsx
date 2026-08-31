@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Lock, Mail, Bus } from 'lucide-react';
+import AuditService from '../services/auditService';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -24,6 +25,8 @@ const Login = () => {
       if (error) throw error;
 
       if (data.user) {
+        // Log login event to audit logs
+        await AuditService.logLogin(email);
         navigate('/');
       }
     } catch (error) {

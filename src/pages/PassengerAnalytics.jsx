@@ -3,6 +3,7 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, L
 import { TrendingUp, Users, Armchair, Calendar, Brain, AlertTriangle, Eye, Scan, XCircle, CheckCircle, Search, Filter, Video, Camera, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useRaspberryPi } from '../hooks/useRaspberryPi';
+import AuditService from '../services/auditService';
 
 const PassengerAnalytics = () => {
   const [timeRange, setTimeRange] = useState('daily');
@@ -215,6 +216,9 @@ const PassengerAnalytics = () => {
 
   const handleResolve = async (irregularityId) => {
     try {
+      const irregularity = fareIrregularities.find(irr => irr.id === irregularityId);
+      const irregularityType = irregularity?.type || 'unknown';
+
       const { error } = await supabase
         .from('fare_irregularities')
         .update({ 
@@ -225,6 +229,10 @@ const PassengerAnalytics = () => {
         .eq('id', irregularityId);
 
       if (error) throw error;
+
+      // Log irregularity resolution to audit logs
+      await AuditService.logIrregularityResolved(irregularityId, irregularityType);
+
       fetchAnalyticsData();
     } catch (error) {
       console.error('Error resolving irregularity:', error);
@@ -243,7 +251,14 @@ const PassengerAnalytics = () => {
   // Fetch data on component mount and when time range changes
   useEffect(() => {
     fetchAnalyticsData();
+    // Log page view to audit logs when time range changes
+    AuditService.logAnalyticsViewed(timeRange);
   }, [timeRange]);
+
+  // Log initial page view
+  useEffect(() => {
+    AuditService.logPageView('Passenger Analytics');
+  }, []);
 
   const typeColors = {
     double_scan: 'bg-purple-500/20 text-purple-400 border-purple-500/50',

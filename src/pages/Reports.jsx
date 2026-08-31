@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import AuditService from '../services/auditService';
 
 const Reports = () => {
   const [loading, setLoading] = useState(false);
@@ -34,6 +35,8 @@ const Reports = () => {
   useEffect(() => {
     fetchStats();
     fetchRecentActivity();
+    // Log page view to audit logs
+    AuditService.logPageView('Reports');
   }, []);
 
   const fetchStats = async () => {
@@ -245,6 +248,9 @@ const Reports = () => {
       XLSX.utils.book_append_sheet(wb, ws, 'Report');
       XLSX.writeFile(wb, `${fileName}_${new Date().toISOString().split('T')[0]}.xlsx`);
 
+      // Log export to audit logs
+      await AuditService.logDataExported('Reports', 'Excel');
+
     } catch (error) {
       console.error('Error exporting Excel:', error);
       alert('Error exporting report: ' + error.message);
@@ -375,6 +381,9 @@ const Reports = () => {
       });
 
       doc.save(`${fileName}_${new Date().toISOString().split('T')[0]}.pdf`);
+
+      // Log export to audit logs
+      await AuditService.logDataExported('Reports', 'PDF');
 
     } catch (error) {
       console.error('Error exporting PDF:', error);
