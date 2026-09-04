@@ -6,9 +6,19 @@
 -- ============================================================
 
 -- ── 0. Custom Enum Types ──────────────────────────────────────────────────────
-DO $$ BEGIN
-  CREATE TYPE staff_role AS ENUM ('admin', 'conductor', 'cs_desk');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- Create staff_role enum with all required values
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'staff_role') THEN
+    CREATE TYPE staff_role AS ENUM ('admin', 'operator', 'driver', 'conductor', 'cs_desk');
+  END IF;
+END $$;
+
+-- Note: If 'driver' needs to be added to an existing enum, this requires manual migration:
+-- 1. Backup data: ALTER TABLE staff_users ALTER COLUMN role TYPE TEXT USING role::TEXT;
+-- 2. Drop enum: DROP TYPE staff_role;
+-- 3. Recreate: CREATE TYPE staff_role AS ENUM ('admin', 'operator', 'driver', 'conductor', 'cs_desk');
+-- 4. Restore: ALTER TABLE staff_users ALTER COLUMN role TYPE staff_role USING role::staff_role;
 
 DO $$ BEGIN
   CREATE TYPE bus_status AS ENUM ('active', 'maintenance', 'inactive');
@@ -49,24 +59,37 @@ CREATE TABLE IF NOT EXISTS staff_users (
   email       TEXT        NOT NULL UNIQUE,
   role        staff_role  NOT NULL DEFAULT 'conductor',
   is_active   BOOLEAN     NOT NULL DEFAULT TRUE,
+  bus_id      UUID        REFERENCES buses (id) ON DELETE SET NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Auto-create staff_users row when a new auth user is created
 CREATE OR REPLACE FUNCTION handle_new_staff_user()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  user_role TEXT;
 BEGIN
-  INSERT INTO staff_users (id, full_name, email, role)
+  -- Get role from metadata, default to 'conductor'
+  user_role := COALESCE(NEW.raw_user_meta_data->>'role', 'conductor');
+  
+  -- Validate role against available enum values
+  IF user_role NOT IN ('admin', 'operator', 'driver', 'conductor', 'cs_desk') THEN
+    user_role := 'conductor';
+  END IF;
+  
+  INSERT INTO staff_users (id, full_name, email, role, bus_id)
   VALUES (
     NEW.id,
     COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
     NEW.email,
-    COALESCE((NEW.raw_user_meta_data->>'role')::staff_role, 'conductor')
+    user_role::staff_role,
+    NULL
   )
   ON CONFLICT (id) DO UPDATE SET
     full_name = EXCLUDED.full_name,
     email     = EXCLUDED.email,
-    role      = EXCLUDED.role;
+    role      = EXCLUDED.role,
+    bus_id    = EXCLUDED.bus_id;
   RETURN NEW;
 EXCEPTION
   WHEN OTHERS THEN
@@ -99,6 +122,35 @@ BEGIN
     WHERE table_name = 'buses' AND column_name = 'bus_number'
   ) THEN
     ALTER TABLE buses ADD COLUMN bus_number INTEGER UNIQUE;
+  END IF;
+END $$;
+
+-- Add bus_id column to staff_users if it doesn't exist (for existing tables)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'staff_users' AND column_name = 'bus_id'
+  ) THEN
+    ALTER TABLE staff_users ADD COLUMN bus_id UUID REFERENCES buses (id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+-- Add conductor_id and driver_id columns to buses if they don't exist (for existing tables)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'buses' AND column_name = 'conductor_id'
+  ) THEN
+    ALTER TABLE buses ADD COLUMN conductor_id UUID REFERENCES staff_users (id) ON DELETE SET NULL;
+  END IF;
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'buses' AND column_name = 'driver_id'
+  ) THEN
+    ALTER TABLE buses ADD COLUMN driver_id UUID REFERENCES staff_users (id) ON DELETE SET NULL;
   END IF;
 END $$;
 
@@ -143,6 +195,7 @@ CREATE TABLE IF NOT EXISTS trips (
   id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   bus_id          UUID        NOT NULL REFERENCES buses (id),
   conductor_id    UUID        NOT NULL REFERENCES staff_users (id),
+  driver_id       UUID        REFERENCES staff_users (id),
   started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ended_at        TIMESTAMPTZ,
   status          trip_status NOT NULL DEFAULT 'in_progress',
@@ -151,6 +204,17 @@ CREATE TABLE IF NOT EXISTS trips (
   current_lng     FLOAT8,
   gps_updated_at  TIMESTAMPTZ
 );
+
+-- Add driver_id column to existing trips table if it doesn't exist
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'trips' AND column_name = 'driver_id'
+  ) THEN
+    ALTER TABLE trips ADD COLUMN driver_id UUID REFERENCES staff_users (id);
+  END IF;
+END $$;
 
 -- ── 4. QR Cards ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS qr_cards (
@@ -288,6 +352,7 @@ CREATE TABLE IF NOT EXISTS fare_irregularities (
 );
 
 -- ── 11. Emergency Alerts ──────────────────────────────────────────────────────
+-- Admin focused for monitoring and response management
 CREATE TABLE IF NOT EXISTS emergency_alerts (
   id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   trip_id          UUID        NOT NULL REFERENCES trips (id) ON DELETE CASCADE,
@@ -304,7 +369,9 @@ CREATE TABLE IF NOT EXISTS emergency_alerts (
   location_lat     DECIMAL(10, 8),
   location_lng     DECIMAL(11, 8),
   location_source  TEXT, -- 'gps', 'ip_geolocation', 'unknown'
-  location_accuracy DECIMAL(10, 2)
+  location_accuracy DECIMAL(10, 2),
+  resolved         BOOLEAN DEFAULT FALSE,
+  resolved_by      UUID REFERENCES staff_users (id) ON DELETE SET NULL
 );
 
 -- Add columns for hardware integration if they don't exist (for existing tables)
@@ -316,33 +383,48 @@ BEGIN
   ) THEN
     ALTER TABLE emergency_alerts ADD COLUMN triggered_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
   END IF;
-  
+
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_name = 'emergency_alerts' AND column_name = 'location_lat'
   ) THEN
     ALTER TABLE emergency_alerts ADD COLUMN location_lat DECIMAL(10, 8);
   END IF;
-  
+
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_name = 'emergency_alerts' AND column_name = 'location_lng'
   ) THEN
     ALTER TABLE emergency_alerts ADD COLUMN location_lng DECIMAL(11, 8);
   END IF;
-  
+
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_name = 'emergency_alerts' AND column_name = 'location_source'
   ) THEN
     ALTER TABLE emergency_alerts ADD COLUMN location_source TEXT;
   END IF;
-  
+
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_name = 'emergency_alerts' AND column_name = 'location_accuracy'
   ) THEN
     ALTER TABLE emergency_alerts ADD COLUMN location_accuracy DECIMAL(10, 2);
+  END IF;
+
+  -- Add admin-focused columns
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'emergency_alerts' AND column_name = 'resolved'
+  ) THEN
+    ALTER TABLE emergency_alerts ADD COLUMN resolved BOOLEAN DEFAULT FALSE;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'emergency_alerts' AND column_name = 'resolved_by'
+  ) THEN
+    ALTER TABLE emergency_alerts ADD COLUMN resolved_by UUID REFERENCES staff_users(id) ON DELETE SET NULL;
   END IF;
 END $$;
 
@@ -374,19 +456,39 @@ CREATE TRIGGER update_emergency_contacts_updated_at_trigger
   EXECUTE FUNCTION update_emergency_contacts_updated_at();
 
 -- ── 13. SMS Logs ───────────────────────────────────────────────────────────────
--- Hardware integration for SMS notifications
+-- Hardware integration for SMS notifications - Admin focused for monitoring
 CREATE TABLE IF NOT EXISTS sms_logs (
   id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   phone_number    TEXT        NOT NULL,
   message         TEXT        NOT NULL,
   sms_type        TEXT        NOT NULL, -- 'transaction', 'topup', 'reload', 'trip', 'emergency'
   status          TEXT        NOT NULL DEFAULT 'sent', -- 'sent', 'failed', 'pending'
-  trip_id         UUID        REFERENCES trips (id),
+  trip_id         UUID        REFERENCES trips (id) ON DELETE CASCADE,
+  transaction_id  UUID,
+  sent_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Add missing columns for admin functionality
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'sms_logs' AND column_name = 'transaction_id'
+  ) THEN
+    ALTER TABLE sms_logs ADD COLUMN transaction_id UUID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'sms_logs' AND column_name = 'sent_at'
+  ) THEN
+    ALTER TABLE sms_logs ADD COLUMN sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  END IF;
+END $$;
+
 -- ── 14. GPS Locations ───────────────────────────────────────────────────────────
--- Hardware integration for GPS tracking
+-- Hardware integration for GPS tracking - Admin focused for monitoring
 CREATE TABLE IF NOT EXISTS gps_locations (
   id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   latitude         DECIMAL(10, 8) NOT NULL,
@@ -395,7 +497,7 @@ CREATE TABLE IF NOT EXISTS gps_locations (
   speed            DECIMAL(10, 2),
   accuracy         DECIMAL(10, 2),
   source           TEXT        NOT NULL, -- 'gps', 'ip_geolocation'
-  trip_id          UUID        REFERENCES trips (id),
+  trip_id          UUID        REFERENCES trips (id) ON DELETE CASCADE,
   satellite_count  INTEGER,
   fix_quality      INTEGER,
   recorded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -464,7 +566,67 @@ CREATE TABLE IF NOT EXISTS baggage_fee_matrix (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ── 20. Bus Schedules ─────────────────────────────────────────────────────────────
+-- ── 20. Video Recordings ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS video_recordings (
+  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  trip_id          UUID        REFERENCES trips (id) ON DELETE CASCADE,
+  file_name        TEXT        NOT NULL,
+  file_path        TEXT        NOT NULL,
+  file_size        BIGINT,
+  duration         INTEGER,    -- duration in seconds
+  format           TEXT        NOT NULL, -- 'mp4', 'avi', etc.
+  recorded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  storage_type     TEXT        NOT NULL DEFAULT 'local', -- 'local', 'cloud', 'supabase_storage'
+  status           TEXT        NOT NULL DEFAULT 'recording', -- 'recording', 'completed', 'failed', 'deleted'
+  metadata         JSONB       -- additional metadata like resolution, fps, etc.
+);
+
+-- Create indexes for video recordings
+CREATE INDEX IF NOT EXISTS idx_video_recordings_trip_id ON video_recordings(trip_id);
+CREATE INDEX IF NOT EXISTS idx_video_recordings_recorded_at ON video_recordings(recorded_at);
+CREATE INDEX IF NOT EXISTS idx_video_recordings_status ON video_recordings(status);
+
+-- RLS for video recordings
+ALTER TABLE video_recordings ENABLE ROW LEVEL SECURITY;
+
+-- Create policies with IF NOT EXISTS pattern
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'video_recordings' AND policyname = 'Allow read access to authenticated users on video_recordings'
+  ) THEN
+    CREATE POLICY "Allow read access to authenticated users on video_recordings"
+      ON video_recordings FOR SELECT
+      TO authenticated
+      USING (true);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'video_recordings' AND policyname = 'Allow insert for service role on video_recordings'
+  ) THEN
+    CREATE POLICY "Allow insert for service role on video_recordings"
+      ON video_recordings FOR INSERT
+      TO service_role
+      WITH CHECK (true);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'video_recordings' AND policyname = 'Allow update for service role on video_recordings'
+  ) THEN
+    CREATE POLICY "Allow update for service role on video_recordings"
+      ON video_recordings FOR UPDATE
+      TO service_role
+      WITH CHECK (true);
+  END IF;
+END $$;
+
+-- ── 21. Bus Schedules ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS bus_schedules (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   bus_id      UUID        NOT NULL REFERENCES buses (id),
@@ -490,7 +652,7 @@ CREATE TABLE IF NOT EXISTS trip_schedules (
 CREATE TABLE IF NOT EXISTS audit_logs (
   id          BIGSERIAL PRIMARY KEY,
   username    TEXT        NOT NULL,
-  action      TEXT        DEFAULT 'info' CHECK (action IN ('CREATE', 'UPDATE', 'DELETE', 'LOGIN', 'VIEW', 'EXPORT')),
+  action      TEXT        DEFAULT 'info' CHECK (action IN ('CREATE', 'UPDATE', 'DELETE', 'LOGIN', 'LOGOUT', 'VIEW', 'EXPORT')),
   module      TEXT,
   details     TEXT,
   ip_address  TEXT,
@@ -538,6 +700,7 @@ ALTER TABLE fare_matrix            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE baggage_fee_matrix     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bus_schedules          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trip_schedules         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE video_recordings       ENABLE ROW LEVEL SECURITY;
 
 -- Staff can view their own profile (admins see all)
 DO $$ BEGIN
@@ -878,6 +1041,19 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Video recordings
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'video_recordings' AND policyname = 'video_recordings_rw_authenticated'
+  ) THEN
+    CREATE POLICY "video_recordings_rw_authenticated"
+      ON video_recordings FOR ALL
+      USING (auth.role() = 'authenticated')
+      WITH CHECK (auth.role() = 'authenticated');
+  END IF;
+END $$;
+
 -- ── 25. Indexes for Performance ───────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_trips_conductor_status
   ON trips(conductor_id, status) WHERE status = 'in_progress';
@@ -915,18 +1091,21 @@ CREATE INDEX IF NOT EXISTS idx_emergency_alerts_status
 CREATE INDEX IF NOT EXISTS idx_emergency_alerts_triggered_at
   ON emergency_alerts(triggered_at);
 
--- Hardware integration indexes
+-- Hardware integration indexes - Admin focused for monitoring
 CREATE INDEX IF NOT EXISTS idx_sms_logs_phone_number
   ON sms_logs(phone_number);
 
 CREATE INDEX IF NOT EXISTS idx_sms_logs_sms_type
   ON sms_logs(sms_type);
 
-CREATE INDEX IF NOT EXISTS idx_sms_logs_created_at
-  ON sms_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_sms_logs_sent_at
+  ON sms_logs(sent_at);
 
 CREATE INDEX IF NOT EXISTS idx_sms_logs_trip_id
   ON sms_logs(trip_id);
+
+CREATE INDEX IF NOT EXISTS idx_sms_logs_status
+  ON sms_logs(status);
 
 CREATE INDEX IF NOT EXISTS idx_gps_locations_trip_id
   ON gps_locations(trip_id);
@@ -943,9 +1122,9 @@ CREATE INDEX IF NOT EXISTS idx_hardware_status_component
 CREATE INDEX IF NOT EXISTS idx_hardware_status_last_check
   ON hardware_status(last_check);
 
--- Hardware integration views
+-- Hardware integration views - Admin focused for monitoring dashboards
 CREATE OR REPLACE VIEW trip_statistics AS
-SELECT 
+SELECT
   trip_id,
   COUNT(*) as total_recordings,
   AVG(count) as average_passengers,
@@ -957,36 +1136,57 @@ FROM passenger_counts
 GROUP BY trip_id;
 
 CREATE OR REPLACE VIEW sms_statistics AS
-SELECT 
-  DATE(created_at) as date,
+SELECT
+  DATE(sent_at) as date,
   sms_type,
   COUNT(*) as total_sent,
   COUNT(*) FILTER (WHERE status = 'sent') as successful,
-  COUNT(*) FILTER (WHERE status = 'failed') as failed
+  COUNT(*) FILTER (WHERE status = 'failed') as failed,
+  COUNT(*) FILTER (WHERE status = 'pending') as pending
 FROM sms_logs
-GROUP BY DATE(created_at), sms_type
+GROUP BY DATE(sent_at), sms_type
 ORDER BY date DESC, sms_type;
 
 CREATE OR REPLACE VIEW emergency_statistics AS
-SELECT 
+SELECT
   COALESCE(DATE(triggered_at), DATE(created_at)) as date,
   COUNT(*) as total_emergencies,
-  COUNT(*) FILTER (WHERE status = 'resolved') as resolved,
-  COUNT(*) FILTER (WHERE status != 'resolved') as unresolved
+  COUNT(*) FILTER (WHERE resolved = TRUE) as resolved,
+  COUNT(*) FILTER (WHERE resolved = FALSE) as unresolved,
+  COUNT(*) FILTER (WHERE status = 'active') as active,
+  COUNT(*) FILTER (WHERE status = 'acknowledged') as acknowledged
 FROM emergency_alerts
 GROUP BY COALESCE(DATE(triggered_at), DATE(created_at))
 ORDER BY date DESC;
 
 CREATE OR REPLACE VIEW gps_statistics AS
-SELECT 
+SELECT
   DATE(recorded_at) as date,
   source,
   COUNT(*) as total_readings,
   AVG(accuracy) as avg_accuracy,
-  AVG(speed) as avg_speed
+  AVG(speed) as avg_speed,
+  MAX(accuracy) as worst_accuracy,
+  MIN(accuracy) as best_accuracy
 FROM gps_locations
 GROUP BY DATE(recorded_at), source
 ORDER BY date DESC, source;
+
+CREATE OR REPLACE VIEW video_statistics AS
+SELECT
+  DATE(recorded_at) as date,
+  storage_type,
+  format,
+  COUNT(*) as total_recordings,
+  SUM(file_size) as total_storage_bytes,
+  AVG(duration) as avg_duration_seconds,
+  MAX(duration) as max_duration_seconds,
+  COUNT(*) FILTER (WHERE status = 'completed') as completed,
+  COUNT(*) FILTER (WHERE status = 'failed') as failed,
+  COUNT(*) FILTER (WHERE status = 'recording') as recording
+FROM video_recordings
+GROUP BY DATE(recorded_at), storage_type, format
+ORDER BY date DESC, storage_type, format;
 
 CREATE INDEX IF NOT EXISTS idx_gcash_transactions_created_at
   ON gcash_transactions(created_at DESC);
@@ -1023,6 +1223,15 @@ CREATE INDEX IF NOT EXISTS idx_bus_schedules_bus_day
 
 CREATE INDEX IF NOT EXISTS idx_bus_schedules_day_trip
   ON bus_schedules(day_number, trip_number);
+
+CREATE INDEX IF NOT EXISTS idx_video_recordings_trip_id
+  ON video_recordings(trip_id);
+
+CREATE INDEX IF NOT EXISTS idx_video_recordings_recorded_at
+  ON video_recordings(recorded_at);
+
+CREATE INDEX IF NOT EXISTS idx_video_recordings_status
+  ON video_recordings(status);
 
 CREATE INDEX IF NOT EXISTS idx_trip_schedules_trip_number
   ON trip_schedules(trip_number);
@@ -1115,7 +1324,16 @@ END $$;
 
 -- ── 27. Seed: Test Bus Data ───────────────────────────────────────────────────
 INSERT INTO buses (plate_number, bus_number, route, seat_capacity, status) VALUES
-  ('BUS-001', 1001, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active')
+  ('BUS-001', 1001, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-002', 1002, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-003', 1003, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-004', 1004, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-005', 1005, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-006', 1006, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-007', 1007, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-008', 1008, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-009', 1009, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
+  ('BUS-010', 1010, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active')
 ON CONFLICT (plate_number) DO UPDATE SET
   bus_number = EXCLUDED.bus_number,
   route = EXCLUDED.route,
@@ -1217,7 +1435,143 @@ BEGIN
   ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
 END $$;
 
--- ── 31. Create Admin Test User Instructions ─────────────────────────────────────
+-- ── 31. Seed: Staff Users ───────────────────────────────────────────────────────
+-- Note: These INSERT statements should be run after creating the auth users in Supabase Dashboard
+-- First, create the auth users, then use their UUIDs in these INSERT statements
+-- IMPORTANT: Make sure the staff_role enum includes 'operator' before running this
+
+-- Get the first bus ID for conductor assignment
+DO $$
+DECLARE
+  conductor_bus_id UUID;
+BEGIN
+  SELECT id INTO conductor_bus_id FROM buses WHERE bus_number = 1001 LIMIT 1;
+  
+  -- Check if operator role exists in enum
+  IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'operator' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'staff_role')) THEN
+    RAISE NOTICE 'operator role not found in staff_role enum. Please add it manually.';
+    -- Skip the operator user if the role doesn't exist
+    INSERT INTO "public"."staff_users" ("id", "full_name", "email", "role", "is_active", "created_at", "bus_id") VALUES 
+    ('1654f098-c2b0-4ab3-9f59-6cf6fb2fafba', 'Customer Service', 'admin@commutai.test', 'admin', true, '2026-08-06 03:02:29.393078+00', null),
+    ('902d50ff-a73b-49d7-86bb-5123b37cbc93', 'CS Desk Operator', 'csdesk@commutai.test', 'cs_desk', true, '2026-07-15 06:34:52.182164+00', null),
+    ('a9237386-bd65-4a7d-9272-53869ce039e1', 'Conductor', 'conductor@commutai.test', 'conductor', true, '2026-07-14 13:47:51.245941+00', conductor_bus_id)
+    ON CONFLICT (id) DO UPDATE SET
+      full_name = EXCLUDED.full_name,
+      email = EXCLUDED.email,
+      role = EXCLUDED.role,
+      is_active = EXCLUDED.is_active,
+      bus_id = EXCLUDED.bus_id;
+  ELSE
+    -- Insert all staff users including operator
+    INSERT INTO "public"."staff_users" ("id", "full_name", "email", "role", "is_active", "created_at", "bus_id") VALUES 
+    ('1654f098-c2b0-4ab3-9f59-6cf6fb2fafba', 'Customer Service', 'admin@commutai.test', 'admin', true, '2026-08-06 03:02:29.393078+00', null),
+    ('8fddab1b-7ded-45e9-aab5-3f56ee50d5fc', 'System Operator', 'operator@commutai.test', 'operator', true, '2026-08-20 02:01:32.697754+00', null),
+    ('902d50ff-a73b-49d7-86bb-5123b37cbc93', 'CS Desk Operator', 'csdesk@commutai.test', 'cs_desk', true, '2026-07-15 06:34:52.182164+00', null),
+    ('a9237386-bd65-4a7d-9272-53869ce039e1', 'Conductor', 'conductor@commutai.test', 'conductor', true, '2026-07-14 13:47:51.245941+00', conductor_bus_id)
+    ON CONFLICT (id) DO UPDATE SET
+      full_name = EXCLUDED.full_name,
+      email = EXCLUDED.email,
+      role = EXCLUDED.role,
+      is_active = EXCLUDED.is_active,
+      bus_id = EXCLUDED.bus_id;
+  END IF;
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE LOG 'Error inserting staff users: %', SQLERRM;
+END $$;
+
+-- ── 31. Development Helper Functions ───────────────────────────────────────────
+-- Function to create users directly bypassing email validation (for development/testing)
+CREATE OR REPLACE FUNCTION create_user_direct(
+  user_id UUID,
+  user_email TEXT,
+  user_password TEXT,
+  user_full_name TEXT,
+  user_role TEXT
+)
+RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  -- Insert into auth.users bypassing email validation
+  INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, raw_user_meta_data)
+  VALUES (
+    user_id,
+    user_email,
+    crypt(user_password, gen_salt('bf')),
+    NOW(),
+    jsonb_build_object('full_name', user_full_name, 'role', user_role)
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    encrypted_password = EXCLUDED.encrypted_password,
+    email_confirmed_at = EXCLUDED.email_confirmed_at,
+    raw_user_meta_data = EXCLUDED.raw_user_meta_data;
+  
+  -- Insert into staff_users
+  INSERT INTO staff_users (id, full_name, email, role, is_active)
+  VALUES (
+    user_id,
+    user_full_name,
+    user_email,
+    user_role::staff_role,
+    true
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    full_name = EXCLUDED.full_name,
+    email = EXCLUDED.email,
+    role = EXCLUDED.role;
+    
+  RETURN user_id;
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE LOG 'Error in create_user_direct: %', SQLERRM;
+    RAISE;
+END;
+$$;
+
+-- ── 31.1. Fix Existing Auth Users Missing staff_users Records ───────────────────────
+-- Run this to create staff_users records for existing auth users that are missing them
+-- This is useful when users were created via auth but staff_users wasn't created
+
+-- Fix the specific driver user you mentioned
+INSERT INTO staff_users (id, full_name, email, role, is_active)
+VALUES (
+  '2c12d26a-efbd-463a-b060-32bf4de9afa7',
+  'driver01',
+  'driver@commutai.test',
+  'driver',
+  true
+)
+ON CONFLICT (id) DO UPDATE SET
+  full_name = EXCLUDED.full_name,
+  email = EXCLUDED.email,
+  role = EXCLUDED.role;
+
+-- Generic function to fix all missing staff_users records
+CREATE OR REPLACE FUNCTION fix_missing_staff_users()
+RETURNS INTEGER LANGUAGE plpgsql AS $$
+DECLARE
+  user_count INTEGER;
+BEGIN
+  INSERT INTO staff_users (id, full_name, email, role, is_active)
+  SELECT 
+    u.id,
+    COALESCE(u.raw_user_meta_data->>'full_name', split_part(u.email, '@', 1)),
+    u.email,
+    COALESCE((u.raw_user_meta_data->>'role')::staff_role, 'conductor'),
+    true
+  FROM auth.users u
+  LEFT JOIN staff_users s ON u.id = s.id
+  WHERE s.id IS NULL;
+  
+  GET DIAGNOSTICS user_count = ROW_COUNT;
+  RETURN user_count;
+END;
+$$;
+
+-- Run this to fix all missing records
+-- SELECT fix_missing_staff_users();
+
+-- ── 31.2. Create Admin Test User Instructions ─────────────────────────────────────
 -- To create test users, follow these steps in the Supabase Dashboard:
 --
 -- 1. Go to Supabase Dashboard → Authentication → Users → Add user
@@ -1241,67 +1595,234 @@ END $$;
 --    Email: csdesk@commutai.test  Password: CSDesk123!
 --    Role: cs_desk
 
--- ── 32. Maintenance & Utility Queries ──────────────────────────────────────────────
--- These queries can be run as needed for maintenance tasks
+-- ── 32. Admin Monitoring & Analytics Queries ──────────────────────────────────────
+-- These queries are focused on admin dashboard functionality and system monitoring
 
--- ── 32.1. Update Staff User Roles ──────────────────────────────────────────────────
--- Update a specific user's role to customer service desk
--- UPDATE staff_users 
--- SET role = 'cs_desk' 
--- WHERE id = '1654f098-c2b0-4ab3-9f59-6cf6fb2fafba';
+-- ── 32.1. Real-time System Status Overview ────────────────────────────────────────
+-- Get current system status for admin dashboard
+CREATE OR REPLACE FUNCTION admin_system_status()
+RETURNS JSONB LANGUAGE sql SECURITY DEFINER AS $$
+SELECT jsonb_build_object(
+  'timestamp', NOW(),
+  'active_trips', (SELECT COUNT(*) FROM trips WHERE status = 'in_progress'),
+  'active_emergencies', (SELECT COUNT(*) FROM emergency_alerts WHERE resolved = FALSE),
+  'total_staff', (SELECT COUNT(*) FROM staff_users WHERE is_active = TRUE),
+  'active_buses', (SELECT COUNT(*) FROM buses WHERE status = 'active'),
+  'today_sms', (SELECT COUNT(*) FROM sms_logs WHERE DATE(sent_at) = CURRENT_DATE),
+  'today_gps_readings', (SELECT COUNT(*) FROM gps_locations WHERE DATE(recorded_at) = CURRENT_DATE),
+  'hardware_status', (
+    SELECT jsonb_agg(jsonb_build_object(
+      'component', component,
+      'status', status,
+      'last_check', last_check
+    ))
+    FROM hardware_status
+    WHERE last_check > NOW() - INTERVAL '1 hour'
+  )
+);
+$$;
 
--- Update all admin users to cs_desk (run this to convert all admins to customer service desk)
--- UPDATE staff_users 
--- SET role = 'cs_desk' 
--- WHERE role = 'admin';
+-- ── 32.2. Trip Performance Analytics ───────────────────────────────────────────────
+-- Get detailed trip analytics for admin monitoring
+CREATE OR REPLACE FUNCTION admin_trip_analytics(days_range INTEGER DEFAULT 7)
+RETURNS TABLE (
+  trip_date DATE,
+  total_trips BIGINT,
+  completed_trips BIGINT,
+  cancelled_trips BIGINT,
+  avg_passengers NUMERIC,
+  total_revenue NUMERIC,
+  avg_trip_duration NUMERIC
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    DATE(t.started_at) as trip_date,
+    COUNT(*) as total_trips,
+    COUNT(*) FILTER (WHERE t.status = 'completed') as completed_trips,
+    COUNT(*) FILTER (WHERE t.status = 'cancelled') as cancelled_trips,
+    COALESCE(AVG(pc.average_passengers), 0) as avg_passengers,
+    COALESCE(SUM(tr.amount), 0) as total_revenue,
+    COALESCE(AVG(EXTRACT(EPOCH FROM (t.ended_at - t.started_at))/3600), 0) as avg_trip_duration
+  FROM trips t
+  LEFT JOIN trip_statistics pc ON t.id = pc.trip_id
+  LEFT JOIN transactions tr ON tr.trip_id = t.id
+  WHERE t.started_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL
+  GROUP BY DATE(t.started_at)
+  ORDER BY trip_date DESC;
+END;
+$$;
 
--- ── 32.2. Fix Inconsistent Card Data ────────────────────────────────────────────────
--- Fix card data inconsistencies (run as needed when card data becomes inconsistent)
+-- ── 32.3. Emergency Response Analytics ────────────────────────────────────────────
+-- Get emergency response metrics for admin monitoring
+CREATE OR REPLACE FUNCTION admin_emergency_analytics(days_range INTEGER DEFAULT 30)
+RETURNS TABLE (
+  emergency_date DATE,
+  total_emergencies BIGINT,
+  resolved_emergencies BIGINT,
+  avg_response_time NUMERIC,
+  critical_emergencies BIGINT,
+  by_emergency_type JSONB
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    DATE(ea.triggered_at) as emergency_date,
+    COUNT(*) as total_emergencies,
+    COUNT(*) FILTER (WHERE ea.resolved = TRUE) as resolved_emergencies,
+    COALESCE(AVG(EXTRACT(EPOCH FROM (ea.resolved_at - ea.triggered_at))/60), 0) as avg_response_time,
+    COUNT(*) FILTER (WHERE ea.status = 'active' AND ea.triggered_at < NOW() - INTERVAL '1 hour') as critical_emergencies,
+    jsonb_build_object(
+      'active', COUNT(*) FILTER (WHERE ea.status = 'active'),
+      'acknowledged', COUNT(*) FILTER (WHERE ea.status = 'acknowledged'),
+      'resolved', COUNT(*) FILTER (WHERE ea.status = 'resolved')
+    ) as by_emergency_type
+  FROM emergency_alerts ea
+  WHERE ea.triggered_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL
+  GROUP BY DATE(ea.triggered_at)
+  ORDER BY emergency_date DESC;
+END;
+$$;
 
--- Fix specific card (SC-170-60-383 - should be Student)
--- UPDATE qr_cards 
--- SET 
---   passenger_type = 'student',
---   card_type = 'student',
---   allowed_routes = ARRAY['type:Student']
--- WHERE card_uid = 'SC-170-60-383';
+-- ── 32.4. Hardware Health Monitoring ───────────────────────────────────────────────
+-- Get hardware component health status for admin monitoring
+CREATE OR REPLACE FUNCTION admin_hardware_health()
+RETURNS TABLE (
+  component TEXT,
+  current_status TEXT,
+  uptime_percentage NUMERIC,
+  last_check TIMESTAMPTZ,
+  issues_count BIGINT,
+  avg_response_time NUMERIC
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    hs.component,
+    hs.status as current_status,
+    CASE
+      WHEN hs.status = 'online' THEN 100.0
+      WHEN hs.status = 'offline' THEN 0.0
+      ELSE 50.0
+    END as uptime_percentage,
+    hs.last_check,
+    (SELECT COUNT(*) FROM hardware_status WHERE component = hs.component AND status = 'error' AND last_check > NOW() - INTERVAL '24 hours') as issues_count,
+    COALESCE(AVG(EXTRACT(EPOCH FROM (hs.last_check - LAG(hs.last_check) OVER (PARTITION BY hs.component ORDER BY hs.last_check)))), 0) as avg_response_time
+  FROM hardware_status hs
+  WHERE hs.last_check > NOW() - INTERVAL '24 hours'
+  GROUP BY hs.component, hs.status, hs.last_check
+  ORDER BY hs.component;
+END;
+$$;
 
--- Fix incorrectly formatted card (CARDMSJVQL2G - incorrect format, should be RC- format)
--- UPDATE qr_cards 
--- SET 
---   card_uid = 'RC-' || substr(md5(random()::text), 1, 3) || '-' || substr(md5(random()::text), 4, 2) || '-' || substr(md5(random()::text), 6, 3),
---   passenger_type = 'regular',
---   card_type = 'regular',
---   allowed_routes = ARRAY['type:Regular']
--- WHERE card_uid = 'CARDMSJVQL2G';
+-- ── 32.5. Video Storage Analytics ──────────────────────────────────────────────────
+-- Get video storage analytics for admin monitoring
+CREATE OR REPLACE FUNCTION admin_video_analytics(days_range INTEGER DEFAULT 30)
+RETURNS TABLE (
+  recording_date DATE,
+  total_recordings BIGINT,
+  total_storage_gb NUMERIC,
+  avg_duration_seconds NUMERIC,
+  storage_by_type JSONB,
+  recording_success_rate NUMERIC
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    DATE(vr.recorded_at) as recording_date,
+    COUNT(*) as total_recordings,
+    COALESCE(SUM(vr.file_size) / 1024.0 / 1024.0 / 1024.0, 0) as total_storage_gb,
+    COALESCE(AVG(vr.duration), 0) as avg_duration_seconds,
+    jsonb_build_object(
+      'local', COUNT(*) FILTER (WHERE vr.storage_type = 'local'),
+      'cloud', COUNT(*) FILTER (WHERE vr.storage_type = 'cloud'),
+      'supabase_storage', COUNT(*) FILTER (WHERE vr.storage_type = 'supabase_storage')
+    ) as storage_by_type,
+    CASE
+      WHEN COUNT(*) > 0 THEN (COUNT(*) FILTER (WHERE vr.status = 'completed')::NUMERIC / COUNT(*) * 100)
+      ELSE 0
+    END as recording_success_rate
+  FROM video_recordings vr
+  WHERE vr.recorded_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL
+  GROUP BY DATE(vr.recorded_at)
+  ORDER BY recording_date DESC;
+END;
+$$;
 
--- Fix specific card (SC-787-07-359 - should be Student, not regular)
--- UPDATE qr_cards 
--- SET 
---   passenger_type = 'student',
---   card_type = 'student',
---   allowed_routes = ARRAY['type:Student']
--- WHERE card_uid = 'SC-787-07-359';
+-- ── 32.6. SMS Performance Analytics ────────────────────────────────────────────────
+-- Get SMS delivery performance for admin monitoring
+CREATE OR REPLACE FUNCTION admin_sms_analytics(days_range INTEGER DEFAULT 30)
+RETURNS TABLE (
+  sms_date DATE,
+  total_sent BIGINT,
+  successful_deliveries BIGINT,
+  failed_deliveries BIGINT,
+  delivery_rate NUMERIC,
+  avg_delivery_time NUMERIC,
+  by_type JSONB
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    DATE(sl.sent_at) as sms_date,
+    COUNT(*) as total_sent,
+    COUNT(*) FILTER (WHERE sl.status = 'sent') as successful_deliveries,
+    COUNT(*) FILTER (WHERE sl.status = 'failed') as failed_deliveries,
+    CASE
+      WHEN COUNT(*) > 0 THEN (COUNT(*) FILTER (WHERE sl.status = 'sent')::NUMERIC / COUNT(*) * 100)
+      ELSE 0
+    END as delivery_rate,
+    0 as avg_delivery_time, -- Would need actual delivery timestamps
+    jsonb_build_object(
+      'transaction', COUNT(*) FILTER (WHERE sl.sms_type = 'transaction'),
+      'topup', COUNT(*) FILTER (WHERE sl.sms_type = 'topup'),
+      'reload', COUNT(*) FILTER (WHERE sl.sms_type = 'reload'),
+      'trip', COUNT(*) FILTER (WHERE sl.sms_type = 'trip'),
+      'emergency', COUNT(*) FILTER (WHERE sl.sms_type = 'emergency')
+    ) as by_type
+  FROM sms_logs sl
+  WHERE sl.sent_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL
+  GROUP BY DATE(sl.sent_at)
+  ORDER BY sms_date DESC;
+END;
+$$;
 
--- ── 32.3. System Admin Role Management ────────────────────────────────────────────────
--- These queries help manage system admin access and permissions
-
--- Grant admin role to a specific user
--- UPDATE staff_users 
--- SET role = 'admin' 
--- WHERE id = '<user-uuid-here>';
-
--- Remove admin role from a specific user (convert to cs_desk)
--- UPDATE staff_users 
--- SET role = 'cs_desk' 
--- WHERE id = '<user-uuid-here>';
-
--- List all admin users
--- SELECT id, full_name, email, role, is_active, created_at 
--- FROM staff_users 
--- WHERE role = 'admin';
-
--- List all users with their roles
--- SELECT id, full_name, email, role, is_active, created_at 
--- FROM staff_users 
--- ORDER BY role, full_name;
+-- ── 32.7. Staff Activity Monitoring ───────────────────────────────────────────────
+-- Get staff activity metrics for admin monitoring
+CREATE OR REPLACE FUNCTION admin_staff_activity(days_range INTEGER DEFAULT 7)
+RETURNS TABLE (
+  staff_name TEXT,
+  role TEXT,
+  trips_conducted BIGINT,
+  transactions_processed BIGINT,
+  emergencies_resolved BIGINT,
+  last_activity TIMESTAMPTZ,
+  activity_score NUMERIC
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    su.full_name as staff_name,
+    su.role::TEXT,
+    COUNT(DISTINCT t.id) FILTER (WHERE t.conductor_id = su.id) as trips_conducted,
+    COUNT(DISTINCT tr.id) FILTER (WHERE tr.staff_id = su.id) as transactions_processed,
+    COUNT(DISTINCT ea.id) FILTER (WHERE ea.resolved_by = su.id) as emergencies_resolved,
+    GREATEST(
+      COALESCE(MAX(t.started_at) FILTER (WHERE t.conductor_id = su.id), '1970-01-01'::TIMESTAMPTZ),
+      COALESCE(MAX(tr.created_at) FILTER (WHERE tr.staff_id = su.id), '1970-01-01'::TIMESTAMPTZ),
+      COALESCE(MAX(ea.resolved_at) FILTER (WHERE ea.resolved_by = su.id), '1970-01-01'::TIMESTAMPTZ)
+    ) as last_activity,
+    (
+      (COUNT(DISTINCT t.id) FILTER (WHERE t.conductor_id = su.id) * 10) +
+      (COUNT(DISTINCT tr.id) FILTER (WHERE tr.staff_id = su.id) * 5) +
+      (COUNT(DISTINCT ea.id) FILTER (WHERE ea.resolved_by = su.id) * 20)
+    ) as activity_score
+  FROM staff_users su
+  LEFT JOIN trips t ON t.conductor_id = su.id AND t.started_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL
+  LEFT JOIN transactions tr ON tr.staff_id = su.id AND tr.created_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL
+  LEFT JOIN emergency_alerts ea ON ea.resolved_by = su.id AND ea.resolved_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL
+  WHERE su.is_active = TRUE
+  GROUP BY su.id, su.full_name, su.role
+  ORDER BY activity_score DESC;
+END;
+$$;

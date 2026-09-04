@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { DollarSign, Plus, Edit, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import AuditService from '../services/auditService';
 
 const FareMatrix = () => {
   const [fareMatrix, setFareMatrix] = useState([]);
@@ -18,6 +19,8 @@ const FareMatrix = () => {
 
   useEffect(() => {
     fetchFareMatrix();
+    // Log page view to audit logs
+    AuditService.logPageView('Fare Matrix');
   }, []);
 
   const fetchFareMatrix = async () => {
@@ -49,6 +52,9 @@ const FareMatrix = () => {
 
       if (error) throw error;
 
+      // Log fare addition to audit logs
+      await AuditService.logFareMatrixUpdated(newFare.route_from, newFare.route_to, `Added new fare: Regular ₱${newFare.regular_fare}, Discounted ₱${newFare.discounted_fare}`);
+
       alert('Fare added successfully!');
       setShowAddModal(false);
       setNewFare({ route_from: '', route_to: '', km_distance: 0, regular_fare: 0, discounted_fare: 0 });
@@ -68,6 +74,9 @@ const FareMatrix = () => {
         .eq('id', editingFare.id);
 
       if (error) throw error;
+
+      // Log fare update to audit logs
+      await AuditService.logFareMatrixUpdated(newFare.route_from, newFare.route_to, `Updated fare: Regular ₱${newFare.regular_fare}, Discounted ₱${newFare.discounted_fare}`);
 
       alert('Fare updated successfully!');
       setEditingFare(null);

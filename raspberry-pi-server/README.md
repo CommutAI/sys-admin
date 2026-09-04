@@ -1,6 +1,12 @@
 # Raspberry Pi Bus Video Monitoring Setup
 
-This guide will help you set up the EMEET C60E Dual Camera 4K Webcam on a Raspberry Pi 4 Model B (8GB) with 64GB microSD for live bus video monitoring with AI passenger detection.
+This guide will help you set up the EMEET C60E Dual Camera 4K Webcam on a Raspberry Pi for live bus video monitoring with optional AI passenger detection.
+
+> **⚠️ Important — OOM / "Killed" on startup**
+> Loading the YOLOv8 model requires ~700MB of RAM. On a Pi with 2GB or less (or without swap),
+> the OS will kill the process immediately. **Set `DISABLE_AI=true` in your `.env` first** to get
+> the camera stream working, then enable AI only after confirming the Pi has enough memory.
+> See [Memory Requirements](#memory-requirements) below.
 
 ## Hardware Requirements
 
@@ -138,14 +144,15 @@ Or download manually from [Ultralytics releases](https://github.com/ultralytics/
 
 ### 8. Configure Camera Settings
 
-Edit `video_server.py` if needed to adjust camera parameters:
+All camera parameters are now controlled via environment variables in `.env`. The defaults are already tuned for low-RAM Pis:
 
-```python
-# Camera configuration
-CAMERA_ID = 0  # Change to 1 if using second camera
-CAMERA_WIDTH = 1280  # Reduce to 640 if performance is slow
-CAMERA_HEIGHT = 720  # Reduce to 480 if performance is slow
-FPS = 15  # Reduce to 10 if performance is slow
+```env
+CAMERA_ID=0         # Change to 1 if using second camera
+CAMERA_WIDTH=640    # Increase to 1280 only if Pi has plenty of RAM
+CAMERA_HEIGHT=480   # Increase to 720 only if Pi has plenty of RAM
+FPS=10              # Increase to 15 on faster hardware
+JPEG_QUALITY=60     # Increase to 80 for sharper image (uses more bandwidth)
+DISABLE_AI=true     # Set false only on Pi 4 8GB with swap enabled
 ```
 
 ### 9. Test the Server
@@ -267,6 +274,30 @@ If the video is laggy or detection is slow:
 5. **Use USB 3.0 Port**: Ensure camera is connected to blue USB 3.0 port
 
 6. **Overclock Raspberry Pi**: Use `sudo raspi-config` to enable overclocking (caution)
+
+## Memory Requirements
+
+| Mode | Min RAM | Notes |
+|---|---|---|
+| Camera stream only (`DISABLE_AI=true`) | 256 MB | Works on any Pi |
+| With YOLO AI detection (`DISABLE_AI=false`) | 1.5 GB free | Pi 4 4GB+ recommended |
+
+If the server is killed immediately on startup (`Killed` in terminal), you are hitting the OOM limit.
+
+**Quick fix — increase swap to 1GB:**
+```bash
+sudo dphys-swapfile swapoff
+sudo sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=1024/' /etc/dphys-swapfile
+sudo dphys-swapfile setup
+sudo dphys-swapfile swapon
+free -h   # verify swap is now 1GB
+```
+
+**Verify memory before enabling AI:**
+```bash
+free -h
+# You need at least 1.5GB available (RAM + swap combined) for DISABLE_AI=false
+```
 
 ## Troubleshooting
 

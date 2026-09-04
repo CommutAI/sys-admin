@@ -148,7 +148,7 @@ class SIM900A:
 class NEO6M:
     """NEO-6M GPS Module for Location Tracking"""
     
-    def __init__(self, port: str = '/dev/ttyS1', baudrate: int = 9600):
+    def __init__(self, port: str = '/dev/serial0', baudrate: int = 9600):
         self.port = port
         self.baudrate = baudrate
         self.serial_connection = None
@@ -551,6 +551,12 @@ class HardwareManager:
         self.admin_contacts = config.get('admin_contacts', [])
         self.current_trip_id: Optional[int] = None
         
+        # Hardware availability flags
+        self.camera_available = True  # Camera is managed by video processor
+        self.gps_available = False
+        self.sms_available = False
+        self.emergency_button_available = False
+        
     def initialize(self) -> bool:
         """Initialize all hardware components"""
         success = True
@@ -562,9 +568,11 @@ class HardwareManager:
                 baudrate=self.config.get('sim900a_baudrate', 9600)
             )
             if self.sim900a.connect():
+                self.sms_available = True
                 self._update_hardware_status('sim900a', 'online')
             else:
                 logger.error("Failed to initialize SIM900A")
+                self.sms_available = False
                 self._update_hardware_status('sim900a', 'offline')
                 success = False
         
@@ -575,9 +583,11 @@ class HardwareManager:
                 baudrate=self.config.get('neo6m_baudrate', 9600)
             )
             if self.neo6m.connect():
+                self.gps_available = True
                 self._update_hardware_status('neo6m', 'online')
             else:
                 logger.error("Failed to initialize NEO-6M GPS")
+                self.gps_available = False
                 self._update_hardware_status('neo6m', 'offline')
                 success = False
         
@@ -599,6 +609,7 @@ class HardwareManager:
             )
             self.emergency_button.setup_gpio()
             self.emergency_button.start_monitoring()
+            self.emergency_button_available = True
             self._update_hardware_status('emergency_button', 'online')
             logger.info("Emergency button initialized")
         

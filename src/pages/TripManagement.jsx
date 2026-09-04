@@ -1,22 +1,20 @@
 import { useState, useEffect } from 'react';
 import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabase';
+import { clearPiTrip } from '../services/raspberryPiApi';
+import AuditService from '../services/auditService';
 
 const TripManagement = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [trips, setTrips] = useState([]);
   const [buses, setBuses] = useState([]);
+  const [conductors, setConductors] = useState([]);
+  const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedTrip, setSelectedTrip] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
-  const [newTrip, setNewTrip] = useState({
-    bus_id: '',
-    conductor_id: '',
-    current_lat: 14.5995,
-    current_lng: 120.9842
-  });
 
   // Trip history state
   const [showHistory, setShowHistory] = useState(false);
@@ -44,15 +42,19 @@ const TripManagement = () => {
     bus_number: '',
     route: '',
     seat_capacity: 35,
-    status: 'active'
+    status: 'active',
+    conductor_id: '',
+    driver_id: ''
   });
 
   useEffect(() => {
     fetchTrips();
     fetchBuses();
+    fetchConductors();
+    fetchDrivers();
     
     // Set up real-time subscription for trips
-    const tripsSubscription = supabase
+    const tripsSubscription = supabaseAdmin
       .channel('trips-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trips' }, () => {
         fetchTrips();
@@ -60,25 +62,38 @@ const TripManagement = () => {
       .subscribe();
 
     // Set up real-time subscription for buses
-    const busesSubscription = supabase
+    const busesSubscription = supabaseAdmin
       .channel('buses-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'buses' }, () => {
         fetchBuses();
       })
       .subscribe();
 
+    // Set up real-time subscription for staff_users
+    const staffSubscription = supabaseAdmin
+      .channel('staff-users-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_users' }, () => {
+        fetchConductors();
+        fetchDrivers();
+      })
+      .subscribe();
+
+    // Log page view to audit logs
+    AuditService.logPageView('Trip Management');
+
     return () => {
       tripsSubscription.unsubscribe();
       busesSubscription.unsubscribe();
+      staffSubscription.unsubscribe();
     };
   }, []);
 
   const fetchTrips = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('trips')
-        .select('*, buses(*), conductor_staff:staff_users!conductor_id(*)')
+        .select('*, buses(*), conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*)')
         .order('started_at', { ascending: false });
 
       if (error) throw error;
@@ -92,9 +107,9 @@ const TripManagement = () => {
 
   const fetchBuses = async () => {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('buses')
-        .select('*')
+        .select('*, conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -104,16 +119,58 @@ const TripManagement = () => {
     }
   };
 
+  const fetchConductors = async () => {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('staff_users')
+        .select('*')
+        .eq('role', 'conductor')
+        .eq('is_active', true)
+        .order('full_name', { ascending: true });
+
+      if (error) throw error;
+      setConductors(data || []);
+    } catch (error) {
+      console.error('Error fetching conductors:', error);
+    }
+  };
+
+  const fetchDrivers = async () => {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('staff_users')
+        .select('*')
+        .eq('role', 'driver')
+        .eq('is_active', true)
+        .order('full_name', { ascending: true });
+
+      if (error) throw error;
+      setDrivers(data || []);
+    } catch (error) {
+      console.error('Error fetching drivers:', error);
+    }
+  };
+
   const handleEndTrip = async (tripId) => {
     if (!confirm('Are you sure you want to end this trip?')) return;
 
     try {
-      const { error } = await supabase
+      const trip = trips.find(t => t.id === tripId);
+      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+
+      const { error } = await supabaseAdmin
         .from('trips')
         .update({ status: 'completed', ended_at: new Date().toISOString() })
         .eq('id', tripId);
 
       if (error) throw error;
+
+      // Log trip end to audit logs
+      await AuditService.logTripEnded(tripId, busInfo);
+
+      // Tell the Pi the trip is over so it stops linking counts to this trip
+      await clearPiTrip();
+
       fetchTrips();
     } catch (error) {
       console.error('Error ending trip:', error);
@@ -125,12 +182,22 @@ const TripManagement = () => {
     if (!confirm('Are you sure you want to cancel this trip?')) return;
 
     try {
-      const { error } = await supabase
+      const trip = trips.find(t => t.id === tripId);
+      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+
+      const { error } = await supabaseAdmin
         .from('trips')
         .update({ status: 'cancelled', ended_at: new Date().toISOString() })
         .eq('id', tripId);
 
       if (error) throw error;
+
+      // Log trip cancellation to audit logs
+      await AuditService.logTripCancelled(tripId, busInfo);
+
+      // Tell the Pi the trip is cancelled
+      await clearPiTrip();
+
       fetchTrips();
     } catch (error) {
       console.error('Error cancelling trip:', error);
@@ -138,47 +205,27 @@ const TripManagement = () => {
     }
   };
 
-  const handleAddTrip = async (e) => {
-    e.preventDefault();
-    try {
-      const { error } = await supabase
-        .from('trips')
-        .insert([{
-          bus_id: newTrip.bus_id,
-          conductor_id: newTrip.conductor_id,
-          current_lat: newTrip.current_lat,
-          current_lng: newTrip.current_lng,
-          status: 'in_progress',
-          started_at: new Date().toISOString()
-        }]);
 
-      if (error) throw error;
-      alert('Trip started successfully!');
-      setShowAddModal(false);
-      setNewTrip({ bus_id: '', conductor_id: '', current_lat: 14.5995, current_lng: 120.9842 });
-      fetchTrips();
-    } catch (error) {
-      console.error('Error adding trip:', error);
-      alert('Error adding trip: ' + error.message);
-    }
-  };
 
   const handleEditTrip = async (e) => {
     e.preventDefault();
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('trips')
         .update({
-          current_lat: newTrip.current_lat,
-          current_lng: newTrip.current_lng
+          current_lat: selectedTrip.current_lat,
+          current_lng: selectedTrip.current_lng
         })
         .eq('id', selectedTrip.id);
 
       if (error) throw error;
+
+      // Log trip update to audit logs
+      await AuditService.logTripUpdated(selectedTrip.id, `Updated GPS location to ${selectedTrip.current_lat}, ${selectedTrip.current_lng}`);
+
       alert('Trip location updated successfully!');
       setShowEditModal(false);
       setSelectedTrip(null);
-      setNewTrip({ bus_id: '', conductor_id: '', current_lat: 14.5995, current_lng: 120.9842 });
       fetchTrips();
     } catch (error) {
       console.error('Error editing trip:', error);
@@ -190,12 +237,19 @@ const TripManagement = () => {
     if (!confirm('Are you sure you want to delete this trip? This action cannot be undone.')) return;
 
     try {
-      const { error } = await supabase
+      const trip = trips.find(t => t.id === tripId);
+      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+
+      const { error } = await supabaseAdmin
         .from('trips')
         .delete()
         .eq('id', tripId);
 
       if (error) throw error;
+
+      // Log trip deletion to audit logs
+      await AuditService.logTripDeleted(tripId, busInfo);
+
       alert('Trip deleted successfully!');
       fetchTrips();
     } catch (error) {
@@ -205,10 +259,8 @@ const TripManagement = () => {
   };
 
   const openEditModal = (trip) => {
-    setSelectedTrip(trip);
-    setNewTrip({
-      bus_id: trip.bus_id,
-      conductor_id: trip.conductor_id,
+    setSelectedTrip({
+      ...trip,
       current_lat: trip.current_lat || 14.5995,
       current_lng: trip.current_lng || 120.9842
     });
@@ -222,7 +274,7 @@ const TripManagement = () => {
 
   const fetchTripPassengers = async (tripId) => {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('passenger_counts')
         .select('count')
         .eq('trip_id', tripId)
@@ -277,9 +329,9 @@ const TripManagement = () => {
           endDate = new Date();
       }
 
-      let query = supabase
+      let query = supabaseAdmin
         .from('trips')
-        .select('*, buses(*), conductor_staff:staff_users!conductor_id(*), passenger_counts(count)')
+        .select('*, buses(*), conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*), passenger_counts(count)')
         .gte('started_at', startDate.toISOString())
         .order('started_at', { ascending: false });
 
@@ -333,7 +385,8 @@ const TripManagement = () => {
   const filteredTrips = trips.filter(trip => {
     const matchesSearch = trip.buses?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          trip.buses?.route?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         trip.conductor_staff?.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
+                         trip.conductor?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         trip.driver?.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = filterStatus === 'all' || trip.status === filterStatus;
     return matchesSearch && matchesStatus;
   });
@@ -342,15 +395,36 @@ const TripManagement = () => {
   const handleAddBus = async (e) => {
     e.preventDefault();
     try {
-      const { error } = await supabase
+      const busData = {
+        plate_number: newBus.plate_number,
+        bus_number: newBus.bus_number ? parseInt(newBus.bus_number) : null,
+        route: newBus.route,
+        seat_capacity: newBus.seat_capacity,
+        status: newBus.status
+      };
+
+      // Only include conductor_id if one is selected
+      if (newBus.conductor_id) {
+        busData.conductor_id = newBus.conductor_id;
+      }
+
+      // Only include driver_id if one is selected
+      if (newBus.driver_id) {
+        busData.driver_id = newBus.driver_id;
+      }
+
+      const { error } = await supabaseAdmin
         .from('buses')
-        .insert([newBus]);
+        .insert([busData]);
 
       if (error) throw error;
 
+      // Log bus creation to audit logs
+      await AuditService.logBusCreated(newBus.bus_number || 'N/A', newBus.plate_number);
+
       alert('Bus added successfully!');
       setShowAddBusModal(false);
-      setNewBus({ plate_number: '', bus_number: '', route: '', seat_capacity: 35, status: 'active' });
+      setNewBus({ plate_number: '', bus_number: '', route: '', seat_capacity: 35, status: 'active', conductor_id: '', driver_id: '' });
       fetchBuses();
     } catch (error) {
       console.error('Error adding bus:', error);
@@ -361,16 +435,37 @@ const TripManagement = () => {
   const handleUpdateBus = async (e) => {
     e.preventDefault();
     try {
-      const { error } = await supabase
+      const busData = {
+        plate_number: newBus.plate_number,
+        bus_number: newBus.bus_number ? parseInt(newBus.bus_number) : null,
+        route: newBus.route,
+        seat_capacity: newBus.seat_capacity,
+        status: newBus.status
+      };
+
+      // Only include conductor_id if one is selected
+      if (newBus.conductor_id) {
+        busData.conductor_id = newBus.conductor_id;
+      }
+
+      // Only include driver_id if one is selected
+      if (newBus.driver_id) {
+        busData.driver_id = newBus.driver_id;
+      }
+
+      const { error } = await supabaseAdmin
         .from('buses')
-        .update(newBus)
+        .update(busData)
         .eq('id', editingBus.id);
 
       if (error) throw error;
 
+      // Log bus update to audit logs
+      await AuditService.logBusUpdated(editingBus.id, `Updated bus #${newBus.bus_number} (${newBus.plate_number})`);
+
       alert('Bus updated successfully!');
       setEditingBus(null);
-      setNewBus({ plate_number: '', bus_number: '', route: '', seat_capacity: 35, status: 'active' });
+      setNewBus({ plate_number: '', bus_number: '', route: '', seat_capacity: 35, status: 'active', conductor_id: '', driver_id: '' });
       fetchBuses();
     } catch (error) {
       console.error('Error updating bus:', error);
@@ -380,12 +475,19 @@ const TripManagement = () => {
 
   const handleUpdateBusStatus = async (busId, newStatus) => {
     try {
-      const { error } = await supabase
+      const bus = buses.find(b => b.id === busId);
+      const oldStatus = bus?.status || 'unknown';
+
+      const { error } = await supabaseAdmin
         .from('buses')
         .update({ status: newStatus })
         .eq('id', busId);
 
       if (error) throw error;
+
+      // Log bus status change to audit logs
+      await AuditService.logBusStatusChanged(busId, oldStatus, newStatus);
+
       fetchBuses();
     } catch (error) {
       console.error('Error updating bus status:', error);
@@ -396,12 +498,19 @@ const TripManagement = () => {
     if (!confirm('Are you sure you want to delete this bus?')) return;
 
     try {
-      const { error } = await supabase
+      const bus = buses.find(b => b.id === busId);
+      const plateNumber = bus?.plate_number || 'Unknown';
+
+      const { error } = await supabaseAdmin
         .from('buses')
         .delete()
         .eq('id', busId);
 
       if (error) throw error;
+
+      // Log bus deletion to audit logs
+      await AuditService.logBusDeleted(busId, plateNumber);
+
       fetchBuses();
     } catch (error) {
       console.error('Error deleting bus:', error);
@@ -416,7 +525,9 @@ const TripManagement = () => {
       bus_number: bus.bus_number || '',
       route: bus.route,
       seat_capacity: bus.seat_capacity,
-      status: bus.status
+      status: bus.status,
+      conductor_id: bus.conductor_id || '',
+      driver_id: bus.driver_id || ''
     });
   };
 
@@ -592,8 +703,14 @@ const TripManagement = () => {
                     </div>
                     <div className="flex items-center gap-2 text-white/70 text-sm mb-2">
                       <User size={14} />
-                      <span>{trip.conductor_staff?.full_name || 'N/A'}</span>
+                      <span>Conductor: {trip.conductor?.full_name || 'N/A'}</span>
                     </div>
+                    {trip.driver && (
+                      <div className="flex items-center gap-2 text-white/70 text-sm mb-2">
+                        <User size={14} />
+                        <span>Driver: {trip.driver.full_name}</span>
+                      </div>
+                    )}
                     <div className="flex items-center gap-4 text-white/60 text-sm mb-3">
                       <div className="flex items-center gap-1">
                         <Clock size={14} />
@@ -665,8 +782,14 @@ const TripManagement = () => {
                 </div>
                 <div className="flex items-center gap-2 text-white/70 text-sm mb-2">
                   <User size={14} />
-                  <span>{trip.conductor_staff?.full_name || 'N/A'}</span>
+                  <span>Conductor: {trip.conductor?.full_name || 'N/A'}</span>
                 </div>
+                {trip.driver && (
+                  <div className="flex items-center gap-2 text-white/70 text-sm mb-2">
+                    <User size={14} />
+                    <span>Driver: {trip.driver.full_name}</span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 text-white/60 text-sm mb-3">
                   <Clock size={14} />
                   <span>{new Date(trip.started_at).toLocaleString()}</span>
@@ -677,6 +800,12 @@ const TripManagement = () => {
                     className="flex-1 px-3 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors"
                   >
                     View Details
+                  </button>
+                  <button
+                    onClick={() => openEditModal(trip)}
+                    className="flex-1 px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-sm transition-colors"
+                  >
+                    Edit Location
                   </button>
                   {trip.status === 'in_progress' && (
                     <button
@@ -738,9 +867,21 @@ const TripManagement = () => {
                     {bus.status}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 text-white/70 text-sm mb-3">
+                <div className="flex items-center gap-2 text-white/70 text-sm mb-2">
                   <span>Capacity: {bus.seat_capacity}</span>
                 </div>
+                {bus.conductor && (
+                  <div className="flex items-center gap-2 text-white/70 text-sm mb-2">
+                    <User size={14} />
+                    <span>Conductor: {bus.conductor.full_name}</span>
+                  </div>
+                )}
+                {bus.driver && (
+                  <div className="flex items-center gap-2 text-white/70 text-sm mb-3">
+                    <User size={14} />
+                    <span>Driver: {bus.driver.full_name}</span>
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <button
                     onClick={() => openEditBusModal(bus)}
@@ -781,7 +922,10 @@ const TripManagement = () => {
             <form onSubmit={handleEditTrip} className="space-y-4">
               <div className="bg-white/5 p-3 rounded-xl mb-4">
                 <p className="text-white/60 text-xs">Bus: {selectedTrip.buses?.plate_number}</p>
-                <p className="text-white/60 text-xs">Conductor: {selectedTrip.conductor_staff?.full_name}</p>
+                <p className="text-white/60 text-xs">Conductor: {selectedTrip.conductor?.full_name}</p>
+                {selectedTrip.driver && (
+                  <p className="text-white/60 text-xs">Driver: {selectedTrip.driver.full_name}</p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -789,8 +933,8 @@ const TripManagement = () => {
                   <input
                     type="number"
                     step="0.0001"
-                    value={newTrip.current_lat}
-                    onChange={(e) => setNewTrip({ ...newTrip, current_lat: parseFloat(e.target.value) })}
+                    value={selectedTrip.current_lat || 14.5995}
+                    onChange={(e) => setSelectedTrip({ ...selectedTrip, current_lat: parseFloat(e.target.value) })}
                     className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                   />
                 </div>
@@ -799,8 +943,8 @@ const TripManagement = () => {
                   <input
                     type="number"
                     step="0.0001"
-                    value={newTrip.current_lng}
-                    onChange={(e) => setNewTrip({ ...newTrip, current_lng: parseFloat(e.target.value) })}
+                    value={selectedTrip.current_lng || 120.9842}
+                    onChange={(e) => setSelectedTrip({ ...selectedTrip, current_lng: parseFloat(e.target.value) })}
                     className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                   />
                 </div>
@@ -856,9 +1000,18 @@ const TripManagement = () => {
                 <User className="text-orange-400" />
                 <div>
                   <p className="text-white/60 text-sm">Conductor</p>
-                  <p className="text-white font-medium">{selectedTrip.conductor_staff?.full_name}</p>
+                  <p className="text-white font-medium">{selectedTrip.conductor?.full_name || 'N/A'}</p>
                 </div>
               </div>
+              {selectedTrip.driver && (
+                <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
+                  <User className="text-orange-400" />
+                  <div>
+                    <p className="text-white/60 text-sm">Driver</p>
+                    <p className="text-white font-medium">{selectedTrip.driver.full_name}</p>
+                  </div>
+                </div>
+              )}
               <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
                 <Clock className="text-orange-400" />
                 <div>
@@ -901,61 +1054,108 @@ const TripManagement = () => {
       {/* Add/Edit Bus Modal */}
       {!showHistory && (showAddBusModal || editingBus) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-md">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-2xl">
             <h2 className="text-white text-xl font-bold mb-4">
               {editingBus ? 'Edit Bus' : 'Add New Bus'}
             </h2>
             <form onSubmit={editingBus ? handleUpdateBus : handleAddBus} className="space-y-4">
-              <div>
-                <label className="text-white/60 text-sm mb-1 block">Bus Number</label>
-                <input
-                  type="number"
-                  value={newBus.bus_number}
-                  onChange={(e) => setNewBus({ ...newBus, bus_number: parseInt(e.target.value) || '' })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                />
-              </div>
-              <div>
-                <label className="text-white/60 text-sm mb-1 block">Plate Number</label>
-                <input
-                  type="text"
-                  required
-                  value={newBus.plate_number}
-                  onChange={(e) => setNewBus({ ...newBus, plate_number: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                />
-              </div>
-              <div>
-                <label className="text-white/60 text-sm mb-1 block">Route</label>
-                <input
-                  type="text"
-                  required
-                  value={newBus.route}
-                  onChange={(e) => setNewBus({ ...newBus, route: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                />
-              </div>
-              <div>
-                <label className="text-white/60 text-sm mb-1 block">Seat Capacity</label>
-                <input
-                  type="number"
-                  required
-                  value={newBus.seat_capacity}
-                  onChange={(e) => setNewBus({ ...newBus, seat_capacity: parseInt(e.target.value) })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                />
-              </div>
-              <div>
-                <label className="text-white/60 text-sm mb-1 block">Status</label>
-                <select
-                  value={newBus.status}
-                  onChange={(e) => setNewBus({ ...newBus, status: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                >
-                  <option value="active">Active</option>
-                  <option value="maintenance">Maintenance</option>
-                  <option value="inactive">Inactive</option>
-                </select>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Left Pane - Basic Bus Info */}
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">Bus Number</label>
+                    <input
+                      type="number"
+                      value={newBus.bus_number}
+                      onChange={(e) => setNewBus({ ...newBus, bus_number: parseInt(e.target.value) || '' })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">Plate Number</label>
+                    <input
+                      type="text"
+                      required
+                      value={newBus.plate_number}
+                      onChange={(e) => setNewBus({ ...newBus, plate_number: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">Route</label>
+                    <input
+                      type="text"
+                      required
+                      value={newBus.route}
+                      onChange={(e) => setNewBus({ ...newBus, route: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">Seat Capacity</label>
+                    <input
+                      type="number"
+                      required
+                      value={newBus.seat_capacity}
+                      onChange={(e) => setNewBus({ ...newBus, seat_capacity: parseInt(e.target.value) })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">Status</label>
+                    <select
+                      value={newBus.status}
+                      onChange={(e) => setNewBus({ ...newBus, status: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                    >
+                      <option value="active">Active</option>
+                      <option value="maintenance">Maintenance</option>
+                      <option value="inactive">Inactive</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Right Pane - Staff Assignment */}
+                <div className="space-y-4">
+                  <div className="bg-white/5 p-4 rounded-xl">
+                    <h3 className="text-white font-medium mb-3 flex items-center gap-2">
+                      <User size={16} className="text-blue-400" />
+                      Staff Assignment
+                    </h3>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-white/60 text-sm mb-1 block">Conductor</label>
+                        <select
+                          value={newBus.conductor_id}
+                          onChange={(e) => setNewBus({ ...newBus, conductor_id: e.target.value })}
+                          className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                        >
+                          <option value="">No Conductor Assigned</option>
+                          {conductors.map(conductor => (
+                            <option key={conductor.id} value={conductor.id}>
+                              {conductor.full_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-white/60 text-sm mb-1 block">Driver</label>
+                        <select
+                          value={newBus.driver_id}
+                          onChange={(e) => setNewBus({ ...newBus, driver_id: e.target.value })}
+                          className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                        >
+                          <option value="">No Driver Assigned</option>
+                          {drivers.map(driver => (
+                            <option key={driver.id} value={driver.id}>
+                              {driver.full_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
               <div className="flex gap-3 justify-end">
                 <button
@@ -963,7 +1163,7 @@ const TripManagement = () => {
                   onClick={() => {
                     setShowAddBusModal(false);
                     setEditingBus(null);
-                    setNewBus({ plate_number: '', bus_number: '', route: '', seat_capacity: 35, status: 'active' });
+                    setNewBus({ plate_number: '', bus_number: '', route: '', seat_capacity: 35, status: 'active', conductor_id: '', driver_id: '' });
                   }}
                   className="px-4 py-2 rounded-xl text-white/60 hover:text-white transition-colors"
                 >

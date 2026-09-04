@@ -47,13 +47,14 @@ const EmergencyAlerts = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('emergency_alerts')
-        .select('*, trips(*, buses(*)), conductor_staff:staff_users!conductor_id(*)')
+        .select('*, trips(*, buses(*)), conductor_staff:staff_users(*)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setAlerts(data || []);
     } catch (error) {
       console.error('Error fetching emergency alerts:', error);
+      setAlerts([]); // Set empty array on error to prevent UI crashes
     } finally {
       setLoading(false);
     }
