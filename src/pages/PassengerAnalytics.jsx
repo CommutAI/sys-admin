@@ -28,25 +28,17 @@ const PassengerAnalytics = () => {
   const {
     online,
     connectionStatus,
-    error,
     passengerCount,
     averageCount,
     isStreaming,
     lastUpdate,
     videoRef,
-    connect,
-    disconnect,
     refresh,
-    startStream,
-    stopStream
+    assignedBus,
+    activeTripId,
   } = useRaspberryPi({ autoConnect: true, enableHealthCheck: false });
 
-  // Auto-start stream as soon as the WebSocket connects
-  useEffect(() => {
-    if (online && !isStreaming) {
-      startStream();
-    }
-  }, [online, isStreaming, startStream]);
+  // Stream starts automatically inside the hook on connect — no useEffect needed
 
   const fetchAnalyticsData = async () => {
     try {
@@ -67,11 +59,25 @@ const PassengerAnalytics = () => {
       let irregularities = [];
 
       try {
-        const { data: countsData } = await supabase
+        // Only fetch counts for trips that belong to the Pi's assigned bus
+        const busFilter = assignedBus?.busId;
+        let countsQuery = supabase
           .from('passenger_counts')
           .select('*, trips(*, buses(*))')
           .gte('recorded_at', startDate.toISOString())
           .order('recorded_at', { ascending: true });
+
+        if (busFilter) {
+          // Join through trips to filter by bus_id
+          countsQuery = supabase
+            .from('passenger_counts')
+            .select('*, trips!inner(*, buses(*))')
+            .eq('trips.bus_id', busFilter)
+            .gte('recorded_at', startDate.toISOString())
+            .order('recorded_at', { ascending: true });
+        }
+
+        const { data: countsData } = await countsQuery;
         counts = countsData || [];
       } catch (err) {
         console.warn('Failed to fetch passenger counts:', err.message);
@@ -248,12 +254,11 @@ const PassengerAnalytics = () => {
     return matchesSearch && matchesStatus && matchesType;
   });
 
-  // Fetch data on component mount and when time range changes
+  // Fetch data on component mount and when time range or assigned bus changes
   useEffect(() => {
     fetchAnalyticsData();
-    // Log page view to audit logs when time range changes
     AuditService.logAnalyticsViewed(timeRange);
-  }, [timeRange]);
+  }, [timeRange, assignedBus?.busId]);
 
   // Log initial page view
   useEffect(() => {
@@ -375,6 +380,11 @@ const PassengerAnalytics = () => {
           <h2 className="text-white text-xl font-bold flex items-center gap-2">
             <Video className="text-orange-400" />
             Live Bus Video Monitoring
+            {assignedBus?.busPlate && (
+              <span className="px-2 py-0.5 bg-orange-500/20 text-orange-300 text-xs rounded-full border border-orange-500/30">
+                Bus {assignedBus.busNumber} · {assignedBus.busPlate}
+              </span>
+            )}
           </h2>
           <div className="flex items-center gap-3">
             <button
@@ -389,27 +399,23 @@ const PassengerAnalytics = () => {
 
         {/* Connection Status */}
         <div className={`mb-4 p-4 rounded-xl flex items-center gap-3 ${
-          online ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'
+          online ? 'border-green-500/30 bg-green-500/10' : 'border-yellow-500/30 bg-yellow-500/10'
         }`}>
           {online ? (
             <Wifi className="w-5 h-5 text-green-400" />
           ) : (
-            <WifiOff className="w-5 h-5 text-red-400" />
+            <WifiOff className="w-5 h-5 text-yellow-400" />
           )}
           <div className="flex-1">
             <p className="text-white font-medium">
-              {online ? 'Connected to Raspberry Pi' : 'Disconnected from Raspberry Pi'}
+              {online ? 'Connected to Raspberry Pi' : 'Connecting to Raspberry Pi…'}
             </p>
             <p className="text-white/60 text-sm">
-              Status: {connectionStatus.charAt(0).toUpperCase() + connectionStatus.slice(1)}
+              {online
+                ? `Status: ${connectionStatus.charAt(0).toUpperCase() + connectionStatus.slice(1)}`
+                : 'Auto-reconnecting — will connect when Pi is online'}
             </p>
           </div>
-          {error && (
-            <div className="flex items-center gap-2 text-red-400">
-              <AlertTriangle size={16} />
-              <span className="text-sm">{error}</span>
-            </div>
-          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -425,16 +431,10 @@ const PassengerAnalytics = () => {
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="text-center px-6">
                     <Video className="w-16 h-16 text-white/30 mx-auto mb-4" />
-                    {error ? (
-                      <>
-                        <p className="text-red-400 font-medium mb-1">Stream Error</p>
-                        <p className="text-white/50 text-sm">{error}</p>
-                      </>
-                    ) : (
-                      <p className="text-white/50">
-                        {online ? 'Connecting to stream…' : 'Connect to server to start streaming'}
-                      </p>
-                    )}
+                    <p className="text-white/50">
+                      {online ? 'Starting stream…' : 'Connecting to Raspberry Pi…'}
+                    </p>
+                    {!online && <p className="text-white/25 text-sm mt-1">Auto-reconnecting</p>}
                   </div>
                 </div>
               )}

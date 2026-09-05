@@ -6,11 +6,12 @@ import { getPersistedIp } from '../services/piAutoDiscovery';
 
 // Connection stages and their progress %
 const CONNECTION_STAGES = {
-  disconnected: { pct: 0,   label: 'Disconnected',        color: 'bg-red-500' },
-  connecting:   { pct: 40,  label: 'Connecting to Pi…',   color: 'bg-yellow-400' },
-  connected:    { pct: 70,  label: 'Starting stream…',    color: 'bg-blue-400' },
-  streaming:    { pct: 100, label: 'Streaming',            color: 'bg-green-500' },
-  error:        { pct: 0,   label: 'Connection failed',    color: 'bg-red-500' },
+  disconnected: { pct: 0,   label: 'Disconnected',        color: 'bg-red-500'    },
+  connecting:   { pct: 20,  label: 'Checking Pi…',        color: 'bg-yellow-400' },
+  offline:      { pct: 0,   label: 'Pi offline',          color: 'bg-red-500'    },
+  connected:    { pct: 70,  label: 'Starting stream…',    color: 'bg-blue-400'   },
+  streaming:    { pct: 100, label: 'Streaming',            color: 'bg-green-500'  },
+  error:        { pct: 20,  label: 'Reconnecting…',       color: 'bg-yellow-400' },
 };
 
 const VideoMonitoring = ({ autoConnect = true }) => {
@@ -44,21 +45,20 @@ const VideoMonitoring = ({ autoConnect = true }) => {
     startStream,
     stopStream,
     connect,
+    assignedBus,
+    activeTripId,
+    piReachable,
+    raspberryPiUrl,
   } = useRaspberryPi({ autoConnect, enableHealthCheck: false });
 
-  // Auto-start stream as soon as the WebSocket connects
-  useEffect(() => {
-    if (online && !isStreaming && !useMjpeg) {
-      startStream();
-    }
-  }, [online, isStreaming, useMjpeg, startStream]);
-
-  // Derive display stage
+  // displayStage drives the progress bar — stream starts automatically inside the hook
   const displayStage = isStreaming || useMjpeg
     ? 'streaming'
+    : piReachable === false
+    ? 'offline'
     : connectionStatus === 'error'
     ? 'error'
-    : connectionStatus; // 'disconnected' | 'connecting' | 'connected'
+    : connectionStatus;
 
   const stage = CONNECTION_STAGES[displayStage] ?? CONNECTION_STAGES.disconnected;
 
@@ -68,7 +68,14 @@ const VideoMonitoring = ({ autoConnect = true }) => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">Bus Video Monitoring</h1>
-          <p className="text-white/60 mt-1">Live video feed with AI passenger detection</p>
+          <p className="text-white/60 mt-1">
+            Live video feed with AI passenger detection
+            {assignedBus.busPlate && (
+              <span className="ml-2 px-2 py-0.5 bg-orange-500/20 text-orange-300 text-xs rounded-full border border-orange-500/30">
+                Bus {assignedBus.busNumber} · {assignedBus.busPlate}
+              </span>
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -124,14 +131,6 @@ const VideoMonitoring = ({ autoConnect = true }) => {
           <span className={displayStage === 'connected' || displayStage === 'streaming' ? 'text-white/60' : ''}>Connected</span>
           <span className={displayStage === 'streaming' ? 'text-green-400 font-medium' : ''}>Streaming</span>
         </div>
-
-        {/* Error message */}
-        {error && (
-          <p className="text-red-400 text-xs flex items-center gap-1.5 mt-1">
-            <AlertCircle size={12} />
-            {error}
-          </p>
-        )}
       </div>
 
       {/* Full-width Video Feed */}
@@ -159,21 +158,15 @@ const VideoMonitoring = ({ autoConnect = true }) => {
           {!isStreaming && !useMjpeg && (
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="text-center px-6">
-                {displayStage === 'connecting' || displayStage === 'connected' ? (
+                {piReachable === false ? (
                   <>
-                    <Loader2 className="w-12 h-12 text-orange-400 animate-spin mx-auto mb-4" />
-                    <p className="text-white/60 text-lg">
-                      {displayStage === 'connecting' ? 'Connecting to Raspberry Pi…' : 'Starting stream…'}
-                    </p>
-                  </>
-                ) : displayStage === 'error' ? (
-                  <>
-                    <AlertCircle className="w-16 h-16 text-red-400/50 mx-auto mb-4" />
-                    <p className="text-red-400 font-medium mb-1">Connection failed</p>
-                    <p className="text-white/40 text-sm max-w-sm">{error}</p>
+                    <WifiOff className="w-12 h-12 text-red-400/60 mx-auto mb-4" />
+                    <p className="text-red-400 font-medium mb-1">Raspberry Pi offline</p>
+                    <p className="text-white/40 text-sm mb-1">{raspberryPiUrl}</p>
+                    <p className="text-white/30 text-xs mb-4">Make sure the Pi is powered on and connected to the same network</p>
                     <button
                       onClick={refresh}
-                      className="mt-4 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm flex items-center gap-2 mx-auto transition-colors"
+                      className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm flex items-center gap-2 mx-auto transition-colors"
                     >
                       <RefreshCw size={14} />
                       Retry
@@ -181,15 +174,12 @@ const VideoMonitoring = ({ autoConnect = true }) => {
                   </>
                 ) : (
                   <>
-                    <Video className="w-16 h-16 text-white/20 mx-auto mb-4" />
-                    <p className="text-white/40 text-lg">Camera disconnected</p>
-                    <button
-                      onClick={connect}
-                      className="mt-4 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm flex items-center gap-2 mx-auto transition-colors"
-                    >
-                      <Wifi size={14} />
-                      Connect
-                    </button>
+                    <Loader2 className="w-12 h-12 text-orange-400 animate-spin mx-auto mb-4" />
+                    <p className="text-white/60 text-lg">
+                      {piReachable === null ? 'Checking Pi…' : connectionStatus === 'connected' ? 'Starting stream…' : 'Connecting…'}
+                    </p>
+                    <p className="text-white/30 text-sm mt-1">{raspberryPiUrl}</p>
+                    <p className="text-white/20 text-xs mt-1">Auto-reconnecting</p>
                   </>
                 )}
               </div>
@@ -257,6 +247,22 @@ const VideoMonitoring = ({ autoConnect = true }) => {
       <div className="glass-card rounded-xl p-5">
         <h3 className="text-sm font-semibold uppercase tracking-wider text-white/40 mb-3">Camera Info</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+          <div>
+            <p className="text-white/50">Assigned Bus</p>
+            <p className="text-white font-medium">
+              {assignedBus.busNumber ? `Bus ${assignedBus.busNumber}` : '—'}
+            </p>
+          </div>
+          <div>
+            <p className="text-white/50">Plate</p>
+            <p className="text-white font-medium">{assignedBus.busPlate || '—'}</p>
+          </div>
+          <div>
+            <p className="text-white/50">Active Trip</p>
+            <p className="text-white font-medium">
+              {activeTripId ? `#${activeTripId.slice(0, 8)}` : 'None'}
+            </p>
+          </div>
           <div>
             <p className="text-white/50">Model</p>
             <p className="text-white font-medium">EMEET C60E</p>

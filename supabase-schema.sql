@@ -1325,15 +1325,15 @@ END $$;
 -- ── 27. Seed: Test Bus Data ───────────────────────────────────────────────────
 INSERT INTO buses (plate_number, bus_number, route, seat_capacity, status) VALUES
   ('BUS-001', 1001, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-002', 1002, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-003', 1003, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-004', 1004, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-005', 1005, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-006', 1006, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-007', 1007, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-008', 1008, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-009', 1009, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
-  ('BUS-010', 1010, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active')
+  ('BUS-002', 1002, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
+  ('BUS-003', 1003, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
+  ('BUS-004', 1004, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
+  ('BUS-005', 1005, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
+  ('BUS-006', 1006, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
+  ('BUS-007', 1007, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
+  ('BUS-008', 1008, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
+  ('BUS-009', 1009, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
+  ('BUS-010', 1010, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive')
 ON CONFLICT (plate_number) DO UPDATE SET
   bus_number = EXCLUDED.bus_number,
   route = EXCLUDED.route,
@@ -1826,3 +1826,31 @@ BEGIN
   ORDER BY activity_score DESC;
 END;
 $$;
+
+-- ── Pi Device Registry ────────────────────────────────────────────────────────
+-- Each Raspberry Pi upserts its current IP here on startup so the admin
+-- dashboard can discover it automatically without hardcoding an IP address.
+CREATE TABLE IF NOT EXISTS pi_devices (
+  bus_number   INTEGER     PRIMARY KEY,
+  bus_id       UUID        REFERENCES buses (id) ON DELETE SET NULL,
+  ip_address   TEXT        NOT NULL,
+  port         INTEGER     NOT NULL DEFAULT 5000,
+  last_seen    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  hostname     TEXT
+);
+
+-- Allow the service-role key (used by both Pi server and admin frontend) full access.
+ALTER TABLE pi_devices ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'pi_devices' AND policyname = 'pi_devices_service_role'
+  ) THEN
+    CREATE POLICY "pi_devices_service_role"
+      ON pi_devices FOR ALL
+      USING (true)
+      WITH CHECK (true);
+  END IF;
+END $$;
