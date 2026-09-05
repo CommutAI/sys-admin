@@ -1,25 +1,15 @@
-# Core dependencies
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
-python-dotenv>=1.0.0
-
-# Computer Vision and AI
-opencv-python>=4.8.0
-numpy>=1.24.0
-ultralytics>=8.0.0
-
-# Database
-supabase>=2.0.0
-
-# Hardware communication
-pyserial>=3.5
-requests>=2.31.0
-gps>=3.19
-
-# Raspberry Pi specific
-RPi.GPIO>=0.7.0
-
-# Additional utilities
 websockets>=12.0
-pillow>=10.4.0
-pybase64>=1.4.0
+python-multipart>=0.0.6
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+supabase>=2.0.0
+opencv-python>=4.8.0
+ultralytics>=8.0.0
+numpy>=1.24.0
+pillow>=10.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+pyserial>=3.5
+RPi.GPIO>=0.7.0

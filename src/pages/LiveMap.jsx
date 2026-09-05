@@ -119,11 +119,13 @@ const LiveMap = () => {
         };
       });
 
-      // Add inactive buses
-      const usedLatestGps = busMarkers.some(bus => bus.locationUpdatedAt === latestGpsAny?.recordedAt);
+      // Add inactive buses (only those not already in active trips)
+      const activeBusIds = new Set((activeTrips || []).map(t => t.bus_id));
       const inactiveBuses = (allBuses || [])
-        .filter(bus => bus.status !== 'active' || !activeTrips?.some(t => t.bus_id === bus.id))
+        .filter(bus => !activeBusIds.has(bus.id)) // Ensure no duplicates
         .map((bus, index) => {
+          // Only use latest GPS for first inactive bus if not already used
+          const usedLatestGps = busMarkers.some(bus => bus.locationUpdatedAt === latestGpsAny?.recordedAt);
           const gps = !usedLatestGps && index === 0 ? latestGpsAny : null;
 
           return {
