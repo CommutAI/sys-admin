@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Bus, Plus, Search, Edit, Wrench, X } from 'lucide-react';
+import { Bus, Plus, Search, Edit, Wrench, X, User } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const BusManagement = () => {
@@ -9,6 +9,10 @@ const BusManagement = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingBus, setEditingBus] = useState(null);
+  const [showConductorModal, setShowConductorModal] = useState(false);
+  const [selectedBusForConductor, setSelectedBusForConductor] = useState(null);
+  const [conductors, setConductors] = useState([]);
+  const [selectedConductor, setSelectedConductor] = useState('');
   const [newBus, setNewBus] = useState({
     plate_number: '',
     bus_number: '',
@@ -19,6 +23,7 @@ const BusManagement = () => {
 
   useEffect(() => {
     fetchBuses();
+    fetchConductors();
   }, []);
 
   const fetchBuses = async () => {
@@ -26,7 +31,7 @@ const BusManagement = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('buses')
-        .select('*')
+        .select('*, conductor:staff_users(id, full_name, email)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -35,6 +40,21 @@ const BusManagement = () => {
       console.error('Error fetching buses:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchConductors = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('staff_users')
+        .select('*')
+        .eq('role', 'conductor')
+        .eq('is_active', true);
+
+      if (error) throw error;
+      setConductors(data || []);
+    } catch (error) {
+      console.error('Error fetching conductors:', error);
     }
   };
 
@@ -117,6 +137,59 @@ const BusManagement = () => {
       seat_capacity: bus.seat_capacity,
       status: bus.status
     });
+    setShowAddModal(true);
+  };
+
+  const openConductorModal = (bus) => {
+    setSelectedBusForConductor(bus);
+    setSelectedConductor(bus.conductor?.id || '');
+    setShowConductorModal(true);
+  };
+
+  const handleAssignConductor = async () => {
+    try {
+      // First, remove conductor assignment from any other bus
+      if (selectedConductor) {
+        await supabase
+          .from('staff_users')
+          .update({ bus_id: null })
+          .eq('id', selectedConductor);
+      }
+
+      // Assign the conductor to the selected bus
+      const { error } = await supabase
+        .from('staff_users')
+        .update({ bus_id: selectedBusForConductor.id })
+        .eq('id', selectedConductor);
+
+      if (error) throw error;
+
+      alert('Conductor assigned successfully!');
+      setShowConductorModal(false);
+      setSelectedBusForConductor(null);
+      setSelectedConductor('');
+      fetchBuses();
+    } catch (error) {
+      console.error('Error assigning conductor:', error);
+      alert('Error assigning conductor: ' + error.message);
+    }
+  };
+
+  const handleRemoveConductor = async (busId) => {
+    if (!confirm('Are you sure you want to remove the conductor from this bus?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('staff_users')
+        .update({ bus_id: null })
+        .eq('bus_id', busId);
+
+      if (error) throw error;
+      fetchBuses();
+    } catch (error) {
+      console.error('Error removing conductor:', error);
+      alert('Error removing conductor: ' + error.message);
+    }
   };
 
   const filteredBuses = buses.filter(bus => {
@@ -189,6 +262,7 @@ const BusManagement = () => {
                 <th className="text-left text-white/60 py-3 px-4">Plate Number</th>
                 <th className="text-left text-white/60 py-3 px-4">Route</th>
                 <th className="text-left text-white/60 py-3 px-4">Seat Capacity</th>
+                <th className="text-left text-white/60 py-3 px-4">Conductor</th>
                 <th className="text-left text-white/60 py-3 px-4">Status</th>
                 <th className="text-left text-white/60 py-3 px-4">Created</th>
                 <th className="text-left text-white/60 py-3 px-4">Actions</th>
@@ -209,6 +283,21 @@ const BusManagement = () => {
                   <td className="py-3 px-4 text-white/70">{bus.route}</td>
                   <td className="py-3 px-4 text-white/70">{bus.seat_capacity}</td>
                   <td className="py-3 px-4">
+                    {bus.conductor ? (
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
+                          <User size={14} className="text-white" />
+                        </div>
+                        <div>
+                          <span className="text-white text-sm">{bus.conductor.full_name}</span>
+                          <span className="text-white/50 text-xs block">{bus.conductor.email}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-white/40 text-sm">No conductor assigned</span>
+                    )}
+                  </td>
+                  <td className="py-3 px-4">
                     <span className={`px-3 py-1 rounded-full text-xs border ${statusColors[bus.status]}`}>
                       {bus.status}
                     </span>
@@ -218,6 +307,22 @@ const BusManagement = () => {
                   </td>
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => openConductorModal(bus)}
+                        className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                        title="Assign Conductor"
+                      >
+                        <User size={16} className="text-blue-400" />
+                      </button>
+                      {bus.conductor && (
+                        <button
+                          onClick={() => handleRemoveConductor(bus.id)}
+                          className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                          title="Remove Conductor"
+                        >
+                          <X size={16} className="text-red-400" />
+                        </button>
+                      )}
                       <button
                         onClick={() => openEditModal(bus)}
                         className="p-2 hover:bg-white/10 rounded-lg transition-colors"
@@ -257,7 +362,7 @@ const BusManagement = () => {
         </div>
       </div>
 
-      {(showAddModal || editingBus) && (
+      {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="glass-card p-6 rounded-2xl w-full max-w-md">
             <h2 className="text-white text-xl font-bold mb-4">
@@ -321,7 +426,7 @@ const BusManagement = () => {
                   onClick={() => {
                     setShowAddModal(false);
                     setEditingBus(null);
-                    setNewBus({ plate_number: '', route: '', seat_capacity: 35, status: 'active' });
+                    setNewBus({ plate_number: '', bus_number: '', route: '', seat_capacity: 35, status: 'active' });
                   }}
                   className="px-4 py-2 rounded-xl text-white/60 hover:text-white transition-colors"
                 >
@@ -335,6 +440,51 @@ const BusManagement = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showConductorModal && selectedBusForConductor && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-md">
+            <h2 className="text-white text-xl font-bold mb-4">
+              Assign Conductor to {selectedBusForConductor.plate_number}
+            </h2>
+            <div className="space-y-4">
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Select Conductor</label>
+                <select
+                  value={selectedConductor}
+                  onChange={(e) => setSelectedConductor(e.target.value)}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                >
+                  <option value="">-- No Conductor --</option>
+                  {conductors.map(conductor => (
+                    <option key={conductor.id} value={conductor.id}>
+                      {conductor.full_name} ({conductor.email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => {
+                    setShowConductorModal(false);
+                    setSelectedBusForConductor(null);
+                    setSelectedConductor('');
+                  }}
+                  className="px-4 py-2 rounded-xl text-white/60 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAssignConductor}
+                  className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl transition-colors"
+                >
+                  Assign Conductor
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

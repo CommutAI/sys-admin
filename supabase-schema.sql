@@ -188,15 +188,6 @@ END $$;
 DO $$
 BEGIN
   UPDATE buses SET bus_number = 1001 WHERE plate_number = 'BUS-001' AND bus_number IS NULL;
-  UPDATE buses SET bus_number = 1002 WHERE plate_number = 'BUS-002' AND bus_number IS NULL;
-  UPDATE buses SET bus_number = 1003 WHERE plate_number = 'BUS-003' AND bus_number IS NULL;
-  UPDATE buses SET bus_number = 1004 WHERE plate_number = 'BUS-004' AND bus_number IS NULL;
-  UPDATE buses SET bus_number = 1005 WHERE plate_number = 'BUS-005' AND bus_number IS NULL;
-  UPDATE buses SET bus_number = 1006 WHERE plate_number = 'BUS-006' AND bus_number IS NULL;
-  UPDATE buses SET bus_number = 1007 WHERE plate_number = 'BUS-007' AND bus_number IS NULL;
-  UPDATE buses SET bus_number = 1008 WHERE plate_number = 'BUS-008' AND bus_number IS NULL;
-  UPDATE buses SET bus_number = 1009 WHERE plate_number = 'BUS-009' AND bus_number IS NULL;
-  UPDATE buses SET bus_number = 1010 WHERE plate_number = 'BUS-010' AND bus_number IS NULL;
 END $$;
 
 -- ── 3. Trips ──────────────────────────────────────────────────────────────────
@@ -1333,6 +1324,7 @@ END $$;
 
 -- ── 27. Seed: Test Bus Data ───────────────────────────────────────────────────
 INSERT INTO buses (plate_number, bus_number, route, seat_capacity, status) VALUES
+<<<<<<< HEAD
   ('BUS-001', 1001, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
   ('BUS-002', 1002, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
   ('BUS-003', 1003, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
@@ -1343,6 +1335,9 @@ INSERT INTO buses (plate_number, bus_number, route, seat_capacity, status) VALUE
   ('BUS-008', 1008, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
   ('BUS-009', 1009, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
   ('BUS-010', 1010, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive')
+=======
+  ('BUS-001', 1001, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active')
+>>>>>>> 4559f34aad17821beeaf3ff5af0a0853ffb32bb8
 ON CONFLICT (plate_number) DO UPDATE SET
   bus_number = EXCLUDED.bus_number,
   route = EXCLUDED.route,
@@ -1382,16 +1377,7 @@ ON CONFLICT DO NOTHING;
 
 -- ── 29. Seed: Trip Schedule Data ─────────────────────────────────────────────────
 INSERT INTO trip_schedules (trip_number, arrival_time_start, arrival_time_end, departure_time_start, departure_time_end) VALUES
-  (1, '04:15:00', '04:25:00', '04:30:00', '04:30:00'),
-  (2, '04:45:00', '04:45:00', '05:15:00', '05:15:00'),
-  (3, '05:15:00', '05:15:00', '05:45:00', '05:45:00'),
-  (4, '05:40:00', '05:40:00', '06:10:00', '06:15:00'),
-  (5, '06:00:00', '06:00:00', '06:30:00', '06:35:00'),
-  (6, '06:20:00', '06:20:00', '06:50:00', '06:55:00'),
-  (7, '06:40:00', '06:40:00', '07:10:00', '07:15:00'),
-  (8, '07:00:00', '07:00:00', '07:30:00', '07:35:00'),
-  (9, '07:20:00', '07:20:00', '07:50:00', '07:55:00'),
-  (10, '07:40:00', '07:40:00', '08:10:00', '08:15:00')
+  (1, '04:15:00', '04:25:00', '04:30:00', '04:30:00')
 ON CONFLICT (trip_number) DO NOTHING;
 
 -- ── 30. Seed: Bus Schedule Data ───────────────────────────────────────────────────
@@ -1399,95 +1385,57 @@ ON CONFLICT (trip_number) DO NOTHING;
 DO $$
 DECLARE
   bus_1001_id UUID;
-  bus_1002_id UUID;
-  bus_1003_id UUID;
-  bus_1004_id UUID;
-  bus_1005_id UUID;
-  bus_1006_id UUID;
-  bus_1007_id UUID;
-  bus_1008_id UUID;
-  bus_1009_id UUID;
-  bus_1010_id UUID;
 BEGIN
   SELECT id INTO bus_1001_id FROM buses WHERE bus_number = 1001;
-  SELECT id INTO bus_1002_id FROM buses WHERE bus_number = 1002;
-  SELECT id INTO bus_1003_id FROM buses WHERE bus_number = 1003;
-  SELECT id INTO bus_1004_id FROM buses WHERE bus_number = 1004;
-  SELECT id INTO bus_1005_id FROM buses WHERE bus_number = 1005;
-  SELECT id INTO bus_1006_id FROM buses WHERE bus_number = 1006;
-  SELECT id INTO bus_1007_id FROM buses WHERE bus_number = 1007;
-  SELECT id INTO bus_1008_id FROM buses WHERE bus_number = 1008;
-  SELECT id INTO bus_1009_id FROM buses WHERE bus_number = 1009;
-  SELECT id INTO bus_1010_id FROM buses WHERE bus_number = 1010;
 
   -- Insert bus schedules for Day 1
   INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
-    (bus_1007_id, 1, 1), (bus_1008_id, 1, 2), (bus_1005_id, 1, 3), (bus_1004_id, 1, 4),
-    (bus_1003_id, 1, 5), (bus_1002_id, 1, 6), (bus_1009_id, 1, 7), (bus_1010_id, 1, 8),
-    (bus_1001_id, 1, 9), (bus_1006_id, 1, 10)
+    (bus_1001_id, 1, 9)
   ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
 
   -- Insert bus schedules for Day 2
   INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
-    (bus_1008_id, 2, 1), (bus_1005_id, 2, 2), (bus_1004_id, 2, 3), (bus_1003_id, 2, 4),
-    (bus_1002_id, 2, 5), (bus_1009_id, 2, 6), (bus_1010_id, 2, 7), (bus_1001_id, 2, 8),
-    (bus_1006_id, 2, 9), (bus_1007_id, 2, 10)
+    (bus_1001_id, 2, 8)
   ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
 
   -- Insert bus schedules for Day 3
   INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
-    (bus_1005_id, 3, 1), (bus_1004_id, 3, 2), (bus_1003_id, 3, 3), (bus_1002_id, 3, 4),
-    (bus_1009_id, 3, 5), (bus_1010_id, 3, 6), (bus_1001_id, 3, 7), (bus_1006_id, 3, 8),
-    (bus_1007_id, 3, 9), (bus_1008_id, 3, 10)
+    (bus_1001_id, 3, 7)
   ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
 
   -- Insert bus schedules for Day 4
   INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
-    (bus_1004_id, 4, 1), (bus_1003_id, 4, 2), (bus_1002_id, 4, 3), (bus_1009_id, 4, 4),
-    (bus_1010_id, 4, 5), (bus_1001_id, 4, 6), (bus_1006_id, 4, 7), (bus_1007_id, 4, 8),
-    (bus_1008_id, 4, 9), (bus_1005_id, 4, 10)
+    (bus_1001_id, 4, 6)
   ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
 
   -- Insert bus schedules for Day 5
   INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
-    (bus_1003_id, 5, 1), (bus_1002_id, 5, 2), (bus_1009_id, 5, 3), (bus_1010_id, 5, 4),
-    (bus_1001_id, 5, 5), (bus_1006_id, 5, 6), (bus_1007_id, 5, 7), (bus_1008_id, 5, 8),
-    (bus_1005_id, 5, 9), (bus_1004_id, 5, 10)
+    (bus_1001_id, 5, 5)
   ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
 
   -- Insert bus schedules for Day 6
   INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
-    (bus_1002_id, 6, 1), (bus_1009_id, 6, 2), (bus_1010_id, 6, 3), (bus_1001_id, 6, 4),
-    (bus_1006_id, 6, 5), (bus_1007_id, 6, 6), (bus_1008_id, 6, 7), (bus_1005_id, 6, 8),
-    (bus_1004_id, 6, 9), (bus_1003_id, 6, 10)
+    (bus_1001_id, 6, 4)
   ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
 
   -- Insert bus schedules for Day 7
   INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
-    (bus_1009_id, 7, 1), (bus_1010_id, 7, 2), (bus_1001_id, 7, 3), (bus_1006_id, 7, 4),
-    (bus_1007_id, 7, 5), (bus_1008_id, 7, 6), (bus_1005_id, 7, 7), (bus_1004_id, 7, 8),
-    (bus_1003_id, 7, 9), (bus_1002_id, 7, 10)
+    (bus_1001_id, 7, 3)
   ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
 
   -- Insert bus schedules for Day 8
   INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
-    (bus_1010_id, 8, 1), (bus_1001_id, 8, 2), (bus_1006_id, 8, 3), (bus_1007_id, 8, 4),
-    (bus_1008_id, 8, 5), (bus_1005_id, 8, 6), (bus_1004_id, 8, 7), (bus_1003_id, 8, 8),
-    (bus_1002_id, 8, 9), (bus_1009_id, 8, 10)
+    (bus_1001_id, 8, 2)
   ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
 
   -- Insert bus schedules for Day 9
   INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
-    (bus_1001_id, 9, 1), (bus_1006_id, 9, 2), (bus_1007_id, 9, 3), (bus_1008_id, 9, 4),
-    (bus_1005_id, 9, 5), (bus_1004_id, 9, 6), (bus_1003_id, 9, 7), (bus_1002_id, 9, 8),
-    (bus_1009_id, 9, 9), (bus_1010_id, 9, 10)
+    (bus_1001_id, 9, 1)
   ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
 
   -- Insert bus schedules for Day 10
   INSERT INTO bus_schedules (bus_id, day_number, trip_number) VALUES
-    (bus_1006_id, 10, 1), (bus_1007_id, 10, 2), (bus_1008_id, 10, 3), (bus_1005_id, 10, 4),
-    (bus_1004_id, 10, 5), (bus_1003_id, 10, 6), (bus_1002_id, 10, 7), (bus_1009_id, 10, 8),
-    (bus_1010_id, 10, 9), (bus_1001_id, 10, 10)
+     (bus_1001_id, 10, 10)
   ON CONFLICT (bus_id, day_number, trip_number) DO NOTHING;
 END $$;
 
