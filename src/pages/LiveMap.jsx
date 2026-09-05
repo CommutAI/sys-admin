@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import { Bus, Navigation, Users, AlertTriangle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import 'leaflet/dist/leaflet.css';
@@ -15,6 +15,16 @@ const SummaryCard = ({ title, value, icon: Icon, color }) => (
     <p className="text-white text-xl font-bold">{value}</p>
   </div>
 );
+
+const MapRecenter = ({ center }) => {
+  const map = useMap();
+
+  useEffect(() => {
+    map.setView(center, map.getZoom());
+  }, [center, map]);
+
+  return null;
+};
 
 const LiveMap = () => {
   const [buses, setBuses] = useState([]);
@@ -37,8 +47,16 @@ const LiveMap = () => {
       })
       .subscribe();
 
+    const gpsSubscription = supabase
+      .channel('live-map-gps-channel')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'gps_locations' }, () => {
+        fetchLiveMapData();
+      })
+      .subscribe();
+
     return () => {
       subscription.unsubscribe();
+      gpsSubscription.unsubscribe();
     };
   }, []);
 
@@ -58,32 +76,69 @@ const LiveMap = () => {
         .from('buses')
         .select('*');
 
+      const { data: gpsRows } = await supabase
+        .from('gps_locations')
+        .select('trip_id, latitude, longitude, source, recorded_at')
+        .order('recorded_at', { ascending: false })
+        .limit(100);
+
+      const latestGpsByTripId = {};
+      let latestGpsAny = null;
+      (gpsRows || []).forEach(row => {
+        const gps = {
+          lat: parseFloat(row.latitude),
+          lng: parseFloat(row.longitude),
+          source: row.source || 'gps',
+          recordedAt: row.recorded_at,
+          tripId: row.trip_id || null
+        };
+
+        if (!Number.isFinite(gps.lat) || !Number.isFinite(gps.lng)) return;
+        if (!latestGpsAny) latestGpsAny = gps;
+        if (row.trip_id && !latestGpsByTripId[row.trip_id]) {
+          latestGpsByTripId[row.trip_id] = gps;
+        }
+      });
+
       // Transform trips to bus markers
-      const busMarkers = (activeTrips || []).map(trip => ({
-        id: trip.id,
-        plate: trip.buses?.plate_number || 'Unknown',
-        route: trip.buses?.route || 'Unknown',
-        lat: trip.current_lat || 14.5995,
-        lng: trip.current_lng || 120.9842,
-        passengers: 0, // Will be fetched from passenger_counts
-        status: 'active',
-        busId: trip.bus_id,
-        tripId: trip.id
-      }));
+      const busMarkers = (activeTrips || []).map((trip, index) => {
+        const gps = latestGpsByTripId[trip.id] || (index === 0 ? latestGpsAny : null);
+
+        return {
+          id: trip.id,
+          plate: trip.buses?.plate_number || 'Unknown',
+          route: trip.buses?.route || 'Unknown',
+          lat: gps?.lat ?? trip.current_lat ?? 14.5995,
+          lng: gps?.lng ?? trip.current_lng ?? 120.9842,
+          passengers: 0, // Will be fetched from passenger_counts
+          status: 'active',
+          locationSource: gps ? (gps.tripId ? gps.source : `${gps.source} (latest GPS)`) : 'fallback',
+          locationUpdatedAt: gps?.recordedAt || trip.gps_updated_at || null,
+          busId: trip.bus_id,
+          tripId: trip.id
+        };
+      });
 
       // Add inactive buses
+      const usedLatestGps = busMarkers.some(bus => bus.locationUpdatedAt === latestGpsAny?.recordedAt);
       const inactiveBuses = (allBuses || [])
         .filter(bus => bus.status !== 'active' || !activeTrips?.some(t => t.bus_id === bus.id))
-        .map(bus => ({
-          id: bus.id,
-          plate: bus.plate_number,
-          route: bus.route,
-          lat: 14.5995,
-          lng: 120.9842,
-          passengers: 0,
-          status: bus.status === 'maintenance' ? 'maintenance' : 'idle',
-          busId: bus.id
-        }));
+        .map((bus, index) => {
+          const gps = !usedLatestGps && index === 0 ? latestGpsAny : null;
+
+          return {
+            id: bus.id,
+            plate: bus.plate_number,
+            route: bus.route,
+            lat: gps?.lat ?? 14.5995,
+            lng: gps?.lng ?? 120.9842,
+            passengers: 0,
+            status: bus.status === 'maintenance' ? 'maintenance' : 'idle',
+            locationSource: gps ? `${gps.source} (latest GPS)` : 'fallback',
+            locationUpdatedAt: gps?.recordedAt || null,
+            busId: bus.id
+          };
+        });
 
       // Fetch passenger counts for active trips
       const tripIds = (activeTrips || []).map(t => t.id);
@@ -147,6 +202,17 @@ const LiveMap = () => {
         <div className="p-2">
           <h3 className="font-bold text-gray-800">{bus.plate}</h3>
           <p className="text-sm text-gray-600">{bus.route}</p>
+          <p className="text-xs text-gray-700 mt-2">
+            {Number(bus.lat).toFixed(6)}, {Number(bus.lng).toFixed(6)}
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            Source: {bus.locationSource || 'fallback'}
+          </p>
+          {bus.locationUpdatedAt && (
+            <p className="text-xs text-gray-500">
+              Updated: {new Date(bus.locationUpdatedAt).toLocaleString()}
+            </p>
+          )}
           <div className="flex items-center gap-2 mt-2">
             <Users size={16} className="text-orange-500" />
             <span className="text-sm">{bus.passengers} passengers</span>
@@ -212,6 +278,7 @@ const LiveMap = () => {
         <div className="lg:col-span-3">
           <div className="glass-card p-4 h-[600px]">
             <MapContainer center={center} zoom={13} style={{ height: '100%', width: '100%' }}>
+              <MapRecenter center={center} />
               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

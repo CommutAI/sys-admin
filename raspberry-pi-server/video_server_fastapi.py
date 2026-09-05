@@ -35,15 +35,23 @@ async def lifespan(app: FastAPI):
     success, err_msg = video_processor.start()
     if success:
         print("Camera started successfully")
-        # Start processing tasks
         asyncio.create_task(video_processor.process_frames())
         asyncio.create_task(video_processor.stream_frames())
         print("Video processing started")
     else:
         print(f"Failed to start camera on startup: {err_msg}")
-    
+
+    # Periodically re-register this Pi's IP so the dashboard always has the
+    # current address even after a network change (DHCP re-lease, new Wi-Fi, etc.)
+    async def periodic_register():
+        while True:
+            await asyncio.sleep(30)   # re-check every 30 seconds
+            register_device()
+
+    asyncio.create_task(periodic_register())
+
     yield
-    
+
     # Shutdown
     print("Cleaning up hardware resources...")
     video_processor.stop()
@@ -65,6 +73,64 @@ if SUPABASE_URL and SUPABASE_KEY:
         print(f"Failed to initialize Supabase client: {e}")
 else:
     print("Supabase credentials not provided - database features disabled")
+
+# Bus assignment — look up the assigned bus_number in Supabase at startup
+BUS_NUMBER = int(os.getenv("BUS_NUMBER", "1"))
+ASSIGNED_BUS_ID: Optional[str] = None
+ASSIGNED_BUS_PLATE: Optional[str] = None
+
+def resolve_assigned_bus():
+    """Look up the bus record for BUS_NUMBER and cache its UUID."""
+    global ASSIGNED_BUS_ID, ASSIGNED_BUS_PLATE
+    if not supabase:
+        print(f"[Bus] Supabase not available — cannot resolve bus {BUS_NUMBER}")
+        return
+    try:
+        result = supabase.table("buses").select("id, plate_number").eq("bus_number", BUS_NUMBER).single().execute()
+        if result.data:
+            ASSIGNED_BUS_ID = result.data["id"]
+            ASSIGNED_BUS_PLATE = result.data["plate_number"]
+            print(f"[Bus] Assigned to bus_number={BUS_NUMBER} | id={ASSIGNED_BUS_ID} | plate={ASSIGNED_BUS_PLATE}")
+        else:
+            print(f"[Bus] WARNING: No bus found with bus_number={BUS_NUMBER}")
+    except Exception as e:
+        print(f"[Bus] Failed to resolve bus assignment: {e}")
+
+
+def register_device():
+    """Upsert this Pi's current LAN IP into pi_devices so the admin
+    dashboard can discover the Pi automatically — no hardcoded IP needed."""
+    if not supabase:
+        return
+    try:
+        import socket
+        hostname = socket.gethostname()
+        # Determine the LAN IP visible from the admin network
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            lan_ip = s.getsockname()[0]
+        finally:
+            s.close()
+
+        server_port = int(os.getenv("PORT", "5000"))
+
+        supabase.table("pi_devices").upsert({
+            "bus_number": BUS_NUMBER,
+            "bus_id": ASSIGNED_BUS_ID,
+            "ip_address": lan_ip,
+            "port": server_port,
+            "last_seen": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            "hostname": hostname,
+        }, on_conflict="bus_number").execute()
+
+        print(f"[Device] Registered: bus={BUS_NUMBER} ip={lan_ip}:{server_port} hostname={hostname}")
+    except Exception as e:
+        print(f"[Device] Failed to register: {e}")
+
+
+resolve_assigned_bus()
+register_device()
 
 # Hardware Manager configuration
 HARDWARE_CONFIG = {
@@ -1005,7 +1071,10 @@ async def health():
             'camera_active': camera_active,
             'passenger_count': video_processor.passenger_count,
             'connected_clients': len(video_processor.websocket_clients),
-            'current_trip_id': video_processor.current_trip_id
+            'current_trip_id': video_processor.current_trip_id,
+            'bus_id': ASSIGNED_BUS_ID,
+            'bus_number': BUS_NUMBER,
+            'bus_plate': ASSIGNED_BUS_PLATE,
         })
     except Exception as e:
         return JSONResponse({
@@ -1014,7 +1083,10 @@ async def health():
             'camera_active': False,
             'passenger_count': 0,
             'connected_clients': 0,
-            'current_trip_id': None
+            'current_trip_id': None,
+            'bus_id': ASSIGNED_BUS_ID,
+            'bus_number': BUS_NUMBER,
+            'bus_plate': ASSIGNED_BUS_PLATE,
         }, status_code=500)
 
 @app.post("/set-trip")

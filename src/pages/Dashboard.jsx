@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import { Users, DollarSign, Bus, AlertTriangle, Map as MapIcon, CheckCircle, Clock, Search, Video, Camera, Activity, Brain, RefreshCw } from 'lucide-react';
 import { supabaseAdmin } from '../lib/supabase';
 import 'leaflet/dist/leaflet.css';
@@ -22,14 +22,20 @@ const KPICard = ({ title, value, change, icon: Icon, color }) => (
   </div>
 );
 
-// Compact video widget for the dashboard — smaller than the full VideoMonitoring page
-const CompactVideoFeed = () => {
-  const [useMjpeg, setUseMjpeg] = useState(false);
-  const { online, connectionStatus, error, passengerCount, isStreaming, videoRef, refresh, startStream, connect } = useRaspberryPi({ autoConnect: true, enableHealthCheck: false });
+const MapRecenter = ({ center, zoom }) => {
+  const map = useMap();
 
   useEffect(() => {
-    if (online && !isStreaming && !useMjpeg) startStream();
-  }, [online, isStreaming, useMjpeg, startStream]);
+    map.setView(center, zoom);
+  }, [center, zoom, map]);
+
+  return null;
+};
+
+// Compact video widget for the dashboard — receives Pi state from parent to avoid duplicate WebSocket connections
+const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreaming, videoRef, refresh }) => {
+  const [useMjpeg, setUseMjpeg] = useState(false);
+  // Stream is started automatically by the hook on connect — no effect needed here
 
   const statusColor = isStreaming || useMjpeg ? 'text-green-400' : online ? 'text-yellow-400' : 'text-red-400';
   const statusLabel = isStreaming || useMjpeg ? 'Live' : online ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting…' : 'Offline';
@@ -64,14 +70,13 @@ const CompactVideoFeed = () => {
         {!isStreaming && !useMjpeg && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
             <Video className="w-10 h-10 text-white/20" />
-            {error ? (
-              <p className="text-red-400 text-xs text-center px-4">{error}</p>
-            ) : online ? (
+            {online ? (
               <p className="text-white/40 text-xs">Starting stream…</p>
             ) : (
-              <button onClick={connect} className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-xs rounded-lg transition-colors">
-                Connect
-              </button>
+              <>
+                <p className="text-white/40 text-xs">Connecting to Raspberry Pi…</p>
+                <p className="text-white/20 text-xs">Auto-reconnecting</p>
+              </>
             )}
           </div>
         )}
@@ -126,8 +131,7 @@ const Dashboard = () => {
   const [alertFilterStatus, setAlertFilterStatus] = useState('all');
   const [alertSearchTerm, setAlertSearchTerm] = useState('');
 
-  // Raspberry Pi status for the dashboard status indicators only
-  // Video stream is handled by the VideoMonitoring component below
+  // Single Raspberry Pi connection — shared between status indicators and the video widget
   const {
     online: piOnline,
     connectionStatus: piConnectionStatus,
@@ -136,6 +140,11 @@ const Dashboard = () => {
     currentTripId: piCurrentTripId,
     emergencyStatus: piEmergencyStatus,
     hardwareStatus: piHardwareStatus,
+    isStreaming: piIsStreaming,
+    videoRef: piVideoRef,
+    refresh: piRefresh,
+    assignedBus: piAssignedBus,
+    activeTripId: piActiveTripId,
   } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
 
   useEffect(() => {
@@ -154,6 +163,13 @@ const Dashboard = () => {
       })
       .subscribe();
 
+    const gpsSubscription = supabaseAdmin
+      .channel('dashboard-gps-channel')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'gps_locations' }, () => {
+        fetchLiveMapData();
+      })
+      .subscribe();
+
     // Set up real-time subscription for emergency alerts
     const alertsSubscription = supabaseAdmin
       .channel('emergency-alerts-channel')
@@ -164,6 +180,7 @@ const Dashboard = () => {
 
     return () => {
       tripsSubscription.unsubscribe();
+      gpsSubscription.unsubscribe();
       alertsSubscription.unsubscribe();
     };
   }, []);
@@ -298,13 +315,18 @@ const Dashboard = () => {
       // Fetch all buses on the route regardless of status — show on map with their current state
       const [
         { data: allBuses },
-        { data: activeTrips }
+        { data: activeTrips },
+        { data: gpsRows }
       ] = await Promise.all([
         supabaseAdmin.from('buses').select('*').order('bus_number', { ascending: true }),
         supabaseAdmin.from('trips')
           .select('*, buses(*)')
           .eq('status', 'in_progress')
-          .order('started_at', { ascending: false })
+          .order('started_at', { ascending: false }),
+        supabaseAdmin.from('gps_locations')
+          .select('trip_id, latitude, longitude, source, recorded_at')
+          .order('recorded_at', { ascending: false })
+          .limit(100)
       ]);
 
       // Map active trip IDs to their trip data for quick lookup
@@ -313,17 +335,46 @@ const Dashboard = () => {
         tripByBusId[trip.bus_id] = trip;
       });
 
+      const latestGpsByTripId = {};
+      let latestGpsAny = null;
+      (gpsRows || []).forEach(row => {
+        const gps = {
+          lat: parseFloat(row.latitude),
+          lng: parseFloat(row.longitude),
+          source: row.source || 'gps',
+          recordedAt: row.recorded_at,
+          tripId: row.trip_id || null
+        };
+
+        if (!Number.isFinite(gps.lat) || !Number.isFinite(gps.lng)) return;
+        if (!latestGpsAny) latestGpsAny = gps;
+        if (row.trip_id && !latestGpsByTripId[row.trip_id]) {
+          latestGpsByTripId[row.trip_id] = gps;
+        }
+      });
+
+      const activeTripBusIds = new Set((activeTrips || []).map(trip => trip.bus_id));
+      const fallbackGpsBusId =
+        (activeTrips || [])[0]?.bus_id ||
+        (allBuses || []).find(bus => bus.status === 'active')?.id ||
+        (allBuses || [])[0]?.id;
+
       // Build a marker for every bus — active trip buses use GPS coords
       const busMarkers = (allBuses || []).map(bus => {
         const trip = tripByBusId[bus.id];
+        const gps = trip
+          ? latestGpsByTripId[trip.id] || latestGpsAny
+          : (!activeTripBusIds.size && bus.id === fallbackGpsBusId ? latestGpsAny : null);
         return {
           id: bus.id,
           plate: bus.plate_number,
           route: bus.route,
-          lat: trip?.current_lat || 8.43,
-          lng: trip?.current_lng || 124.76,
+          lat: gps?.lat ?? trip?.current_lat ?? 8.43,
+          lng: gps?.lng ?? trip?.current_lng ?? 124.76,
           passengers: 0,
           status: trip ? 'active' : bus.status,
+          locationSource: gps ? (gps.tripId ? gps.source : `${gps.source} (latest GPS)`) : 'fallback',
+          locationUpdatedAt: gps?.recordedAt || trip?.gps_updated_at || null,
           busId: bus.id,
           tripId: trip?.id || null
         };
@@ -367,22 +418,15 @@ const Dashboard = () => {
 
   const fetchEmergencyAlerts = async () => {
     try {
+      // Select only columns that are guaranteed to exist in the base table.
+      // Avoid joining buses() here to prevent 400 errors if the FK relationship
+      // isn't recognised by PostgREST (e.g. migration not yet applied).
       const { data, error } = await supabaseAdmin
         .from('emergency_alerts')
-        .select('id, status, notes, created_at, acknowledged_at, resolved_at, triggered_at, bus_id, conductor_id, lat, lng, buses(plate_number, route)')
+        .select('id, status, notes, created_at, acknowledged_at, resolved_at, bus_id, conductor_id, lat, lng')
         .order('created_at', { ascending: false });
 
-      if (error) {
-        // Fallback: minimal columns if join fails
-        console.warn('Emergency alerts join failed, trying minimal select:', error.message);
-        const { data: minimal, error: err2 } = await supabaseAdmin
-          .from('emergency_alerts')
-          .select('id, status, notes, created_at, acknowledged_at, resolved_at, bus_id')
-          .order('created_at', { ascending: false });
-        if (err2) throw err2;
-        setEmergencyAlerts(minimal || []);
-        return;
-      }
+      if (error) throw error;
       setEmergencyAlerts(data || []);
     } catch (error) {
       console.error('Error fetching emergency alerts:', error);
@@ -444,8 +488,7 @@ const Dashboard = () => {
   const filteredAlerts = emergencyAlerts.filter(alert => {
     const matchesSearch = !alertSearchTerm ||
       alert.notes?.toLowerCase().includes(alertSearchTerm.toLowerCase()) ||
-      alert.buses?.plate_number?.toLowerCase().includes(alertSearchTerm.toLowerCase()) ||
-      alert.staff_users?.full_name?.toLowerCase().includes(alertSearchTerm.toLowerCase());
+      alert.bus_id?.toLowerCase().includes(alertSearchTerm.toLowerCase());
     const matchesStatus = alertFilterStatus === 'all' || alert.status === alertFilterStatus;
     return matchesSearch && matchesStatus;
   });
@@ -479,6 +522,17 @@ const Dashboard = () => {
         <div className="p-2">
           <h3 className="font-bold text-gray-800">{bus.plate}</h3>
           <p className="text-sm text-gray-600">{bus.route}</p>
+          <p className="text-xs text-gray-700 mt-2">
+            {Number(bus.lat).toFixed(6)}, {Number(bus.lng).toFixed(6)}
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            Source: {bus.locationSource || 'fallback'}
+          </p>
+          {bus.locationUpdatedAt && (
+            <p className="text-xs text-gray-500">
+              Updated: {new Date(bus.locationUpdatedAt).toLocaleString()}
+            </p>
+          )}
           <div className="flex items-center gap-2 mt-2">
             <Users size={16} className="text-orange-500" />
             <span className="text-sm">{bus.passengers} passengers</span>
@@ -495,6 +549,9 @@ const Dashboard = () => {
   // Midpoint of the route is roughly 8.43°N, 124.76°E — zoom 11 shows the full route
   const ROUTE_CENTER = [8.43, 124.76];
   const ROUTE_ZOOM = 11;
+  const liveBus = buses.find(bus => bus.locationSource && bus.locationSource !== 'fallback');
+  const mapCenter = liveBus ? [liveBus.lat, liveBus.lng] : ROUTE_CENTER;
+  const mapZoom = liveBus ? 15 : ROUTE_ZOOM;
 
 
 
@@ -517,7 +574,14 @@ const Dashboard = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Live Video Monitoring — compact widget */}
         <div className="glass-card p-4 rounded-xl lg:col-span-2">
-          <CompactVideoFeed />
+          <CompactVideoFeed
+            online={piOnline}
+            connectionStatus={piConnectionStatus}
+            passengerCount={piPassengerCount}
+            isStreaming={piIsStreaming}
+            videoRef={piVideoRef}
+            refresh={piRefresh}
+          />
         </div>
 
         {/* Raspberry Pi Status Indicators */}
@@ -525,6 +589,11 @@ const Dashboard = () => {
           <h2 className="text-white text-lg font-bold mb-4 flex items-center gap-2">
             <Camera className="text-orange-400" size={20} />
             Raspberry Pi Status
+            {piAssignedBus?.busPlate && (
+              <span className="ml-1 px-2 py-0.5 bg-orange-500/20 text-orange-300 text-xs rounded-full border border-orange-500/30">
+                Bus {piAssignedBus.busNumber}
+              </span>
+            )}
           </h2>
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-white/5 p-4 rounded-xl">
@@ -596,7 +665,8 @@ const Dashboard = () => {
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           <div className="lg:col-span-3">
             <div className="h-[400px] rounded-xl overflow-hidden">
-              <MapContainer center={ROUTE_CENTER} zoom={ROUTE_ZOOM} style={{ height: '100%', width: '100%' }}>
+              <MapContainer center={mapCenter} zoom={mapZoom} style={{ height: '100%', width: '100%' }}>
+                <MapRecenter center={mapCenter} zoom={mapZoom} />
                 <TileLayer
                   attribution=""
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
