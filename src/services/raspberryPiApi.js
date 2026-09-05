@@ -9,7 +9,7 @@
 
 import { supabaseAdmin } from '../lib/supabase';
 
-const FALLBACK_URL    = import.meta.env.VITE_RASPBERRY_PI_URL || 'http://192.168.1.45:5000';
+const FALLBACK_URL    = import.meta.env.VITE_RASPBERRY_PI_URL || 'http://commutai.local:5000';
 const DEFAULT_TIMEOUT = 8000;
 const BUS_NUMBER      = 1; // this dashboard manages bus 001
 
