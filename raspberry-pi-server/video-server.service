@@ -1,0 +1,17 @@
+[Unit]
+Description=Bus Monitoring Video Server
+After=network.target
+
+[Service]
+Type=simple
+User=chichi
+WorkingDirectory=/home/chichi/raspberry-pi-server
+Environment="PATH=/home/chichi/raspberry-pi-server/venv/bin"
+ExecStart=/home/chichi/raspberry-pi-server/venv/bin/python video_server_fastapi.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,3 +1,27 @@
+<<<<<<< HEAD
+# Core dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-dotenv>=1.0.0
+
+# Computer Vision and AI
+opencv-python>=4.8.0
+numpy>=1.24.0
+ultralytics>=8.0.0
+
+# Database
+supabase>=2.0.0
+
+# Hardware communication
+pyserial>=3.5
+requests>=2.31.0
+
+# Raspberry Pi specific
+RPi.GPIO>=0.7.0
+
+# Additional utilities
+websockets>=12.0
+=======
 opencv-python==4.8.1.78
 opencv-contrib-python==4.8.1.78
 numpy>=1.26.4
@@ -11,3 +35,4 @@ supabase==2.3.4
 pyserial==3.5
 requests==2.31.0
 gps==3.19
+>>>>>>> 4559f34aad17821beeaf3ff5af0a0853ffb32bb8

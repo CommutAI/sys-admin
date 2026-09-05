@@ -7,6 +7,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime, date, timedelta
 from database import supabase
+from cache import cache
 
 router = APIRouter()
 
@@ -38,13 +39,24 @@ async def get_passenger_trends(
 ) -> List[PassengerTrend]:
     """
     Get passenger count trends with flexible grouping
-    Efficient server-side aggregation
+    Efficient server-side aggregation with caching
     """
     try:
+        # Check cache first
+        cache_key = {
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat(),
+            'group_by': group_by
+        }
+        cached_data = cache.get('passenger_trends', cache_key)
+        if cached_data is not None:
+            return cached_data
+        
         start_iso = start_date.isoformat()
         end_iso = (end_date + timedelta(days=1)).isoformat()
         
-        result = supabase.table('passenger_counts').select('*').gte('created_at', start_iso).lt('created_at', end_iso).execute()
+        # Optimize: Select only needed fields instead of '*'
+        result = supabase.table('passenger_counts').select('count, created_at').gte('created_at', start_iso).lt('created_at', end_iso).execute()
         passenger_counts = result[1] if result[1] else []
         
         if not passenger_counts:
@@ -92,6 +104,10 @@ async def get_passenger_trends(
             ))
         
         result.sort(key=lambda x: x.date)
+        
+        # Cache the result for 30 seconds
+        cache.set('passenger_trends', cache_key, result, ttl=30)
+        
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -104,26 +120,35 @@ async def get_route_performance(
 ) -> List[RoutePerformance]:
     """
     Get route performance metrics
-    Aggregates trip data, passenger counts, and revenue
+    Aggregates trip data, passenger counts, and revenue with caching
     """
     try:
+        # Check cache first
+        cache_key = {
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat()
+        }
+        cached_data = cache.get('route_performance', cache_key)
+        if cached_data is not None:
+            return cached_data
+        
         start_iso = start_date.isoformat()
         end_iso = (end_date + timedelta(days=1)).isoformat()
         
-        # Get trips in date range
-        trips_result = supabase.table('trips').select('*, buses(*, routes(*))').gte('created_at', start_iso).lt('created_at', end_iso).execute()
+        # Get trips in date range - optimize field selection
+        trips_result = supabase.table('trips').select('id, created_at, scheduled_departure, bus_id, buses(id, plate_number, route, routes(id, route_name))').gte('created_at', start_iso).lt('created_at', end_iso).execute()
         trips = trips_result[1] if trips_result[1] else []
         
         if not trips:
             return []
         
-        # Get passenger counts for these trips
+        # Get passenger counts for these trips - optimize field selection
         trip_ids = [trip['id'] for trip in trips]
-        passenger_result = supabase.table('passenger_counts').select('*').in_('trip_id', trip_ids).execute()
+        passenger_result = supabase.table('passenger_counts').select('trip_id, count').in_('trip_id', trip_ids).execute()
         passenger_data = passenger_result[1] if passenger_result[1] else []
         
-        # Get transactions for revenue
-        transaction_result = supabase.table('transactions').select('*').in_('trip_id', trip_ids).execute()
+        # Get transactions for revenue - optimize field selection
+        transaction_result = supabase.table('transactions').select('trip_id, amount').in_('trip_id', trip_ids).execute()
         transaction_data = transaction_result[1] if transaction_result[1] else []
         
         # Group by route
@@ -176,6 +201,9 @@ async def get_route_performance(
                 on_time_percentage=(data["on_time_trips"] / data["total_trips"] * 100) if data["total_trips"] > 0 else 0
             ))
         
+        # Cache the result for 60 seconds
+        cache.set('route_performance', cache_key, result, ttl=60)
+        
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -185,35 +213,41 @@ async def get_route_performance(
 async def get_realtime_dashboard_data():
     """
     Get aggregated real-time dashboard data
-    Reduces multiple frontend queries to single API call
+    Reduces multiple frontend queries to single API call with short cache
     """
     try:
-        # Get current active trips
-        active_result = supabase.table('trips').select('*, buses(*)').eq('status', 'active').execute()
+        # Use very short cache (5 seconds) for real-time data
+        cache_key = {'realtime': True}
+        cached_data = cache.get('realtime_dashboard', cache_key)
+        if cached_data is not None:
+            return cached_data
+        
+        # Get current active trips - optimize field selection
+        active_result = supabase.table('trips').select('id, bus_id, status, buses(id, plate_number)').eq('status', 'active').execute()
         active_trips = active_result[1] if active_result[1] else []
         
-        # Get latest passenger counts
-        counts_result = supabase.table('passenger_counts').select('*').order('created_at', desc=True).limit(100).execute()
+        # Get latest passenger counts - optimize field selection and limit
+        counts_result = supabase.table('passenger_counts').select('count, created_at').order('created_at', desc=True).limit(50).execute()
         latest_counts = counts_result[1] if counts_result[1] else []
         
-        # Get today's transactions
+        # Get today's transactions - optimize field selection
         today = datetime.now().date().isoformat()
-        tx_result = supabase.table('transactions').select('*').gte('created_at', today).execute()
+        tx_result = supabase.table('transactions').select('amount').gte('created_at', today).execute()
         today_transactions = tx_result[1] if tx_result[1] else []
         
-        # Get active emergency alerts
-        emergency_result = supabase.table('emergency_alerts').select('*').eq('status', 'active').execute()
+        # Get active emergency alerts - optimize field selection
+        emergency_result = supabase.table('emergency_alerts').select('id, status, notes, created_at').eq('status', 'active').execute()
         emergencies = emergency_result[1] if emergency_result[1] else []
         
-        # Get fare irregularities
-        irregularity_result = supabase.table('fare_irregularities').select('*').eq('resolved', False).execute()
+        # Get fare irregularities - optimize field selection
+        irregularity_result = supabase.table('fare_irregularities').select('id, type, resolved, detected_at').eq('resolved', False).execute()
         irregularities = irregularity_result[1] if irregularity_result[1] else []
         
         # Calculate totals
         total_revenue = sum(t['amount'] for t in today_transactions) if today_transactions else 0
         total_passengers = sum(p['count'] for p in latest_counts) if latest_counts else 0
         
-        return {
+        result = {
             "active_buses": len(active_trips) if active_trips else 0,
             "total_passengers": total_passengers,
             "today_revenue": total_revenue,
@@ -223,6 +257,11 @@ async def get_realtime_dashboard_data():
             "emergencies": emergencies,
             "irregularities": irregularities
         }
+        
+        # Cache the result for 5 seconds (very short for real-time data)
+        cache.set('realtime_dashboard', cache_key, result, ttl=5)
+        
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -233,18 +272,27 @@ async def get_bus_utilization(
     end_date: date
 ):
     """
-    Get bus utilization metrics
+    Get bus utilization metrics with caching
     """
     try:
+        # Check cache first
+        cache_key = {
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat()
+        }
+        cached_data = cache.get('bus_utilization', cache_key)
+        if cached_data is not None:
+            return cached_data
+        
         start_iso = start_date.isoformat()
         end_iso = (end_date + timedelta(days=1)).isoformat()
         
-        # Get all buses
-        buses_result = supabase.table('buses').select('*').execute()
+        # Get all buses - optimize field selection
+        buses_result = supabase.table('buses').select('id, plate_number').execute()
         buses = buses_result[1] if buses_result[1] else []
         
-        # Get trips in date range
-        trips_result = supabase.table('trips').select('*').gte('created_at', start_iso).lt('created_at', end_iso).execute()
+        # Get trips in date range - optimize field selection
+        trips_result = supabase.table('trips').select('id, bus_id, created_at, ended_at').gte('created_at', start_iso).lt('created_at', end_iso).execute()
         trips = trips_result[1] if trips_result[1] else []
         
         # Calculate utilization per bus
@@ -271,10 +319,42 @@ async def get_bus_utilization(
                 "utilization_percentage": utilization
             }
         
-        return {
+        result = {
             "period": {"start": start_date.isoformat(), "end": end_date.isoformat()},
             "bus_count": len(buses),
             "utilization": list(bus_utilization.values())
         }
+        
+        # Cache the result for 60 seconds
+        cache.set('bus_utilization', cache_key, result, ttl=60)
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/cache-stats")
+async def get_cache_stats():
+    """
+    Get cache statistics for monitoring
+    """
+    try:
+        return cache.get_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/cache-clear")
+async def clear_cache(table: Optional[str] = None):
+    """
+    Clear cache - optionally for specific table only
+    """
+    try:
+        if table:
+            cache.invalidate_table(table)
+            return {"status": "success", "message": f"Cache cleared for table: {table}"}
+        else:
+            cache.clear()
+            return {"status": "success", "message": "All cache cleared"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

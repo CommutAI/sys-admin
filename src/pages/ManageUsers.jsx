@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { UserPlus, Search, Edit, Trash2, Shield, UserCheck, MoreVertical, X } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { UserPlus, Search, Edit, Trash2, Shield, UserCheck } from 'lucide-react';
+import { supabase, supabaseAdmin } from '../lib/supabase';
+import AuditService from '../services/auditService';
 
 const ManageUsers = () => {
   const [userType, setUserType] = useState('all');
@@ -27,12 +28,13 @@ const ManageUsers = () => {
 
   useEffect(() => {
     fetchUsers();
+    AuditService.logPageView('Manage Users');
   }, []);
 
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('staff_users')
         .select('*')
         .order('created_at', { ascending: false });
@@ -49,23 +51,98 @@ const ManageUsers = () => {
   const handleAddUser = async (e) => {
     e.preventDefault();
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: newUser.email,
-        password: newUser.password,
-        options: {
-          data: {
-            full_name: newUser.full_name,
-            role: newUser.role
-          }
-        }
+      console.log('Creating user with:', newUser);
+
+      const { data: existingUser } = await supabaseAdmin
+        .from('staff_users')
+        .select('email')
+        .eq('email', newUser.email)
+        .single();
+
+      if (existingUser) {
+        throw new Error(`User with email ${newUser.email} already exists`);
+      }
+
+      const userId = crypto.randomUUID();
+      console.log('Generated user ID:', userId);
+
+      const { data: rpcData, error: rpcError } = await supabaseAdmin.rpc('create_user_direct', {
+        user_id: userId,
+        user_email: newUser.email,
+        user_password: newUser.password,
+        user_full_name: newUser.full_name,
+        user_role: newUser.role
       });
 
-      if (authError) throw authError;
+      console.log('RPC Result:', { data: rpcData, error: rpcError });
+
+      if (rpcError) {
+        if (rpcError.code === '23505' && rpcError.message.includes('email')) {
+          throw new Error(`User with email ${newUser.email} already exists`);
+        }
+
+        console.error('RPC Error:', rpcError);
+        console.warn('RPC not available, trying standard auth signup...');
+
+        const { data: authData, error: authError } = await supabaseAdmin.auth.signUp({
+          email: newUser.email,
+          password: newUser.password,
+          options: {
+            data: {
+              full_name: newUser.full_name,
+              role: newUser.role
+            }
+          }
+        });
+
+        if (authError) {
+          throw new Error(`Email validation failed: ${authError.message}. Try using a valid email format like user@gmail.com`);
+        }
+
+        console.log('Auth signup successful:', authData);
+
+        if (authData?.user?.id) {
+          console.log('Creating staff_users record manually for user:', authData.user.id);
+          const { error: staffError } = await supabaseAdmin
+            .from('staff_users')
+            .insert({
+              id: authData.user.id,
+              full_name: newUser.full_name,
+              email: newUser.email,
+              role: newUser.role,
+              is_active: true
+            });
+
+          if (staffError) {
+            console.error('Error creating staff_users record:', staffError);
+            const { error: updateError } = await supabaseAdmin
+              .from('staff_users')
+              .update({
+                full_name: newUser.full_name,
+                role: newUser.role,
+                is_active: true
+              })
+              .eq('id', authData.user.id);
+
+            if (updateError) {
+              console.error('Error updating staff_users record:', updateError);
+            } else {
+              console.log('Staff_users record updated successfully');
+            }
+          } else {
+            console.log('Staff_users record created successfully');
+          }
+        }
+      } else {
+        console.log('RPC creation successful:', rpcData);
+      }
+
+      await AuditService.logUserCreated(newUser.email, newUser.role, newUser.full_name);
 
       alert('User created successfully!');
       setShowAddModal(false);
       setNewUser({ email: '', full_name: '', role: 'conductor', password: '' });
-      fetchUsers();
+      setTimeout(() => fetchUsers(), 1000);
     } catch (error) {
       console.error('Error creating user:', error);
       alert('Error creating user: ' + error.message);
@@ -74,12 +151,19 @@ const ManageUsers = () => {
 
   const handleToggleStatus = async (userId, currentStatus) => {
     try {
-      const { error } = await supabase
+      const user = users.find(u => u.id === userId);
+      const email = user?.email || 'unknown';
+      const newStatus = !currentStatus;
+
+      const { error } = await supabaseAdmin
         .from('staff_users')
-        .update({ is_active: !currentStatus })
+        .update({ is_active: newStatus })
         .eq('id', userId);
 
       if (error) throw error;
+
+      await AuditService.logUserStatusChanged(userId, email, currentStatus ? 'active' : 'inactive', newStatus ? 'active' : 'inactive');
+
       fetchUsers();
     } catch (error) {
       console.error('Error updating user status:', error);
@@ -131,16 +215,12 @@ const ManageUsers = () => {
 
   const handleConfirmDelete = async () => {
     try {
-      // First delete from auth.users
-      const { error: authError } = await supabase.auth.admin.deleteUser(
-        selectedUser.id
-      );
+      const { error: authError } = await supabase.auth.admin.deleteUser(selectedUser.id);
 
       if (authError) {
         console.warn('Auth user deletion failed, attempting staff_users deletion:', authError);
       }
 
-      // Then delete from staff_users
       const { error } = await supabase
         .from('staff_users')
         .delete()
@@ -165,19 +245,18 @@ const ManageUsers = () => {
     return matchesSearch && matchesType;
   });
 
-  const statusColors = {
-    active: 'bg-green-500/20 text-green-400',
-    inactive: 'bg-red-500/20 text-red-400',
-  };
-
   const roleColors = {
     admin: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
+    operator: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/50',
+    driver: 'bg-orange-500/20 text-orange-400 border-orange-500/50',
     conductor: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
     cs_desk: 'bg-green-500/20 text-green-400 border-green-500/50',
   };
 
   const roleLabels = {
     admin: 'System Admin',
+    operator: 'Operator',
+    driver: 'Driver',
     conductor: 'Conductor',
     cs_desk: 'Customer Service Staff',
   };
@@ -185,14 +264,18 @@ const ManageUsers = () => {
   const userTypes = [
     { id: 'all', label: 'All Users', icon: UserCheck },
     { id: 'admin', label: 'System Admin', icon: Shield },
-    { id: 'cs_desk', label: 'Customer Service Staff', icon: UserCheck },
+    { id: 'operator', label: 'Operators', icon: Shield },
+    { id: 'driver', label: 'Drivers', icon: UserCheck },
     { id: 'conductor', label: 'Conductors', icon: UserCheck },
+    { id: 'cs_desk', label: 'Customer Service', icon: UserCheck },
   ];
 
   const roleCounts = {
     admin: users.filter(u => u.role === 'admin').length,
-    cs_desk: users.filter(u => u.role === 'cs_desk').length,
+    operator: users.filter(u => u.role === 'operator').length,
+    driver: users.filter(u => u.role === 'driver').length,
     conductor: users.filter(u => u.role === 'conductor').length,
+    cs_desk: users.filter(u => u.role === 'cs_desk').length,
   };
 
   if (loading) {
@@ -221,39 +304,63 @@ const ManageUsers = () => {
       </div>
 
       {/* Stats Section */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="glass-card p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center">
-              <Shield className="w-6 h-6 text-purple-400" />
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="glass-card p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-purple-500/20 rounded-lg flex items-center justify-center">
+              <Shield className="w-4 h-4 text-purple-400" />
             </div>
             <div>
-              <p className="text-white/60 text-sm">System Admin</p>
-              <p className="text-white text-2xl font-bold">{roleCounts.admin}</p>
+              <p className="text-white/60 text-xs">System Admin</p>
+              <p className="text-white text-lg font-bold">{roleCounts.admin}</p>
             </div>
           </div>
         </div>
 
-        <div className="glass-card p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center">
-              <UserCheck className="w-6 h-6 text-green-400" />
+        <div className="glass-card p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-indigo-500/20 rounded-lg flex items-center justify-center">
+              <Shield className="w-4 h-4 text-indigo-400" />
             </div>
             <div>
-              <p className="text-white/60 text-sm">Customer Service Staff</p>
-              <p className="text-white text-2xl font-bold">{roleCounts.cs_desk}</p>
+              <p className="text-white/60 text-xs">Operators</p>
+              <p className="text-white text-lg font-bold">{roleCounts.operator}</p>
             </div>
           </div>
         </div>
 
-        <div className="glass-card p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center">
-              <UserCheck className="w-6 h-6 text-blue-400" />
+        <div className="glass-card p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-orange-500/20 rounded-lg flex items-center justify-center">
+              <UserCheck className="w-4 h-4 text-orange-400" />
             </div>
             <div>
-              <p className="text-white/60 text-sm">Conductors</p>
-              <p className="text-white text-2xl font-bold">{roleCounts.conductor}</p>
+              <p className="text-white/60 text-xs">Drivers</p>
+              <p className="text-white text-lg font-bold">{roleCounts.driver}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="glass-card p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center">
+              <UserCheck className="w-4 h-4 text-blue-400" />
+            </div>
+            <div>
+              <p className="text-white/60 text-xs">Conductors</p>
+              <p className="text-white text-lg font-bold">{roleCounts.conductor}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="glass-card p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
+              <UserCheck className="w-4 h-4 text-green-400" />
+            </div>
+            <div>
+              <p className="text-white/60 text-xs">Customer Service</p>
+              <p className="text-white text-lg font-bold">{roleCounts.cs_desk}</p>
             </div>
           </div>
         </div>
@@ -266,7 +373,7 @@ const ManageUsers = () => {
           All Staff Users
         </h2>
         <div className="flex flex-wrap items-center gap-4 mb-4">
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {userTypes.map((type) => {
               const Icon = type.icon;
               return (
@@ -299,14 +406,14 @@ const ManageUsers = () => {
         </div>
 
         <div className="space-y-3 max-h-[500px] overflow-y-auto">
-          {filteredUsers.slice(0, 10).map((user) => (
+          {filteredUsers.map((user) => (
             <div key={user.id} className="bg-white/5 p-4 rounded-xl">
               <div className="flex justify-between items-start mb-2">
                 <div>
                   <p className="text-white font-medium">{user.full_name}</p>
                   <p className="text-white/60 text-sm">{user.email}</p>
                 </div>
-                <span className={`px-2 py-1 rounded-full text-xs border ${roleColors[user.role]}`}>
+                <span className={`px-2 py-1 rounded-full text-xs border ${roleColors[user.role] || 'bg-gray-500/20 text-gray-400 border-gray-500/50'}`}>
                   {roleLabels[user.role] || user.role}
                 </span>
               </div>
@@ -368,11 +475,13 @@ const ManageUsers = () => {
                 <select
                   value={newUser.role}
                   onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
                   <option value="admin">System Admin</option>
-                  <option value="cs_desk">Customer Service Staff</option>
+                  <option value="operator">Operator</option>
+                  <option value="driver">Driver</option>
                   <option value="conductor">Conductor</option>
+                  <option value="cs_desk">Customer Service Staff</option>
                 </select>
               </div>
               <div>
@@ -442,8 +551,10 @@ const ManageUsers = () => {
                   className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
                   <option value="admin">System Admin</option>
-                  <option value="cs_desk">Customer Service Staff</option>
+                  <option value="operator">Operator</option>
+                  <option value="driver">Driver</option>
                   <option value="conductor">Conductor</option>
+                  <option value="cs_desk">Customer Service Staff</option>
                 </select>
               </div>
               <div>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import AuditService from '../services/auditService';
 import {
   LayoutDashboard,
   Bus,
@@ -87,6 +88,7 @@ const Header = () => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetchNotifications();
@@ -129,6 +131,21 @@ const Header = () => {
       case 'alert': return <AlertTriangle className="text-red-400" size={16} />;
       case 'success': return <Check className="text-green-400" size={16} />;
       default: return <Clock className="text-blue-400" size={16} />;
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      // Log logout event to audit logs
+      await AuditService.logLogout();
+      
+      // Sign out from Supabase
+      await supabase.auth.signOut();
+      
+      // Navigate to login page
+      navigate('/login');
+    } catch (error) {
+      console.error('Error during logout:', error);
     }
   };
 
@@ -202,6 +219,13 @@ const Header = () => {
           <p className="text-white font-medium">Admin User</p>
           <p className="text-white/60 text-sm">System Administrator</p>
         </div>
+        <button
+          onClick={handleLogout}
+          className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+          title="Logout"
+        >
+          <LogOut className="text-white hover:text-red-400" size={20} />
+        </button>
         <div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center">
           <User className="text-white" size={20} />
         </div>

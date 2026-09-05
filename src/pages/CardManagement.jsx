@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { CreditCard, Ticket, Plus, Search, Filter, Edit, X, MoreHorizontal, HeadphonesIcon, TrendingUp } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabase';
+import AuditService from '../services/auditService';
 
 const CardManagement = () => {
   const [activeTab, setActiveTab] = useState('qr-cards');
@@ -18,6 +19,8 @@ const CardManagement = () => {
   useEffect(() => {
     fetchData();
     fetchCardSalesStats();
+    // Log page view to audit logs when tab changes
+    AuditService.logPageView(`Card Management - ${activeTab}`);
   }, [activeTab]);
 
   const fetchData = async () => {
@@ -38,7 +41,7 @@ const CardManagement = () => {
   };
 
   const fetchQrCards = async () => {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('qr_cards')
       .select('*, issuer:staff_users!issued_by(*)')
       .order('created_at', { ascending: false });
@@ -47,7 +50,7 @@ const CardManagement = () => {
   };
 
   const fetchTempTickets = async () => {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('temporary_tickets')
       .select('*, issuer:staff_users!issued_by(*), trips(*, buses(*))')
       .order('issued_at', { ascending: false });
@@ -56,7 +59,7 @@ const CardManagement = () => {
   };
 
   const fetchCustomerServiceLogs = async () => {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('customer_service_logs')
       .select('*, trips(*, buses(*)), handler:staff_users!handled_by(*)')
       .order('created_at', { ascending: false });
@@ -134,6 +137,68 @@ const CardManagement = () => {
     const matchesAction = filterType === 'all' || log.action === filterType;
     return matchesSearch && matchesAction;
   });
+
+  // Handler functions for card/ticket actions with audit logging
+  const handleEditQrCard = async (card) => {
+    // Placeholder for edit functionality
+    await AuditService.logQrCardUpdated(card.id, `Edit initiated for card ${card.card_uid}`);
+    alert('Edit functionality to be implemented');
+  };
+
+  const handleDeleteQrCard = async (card) => {
+    if (!confirm(`Are you sure you want to delete QR card ${card.card_uid}?`)) return;
+    
+    try {
+      const { error } = await supabaseAdmin
+        .from('qr_cards')
+        .delete()
+        .eq('id', card.id);
+
+      if (error) throw error;
+
+      await AuditService.logQrCardDeleted(card.id, card.card_uid);
+      fetchQrCards();
+    } catch (error) {
+      console.error('Error deleting QR card:', error);
+      alert('Error deleting QR card: ' + error.message);
+    }
+  };
+
+  const handleEditTempTicket = async (ticket) => {
+    // Placeholder for edit functionality
+    await AuditService.logTempTicketValidated(ticket.id, ticket.ticket_uid);
+    alert('Edit functionality to be implemented');
+  };
+
+  const handleDeleteTempTicket = async (ticket) => {
+    if (!confirm(`Are you sure you want to delete temporary ticket ${ticket.ticket_uid}?`)) return;
+    
+    try {
+      const { error } = await supabaseAdmin
+        .from('temporary_tickets')
+        .delete()
+        .eq('id', ticket.id);
+
+      if (error) throw error;
+
+      await AuditService.logAuditEvent({
+        action: 'DELETE',
+        module: 'Card Management',
+        details: `Deleted temporary ticket ${ticket.ticket_uid} (${ticket.id})`,
+      });
+
+      fetchTempTickets();
+    } catch (error) {
+      console.error('Error deleting temporary ticket:', error);
+      alert('Error deleting temporary ticket: ' + error.message);
+    }
+  };
+
+  const handleEditCustomerServiceLog = async (log) => {
+    // Placeholder for edit functionality
+    await AuditService.logCustomerServiceAction(log.action, `Edit initiated for log entry: ${log.description}`);
+    alert('Edit functionality to be implemented');
+  };
 
   if (loading) {
     return (
@@ -323,10 +388,16 @@ const CardManagement = () => {
                       </td>
                       <td className="py-4">
                         <div className="flex gap-2">
-                          <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                          <button 
+                            onClick={() => handleEditQrCard(card)}
+                            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                          >
                             <Edit size={16} className="text-white/70" />
                           </button>
-                          <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                          <button 
+                            onClick={() => handleDeleteQrCard(card)}
+                            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                          >
                             <X size={16} className="text-red-400" />
                           </button>
                         </div>
@@ -384,10 +455,16 @@ const CardManagement = () => {
                       </td>
                       <td className="py-4">
                         <div className="flex gap-2">
-                          <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                          <button 
+                            onClick={() => handleEditTempTicket(ticket)}
+                            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                          >
                             <Edit size={16} className="text-white/70" />
                           </button>
-                          <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                          <button 
+                            onClick={() => handleDeleteTempTicket(ticket)}
+                            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                          >
                             <X size={16} className="text-red-400" />
                           </button>
                         </div>
@@ -437,11 +514,11 @@ const CardManagement = () => {
                       </td>
                       <td className="py-4">
                         <div className="flex gap-2">
-                          <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                          <button 
+                            onClick={() => handleEditCustomerServiceLog(log)}
+                            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                          >
                             <Edit size={16} className="text-white/70" />
-                          </button>
-                          <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-                            <X size={16} className="text-red-400" />
                           </button>
                         </div>
                       </td>
