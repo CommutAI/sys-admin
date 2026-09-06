@@ -661,6 +661,7 @@ class VideoProcessor:
           camera counts from manual ones.
         - Only writes when a trip is active (trip_id NOT NULL constraint).
         - The live WebSocket count is always sent regardless of trip state.
+        - Triggers anomaly detection after saving count.
         """
         if not supabase or not self.current_trip_id:
             return  # live count still streams via WebSocket — DB write needs a trip
@@ -683,8 +684,44 @@ class VideoProcessor:
             if result:
                 self.last_db_save = current_time
                 print(f"[DB] Saved count={count} source={COUNT_METHOD} trip={self.current_trip_id}")
+                
+                # Trigger anomaly detection after saving count
+                self.trigger_anomaly_detection()
         except Exception as e:
             print(f"Error saving passenger count to database: {e}")
+    
+    def trigger_anomaly_detection(self):
+        """Trigger anomaly detection via backend API for the current trip.
+        This compares AI camera count with boarded passengers to identify fare evasion.
+        """
+        if not self.current_trip_id:
+            return
+        
+        try:
+            import requests
+            
+            # Get backend URL from environment or use default
+            backend_url = os.getenv('BACKEND_URL', 'http://localhost:8000')
+            detect_url = f"{backend_url}/api/anomaly-detection/detect"
+            
+            # Call anomaly detection for this specific trip
+            payload = {
+                'threshold': 2,
+                'check_all_active': False,
+                'trip_id': self.current_trip_id
+            }
+            
+            # Fire and forget - don't block video processing
+            try:
+                response = requests.post(detect_url, json=payload, timeout=2)
+                if response.status_code == 200:
+                    result = response.json()
+                    if result.get('irregularities_created', 0) > 0:
+                        print(f"[Anomaly] Created {result['irregularities_created']} irregularity(ies) for trip {self.current_trip_id}")
+            except requests.RequestException as e:
+                print(f"[Anomaly] Failed to trigger detection: {e}")
+        except Exception as e:
+            print(f"[Anomaly] Error in detection trigger: {e}")
     
     def set_current_trip(self, trip_id):
         """Set the current trip ID for database recording"""
