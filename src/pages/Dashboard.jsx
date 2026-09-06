@@ -33,7 +33,7 @@ const MapRecenter = ({ center, zoom }) => {
 };
 
 // Compact video widget for the dashboard — receives Pi state from parent to avoid duplicate WebSocket connections
-const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreaming, videoRef, refresh }) => {
+const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreaming, videoRef, refresh, cameraActive }) => {
   const [useMjpeg, setUseMjpeg] = useState(false);
   // Stream is started automatically by the hook on connect — no effect needed here
 
@@ -69,13 +69,20 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
 
         {!isStreaming && !useMjpeg && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-            <Video className="w-10 h-10 text-white/20" />
-            {online ? (
-              <p className="text-white/40 text-xs">Starting stream…</p>
+            {cameraActive === false ? (
+              <>
+                <Camera className="w-10 h-10 text-red-400" />
+                <p className="text-red-400 text-xs font-medium">Camera not connected</p>
+                <p className="text-white/30 text-xs">Check camera on Raspberry Pi</p>
+              </>
             ) : (
               <>
-                <p className="text-white/40 text-xs">Connecting to Raspberry Pi…</p>
-                <p className="text-white/20 text-xs">Auto-reconnecting</p>
+                <Video className="w-10 h-10 text-white/20" />
+                {online ? (
+                  <p className="text-white/40 text-xs">Starting stream…</p>
+                ) : (
+                  <p className="text-white/40 text-xs">Connecting to Raspberry Pi…</p>
+                )}
               </>
             )}
           </div>
@@ -581,6 +588,7 @@ const Dashboard = () => {
             isStreaming={piIsStreaming}
             videoRef={piVideoRef}
             refresh={piRefresh}
+            cameraActive={piCameraActive}
           />
         </div>
 
