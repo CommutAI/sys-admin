@@ -100,47 +100,42 @@ const LiveMap = () => {
         }
       });
 
-      // Transform trips to bus markers
-      const busMarkers = (activeTrips || []).map((trip, index) => {
-        const gps = latestGpsByTripId[trip.id] || (index === 0 ? latestGpsAny : null);
+      // Transform trips to bus markers - only include buses with actual GPS data
+      const busMarkers = (activeTrips || [])
+        .map((trip) => {
+          const gps = latestGpsByTripId[trip.id];
 
-        return {
-          id: trip.id,
-          plate: trip.buses?.plate_number || 'Unknown',
-          route: trip.buses?.route || 'Unknown',
-          lat: gps?.lat ?? trip.current_lat ?? 14.5995,
-          lng: gps?.lng ?? trip.current_lng ?? 120.9842,
-          passengers: 0, // Will be fetched from passenger_counts
-          status: 'active',
-          locationSource: gps ? (gps.tripId ? gps.source : `${gps.source} (latest GPS)`) : 'fallback',
-          locationUpdatedAt: gps?.recordedAt || trip.gps_updated_at || null,
-          busId: trip.bus_id,
-          tripId: trip.id
-        };
-      });
+          // Only include if we have actual GPS data
+          if (!gps || !Number.isFinite(gps.lat) || !Number.isFinite(gps.lng)) {
+            return null;
+          }
 
-      // Add inactive buses (only those not already in active trips)
+          return {
+            id: trip.id,
+            plate: trip.buses?.plate_number || 'Unknown',
+            route: trip.buses?.route || 'Unknown',
+            lat: gps.lat,
+            lng: gps.lng,
+            passengers: 0, // Will be fetched from passenger_counts
+            status: 'active',
+            locationSource: gps.tripId ? gps.source : `${gps.source} (latest GPS)`,
+            locationUpdatedAt: gps.recordedAt || trip.gps_updated_at || null,
+            busId: trip.bus_id,
+            tripId: trip.id
+          };
+        })
+        .filter(Boolean); // Remove null entries
+
+      // Add inactive buses (only those not already in active trips) - only if they have GPS data
       const activeBusIds = new Set((activeTrips || []).map(t => t.bus_id));
       const inactiveBuses = (allBuses || [])
         .filter(bus => !activeBusIds.has(bus.id)) // Ensure no duplicates
-        .map((bus, index) => {
-          // Only use latest GPS for first inactive bus if not already used
-          const usedLatestGps = busMarkers.some(bus => bus.locationUpdatedAt === latestGpsAny?.recordedAt);
-          const gps = !usedLatestGps && index === 0 ? latestGpsAny : null;
-
-          return {
-            id: bus.id,
-            plate: bus.plate_number,
-            route: bus.route,
-            lat: gps?.lat ?? 14.5995,
-            lng: gps?.lng ?? 120.9842,
-            passengers: 0,
-            status: bus.status === 'maintenance' ? 'maintenance' : 'idle',
-            locationSource: gps ? `${gps.source} (latest GPS)` : 'fallback',
-            locationUpdatedAt: gps?.recordedAt || null,
-            busId: bus.id
-          };
-        });
+        .map((bus) => {
+          // Only include inactive buses if they have actual GPS data
+          // We don't show inactive buses without GPS on the map
+          return null;
+        })
+        .filter(Boolean);
 
       // Fetch passenger counts for active trips
       const tripIds = (activeTrips || []).map(t => t.id);

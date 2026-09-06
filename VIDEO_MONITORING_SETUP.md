@@ -60,7 +60,7 @@ ON CONFLICT (bus_number) DO UPDATE
       last_seen  = NOW();
 ```
 
-### 2. Start Raspberry Pi Server with Virtual Environment
+### 2. Setup Raspberry Pi Server with Virtual Environment
 
 Connect to your Raspberry Pi:
 
@@ -79,45 +79,103 @@ chmod +x setup_venv.sh
 ./setup_venv.sh
 ```
 
-Start the server:
+### 3. Setup Automatic Startup (No Manual Configuration Required)
+
+**IMPORTANT:** This step automates the entire environment setup. The server will now:
+- Start automatically on boot
+- Restart automatically if it crashes
+- Re-register with Supabase when network changes
+- No manual configuration needed when connecting to new networks
+
+Copy the automation files to your Raspberry Pi:
 
 ```bash
-# Activate virtual environment
-source venv/bin/activate
-
-# Start the server
-python video_server_fastapi.py
+# From your local machine (in the sys-admin directory)
+scp commutai-pi-service.service chichi@commutai.local:/home/chichi/raspberry-pi-server/
+scp commutai-network-handler.sh chichi@commutai.local:/home/chichi/raspberry-pi-server/
+scp setup-automation.sh chichi@commutai.local:/home/chichi/raspberry-pi-server/
 ```
 
-### 3. Verify Auto-Discovery Works
+Then on the Raspberry Pi:
 
-Once the server is running, it will automatically:
-- Register itself in the `pi_devices` table
+```bash
+cd /home/chichi/raspberry-pi-server
+
+# Run the automation setup (requires sudo)
+sudo bash setup-automation.sh
+```
+
+This will:
+- Install a systemd service that starts the server on boot
+- Install a network dispatcher that restarts the server when network changes
+- Enable and start the service immediately
+
+### 4. Verify Auto-Discovery Works
+
+Once the automation is complete, the server will automatically:
+- Register itself in the `pi_devices` table on startup
 - The frontend will discover it via Supabase
 - Video monitoring will auto-connect
+- Re-register with new IP when network changes
 
-### 4. Troubleshooting
+### 5. Troubleshooting
 
 **If it still doesn't connect:**
 
-1. **Check the fallback URL** - I've updated it to `commutai.local:5000` which should work
-2. **Verify the Pi is reachable** - From your computer, run:
+1. **Check service status** on the Pi:
+   ```bash
+   sudo systemctl status commutai-pi-service
+   ```
+
+2. **View service logs**:
+   ```bash
+   sudo journalctl -u commutai-pi-service -f
+   ```
+
+3. **Check network handler logs**:
+   ```bash
+   cat /home/chichi/raspberry-pi-server/network-handler.log
+   ```
+
+4. **Verify the Pi is reachable** - From your computer, run:
    ```bash
    curl http://commutai.local:5000/
    ```
-3. **Check browser console** - Look for connection errors
-4. **Manual IP fallback** - If needed, set `VITE_RASPBERRY_PI_URL` in your frontend `.env`
+
+5. **Check browser console** - Look for connection errors
+
+6. **Manual restart** if needed:
+   ```bash
+   sudo systemctl restart commutai-pi-service
+   ```
 
 ## How It Works:
 
-1. **Raspberry Pi** → Registers its IP in Supabase `pi_devices` table on startup
-2. **Frontend** → Queries `pi_devices` table to get the current Pi IP
-3. **Auto-Connect** → Uses discovered IP to establish WebSocket connection
-4. **Real-time Updates** → Supabase Realtime instantly updates when Pi changes IP
+1. **Systemd Service** → Starts the video server automatically on boot
+2. **Network Dispatcher** → Detects network changes and restarts the server to re-register
+3. **Raspberry Pi** → Registers its IP in Supabase `pi_devices` table on startup
+4. **Frontend** → Queries `pi_devices` table to get the current Pi IP
+5. **Auto-Connect** → Uses discovered IP to establish WebSocket connection
+6. **Real-time Updates** → Supabase Realtime instantly updates when Pi changes IP
 
 ## Benefits:
 
-- ✅ No hardcoded IP addresses needed
-- ✅ Automatic reconnection when Pi changes network
-- ✅ Real-time IP updates via Supabase
-- ✅ Works with dynamic IP assignments
+- ✅ **Fully automated** - No manual configuration needed
+- ✅ **Auto-start on boot** - Server starts automatically when Pi powers on
+- ✅ **Auto-reconnect on network change** - Works seamlessly when connecting to new networks
+- ✅ **Auto-restart on crash** - Service restarts automatically if it fails
+- ✅ **No hardcoded IP addresses** - Uses dynamic IP discovery
+- ✅ **Real-time IP updates** - Supabase Realtime for instant updates
+- ✅ **Works with dynamic IP assignments** - Handles DHCP and network changes
+
+## Manual Server Start (Only for Testing)
+
+If you need to start the server manually for testing (not recommended for production):
+
+```bash
+cd /home/chichi/raspberry-pi-server
+source venv/bin/activate
+python video_server_fastapi.py
+```
+
+**Note:** The automation setup makes manual starts unnecessary. The systemd service handles everything automatically.

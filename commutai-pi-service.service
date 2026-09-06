@@ -1,0 +1,18 @@
+[Unit]
+Description=CommutAI Raspberry Pi Video Server
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chichi
+WorkingDirectory=/home/chichi/raspberry-pi-server
+Environment="PATH=/home/chichi/raspberry-pi-server/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/chichi/raspberry-pi-server/venv/bin/python /home/chichi/raspberry-pi-server/video_server_fastapi.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
