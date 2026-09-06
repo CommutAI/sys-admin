@@ -1175,12 +1175,14 @@ sudo ufw status
 
 For issues or questions:
 1. Check the troubleshooting section above
-2. Review relevant documentation files:
-   - `VIDEO_MONITORING_SETUP.md` - Video monitoring setup
-   - `SIM900A_SETUP.md` - GSM module setup
-   - `DEPLOYMENT_GUIDE.md` - Deployment instructions
-   - `AUTO_START_GUIDE.md` - Auto-start configuration
-   - `ULTRA_LOW_LATENCY_GUIDE.md` - Performance optimization
+2. Review relevant documentation files in the `docs/` folder:
+   - `docs/VIDEO_MONITORING_SETUP.md` - Video monitoring setup
+   - `docs/SIM900A_SETUP.md` - GSM module setup
+   - `docs/DEPLOYMENT_GUIDE.md` - Deployment instructions
+   - `docs/AUTO_START_GUIDE.md` - Auto-start configuration
+   - `docs/ULTRA_LOW_LATENCY_GUIDE.md` - Performance optimization
+   - `docs/PI_SETUP_INSTRUCTIONS.md` - Raspberry Pi setup
+   - `docs/AUDIT_LOGGING_IMPLEMENTATION.md` - Audit logging details
 3. Check system logs:
    - Frontend: Browser console
    - Backend: Application logs
