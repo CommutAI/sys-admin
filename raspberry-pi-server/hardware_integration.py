@@ -148,7 +148,7 @@ class SIM900A:
 class NEO6M:
     """NEO-6M GPS Module for Location Tracking"""
     
-    def __init__(self, port: str = '/dev/ttyS1', baudrate: int = 9600):
+    def __init__(self, port: str = '/dev/serial0', baudrate: int = 9600):
         self.port = port
         self.baudrate = baudrate
         self.serial_connection = None

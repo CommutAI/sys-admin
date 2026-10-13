@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from routers import cards, transactions, analytics, reports, webhooks, staff
+from routers import cards, transactions, analytics, reports, webhooks, staff, anomaly_detection
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,6 +55,7 @@ app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"]
 app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
 app.include_router(staff.router, prefix="/api/staff", tags=["Staff"])
+app.include_router(anomaly_detection.router, prefix="/api/anomaly-detection", tags=["Anomaly Detection"])
 
 @app.get("/")
 async def root():

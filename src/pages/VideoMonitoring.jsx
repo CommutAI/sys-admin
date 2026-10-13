@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Video, Users, AlertCircle, Wifi, WifiOff, RefreshCw, Tv2, Activity, CheckCircle, Loader2 } from 'lucide-react';
 import { useRaspberryPi } from '../hooks/useRaspberryPi';
 import { getPiVideoFeedUrl } from '../services/raspberryPiApi';
+import { getPersistedIp } from '../services/piAutoDiscovery';
 
 // Connection stages and their progress %
 const CONNECTION_STAGES = {
@@ -15,6 +16,21 @@ const CONNECTION_STAGES = {
 
 const VideoMonitoring = ({ autoConnect = true }) => {
   const [useMjpeg, setUseMjpeg] = useState(false);
+  const [mjpegUrl, setMjpegUrl] = useState(null);
+  const [persistedIp, setPersistedIp] = useState(null);
+
+  // Load persisted IP on mount
+  useEffect(() => {
+    const ip = getPersistedIp();
+    setPersistedIp(ip);
+  }, []);
+
+  // Update MJPEG URL when needed
+  useEffect(() => {
+    if (useMjpeg) {
+      getPiVideoFeedUrl().then(url => setMjpegUrl(url));
+    }
+  }, [useMjpeg]);
 
   const {
     online,
@@ -130,9 +146,9 @@ const VideoMonitoring = ({ autoConnect = true }) => {
             }`}
           />
           {/* MJPEG direct src */}
-          {useMjpeg && (
+          {useMjpeg && mjpegUrl && (
             <img
-              src={getPiVideoFeedUrl()}
+              src={mjpegUrl}
               alt="MJPEG video feed"
               className="absolute inset-0 w-full h-full object-contain"
             />
@@ -158,12 +174,28 @@ const VideoMonitoring = ({ autoConnect = true }) => {
                   </>
                 ) : (
                   <>
-                    <Loader2 className="w-12 h-12 text-orange-400 animate-spin mx-auto mb-4" />
-                    <p className="text-white/60 text-lg">
-                      {piReachable === null ? 'Checking Pi…' : connectionStatus === 'connected' ? 'Starting stream…' : 'Connecting…'}
-                    </p>
-                    <p className="text-white/30 text-sm mt-1">{raspberryPiUrl}</p>
-                    <p className="text-white/20 text-xs mt-1">Auto-reconnecting</p>
+                    {cameraActive === false ? (
+                      <>
+                        <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
+                        <p className="text-red-400 font-medium mb-1">Camera not connected</p>
+                        <p className="text-white/40 text-sm mb-4">Please check the camera connection on the Raspberry Pi</p>
+                        <button
+                          onClick={refresh}
+                          className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm flex items-center gap-2 mx-auto transition-colors"
+                        >
+                          <RefreshCw size={14} />
+                          Retry
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <Loader2 className="w-12 h-12 text-orange-400 animate-spin mx-auto mb-4" />
+                        <p className="text-white/60 text-lg">
+                          {piReachable === null ? 'Checking Pi…' : connectionStatus === 'connected' ? 'Starting stream…' : 'Connecting…'}
+                        </p>
+                        <p className="text-white/30 text-sm mt-1">{raspberryPiUrl}</p>
+                      </>
+                    )}
                   </>
                 )}
               </div>

@@ -36,6 +36,7 @@ const PassengerAnalytics = () => {
     refresh,
     assignedBus,
     activeTripId,
+    cameraActive,
   } = useRaspberryPi({ autoConnect: true, enableHealthCheck: false });
 
   // Stream starts automatically inside the hook on connect — no useEffect needed
@@ -408,12 +409,14 @@ const PassengerAnalytics = () => {
           )}
           <div className="flex-1">
             <p className="text-white font-medium">
-              {online ? 'Connected to Raspberry Pi' : 'Connecting to Raspberry Pi…'}
+              {cameraActive === false ? 'Camera not connected' : online ? 'Connected to Raspberry Pi' : 'Connecting to Raspberry Pi…'}
             </p>
             <p className="text-white/60 text-sm">
-              {online
+              {cameraActive === false
+                ? 'Please check camera connection on Raspberry Pi'
+                : online
                 ? `Status: ${connectionStatus.charAt(0).toUpperCase() + connectionStatus.slice(1)}`
-                : 'Auto-reconnecting — will connect when Pi is online'}
+                : 'Connecting to Raspberry Pi…'}
             </p>
           </div>
         </div>
@@ -430,11 +433,20 @@ const PassengerAnalytics = () => {
               {!isStreaming && (
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="text-center px-6">
-                    <Video className="w-16 h-16 text-white/30 mx-auto mb-4" />
-                    <p className="text-white/50">
-                      {online ? 'Starting stream…' : 'Connecting to Raspberry Pi…'}
-                    </p>
-                    {!online && <p className="text-white/25 text-sm mt-1">Auto-reconnecting</p>}
+                    {cameraActive === false ? (
+                      <>
+                        <Camera className="w-16 h-16 text-red-400 mx-auto mb-4" />
+                        <p className="text-red-400 font-medium mb-1">Camera not connected</p>
+                        <p className="text-white/40 text-sm">Please check camera connection on Raspberry Pi</p>
+                      </>
+                    ) : (
+                      <>
+                        <Video className="w-16 h-16 text-white/30 mx-auto mb-4" />
+                        <p className="text-white/50">
+                          {online ? 'Starting stream…' : 'Connecting to Raspberry Pi…'}
+                        </p>
+                      </>
+                    )}
                   </div>
                 </div>
               )}

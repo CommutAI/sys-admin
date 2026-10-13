@@ -1324,7 +1324,6 @@ END $$;
 
 -- ── 27. Seed: Test Bus Data ───────────────────────────────────────────────────
 INSERT INTO buses (plate_number, bus_number, route, seat_capacity, status) VALUES
-<<<<<<< HEAD
   ('BUS-001', 1001, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active'),
   ('BUS-002', 1002, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
   ('BUS-003', 1003, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
@@ -1335,9 +1334,6 @@ INSERT INTO buses (plate_number, bus_number, route, seat_capacity, status) VALUE
   ('BUS-008', 1008, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
   ('BUS-009', 1009, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive'),
   ('BUS-010', 1010, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'inactive')
-=======
-  ('BUS-001', 1001, 'Manalo Fortich Terminal ↔ Agora Terminal', 35, 'active')
->>>>>>> 4559f34aad17821beeaf3ff5af0a0853ffb32bb8
 ON CONFLICT (plate_number) DO UPDATE SET
   bus_number = EXCLUDED.bus_number,
   route = EXCLUDED.route,

@@ -31,15 +31,21 @@ load_dotenv()
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
     # Startup
-    print("Auto-starting camera on server startup...")
-    success, err_msg = video_processor.start()
-    if success:
-        print("Camera started successfully")
-        asyncio.create_task(video_processor.process_frames())
-        asyncio.create_task(video_processor.stream_frames())
-        print("Video processing started")
+    enable_camera = os.getenv('ENABLE_CAMERA', 'true').lower() == 'true'
+
+    if enable_camera:
+        print("Auto-starting camera on server startup...")
+        success, err_msg = video_processor.start()
+        if success:
+            print("Camera started successfully")
+            asyncio.create_task(video_processor.process_frames())
+            asyncio.create_task(video_processor.stream_frames())
+            print("Video processing started")
+        else:
+            print(f"Failed to start camera on startup: {err_msg}")
+            print("Server will continue in GPS-only mode")
     else:
-        print(f"Failed to start camera on startup: {err_msg}")
+        print("Camera disabled. Server running in GPS-only mode.")
 
     # Periodically re-register this Pi's IP so the dashboard always has the
     # current address even after a network change (DHCP re-lease, new Wi-Fi, etc.)
@@ -54,7 +60,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     print("Cleaning up hardware resources...")
-    video_processor.stop()
+    if enable_camera:
+        video_processor.stop()
     if hardware_manager:
         hardware_manager.cleanup()
 
@@ -140,7 +147,7 @@ HARDWARE_CONFIG = {
     'enable_geolocation': os.getenv('ENABLE_GEOLOCATION', 'true').lower() == 'true',
     'sim900a_port': os.getenv('SIM900A_PORT', '/dev/ttyS0'),
     'sim900a_baudrate': int(os.getenv('SIM900A_BAUDRATE', '9600')),
-    'neo6m_port': os.getenv('NEO6M_PORT', '/dev/ttyS1'),
+    'neo6m_port': os.getenv('NEO6M_PORT', '/dev/serial0'),
     'neo6m_baudrate': int(os.getenv('NEO6M_BAUDRATE', '9600')),
     'emergency_button_pin': int(os.getenv('EMERGENCY_BUTTON_PIN', '18')),
     'osm_user_agent': os.getenv('OSM_USER_AGENT', 'BusMonitoringSystem'),
@@ -654,6 +661,7 @@ class VideoProcessor:
           camera counts from manual ones.
         - Only writes when a trip is active (trip_id NOT NULL constraint).
         - The live WebSocket count is always sent regardless of trip state.
+        - Triggers anomaly detection after saving count.
         """
         if not supabase or not self.current_trip_id:
             return  # live count still streams via WebSocket — DB write needs a trip
@@ -676,8 +684,44 @@ class VideoProcessor:
             if result:
                 self.last_db_save = current_time
                 print(f"[DB] Saved count={count} source={COUNT_METHOD} trip={self.current_trip_id}")
+                
+                # Trigger anomaly detection after saving count
+                self.trigger_anomaly_detection()
         except Exception as e:
             print(f"Error saving passenger count to database: {e}")
+    
+    def trigger_anomaly_detection(self):
+        """Trigger anomaly detection via backend API for the current trip.
+        This compares AI camera count with boarded passengers to identify fare evasion.
+        """
+        if not self.current_trip_id:
+            return
+        
+        try:
+            import requests
+            
+            # Get backend URL from environment or use default
+            backend_url = os.getenv('BACKEND_URL', 'http://localhost:8000')
+            detect_url = f"{backend_url}/api/anomaly-detection/detect"
+            
+            # Call anomaly detection for this specific trip
+            payload = {
+                'threshold': 2,
+                'check_all_active': False,
+                'trip_id': self.current_trip_id
+            }
+            
+            # Fire and forget - don't block video processing
+            try:
+                response = requests.post(detect_url, json=payload, timeout=2)
+                if response.status_code == 200:
+                    result = response.json()
+                    if result.get('irregularities_created', 0) > 0:
+                        print(f"[Anomaly] Created {result['irregularities_created']} irregularity(ies) for trip {self.current_trip_id}")
+            except requests.RequestException as e:
+                print(f"[Anomaly] Failed to trigger detection: {e}")
+        except Exception as e:
+            print(f"[Anomaly] Error in detection trigger: {e}")
     
     def set_current_trip(self, trip_id):
         """Set the current trip ID for database recording"""
@@ -1716,7 +1760,8 @@ if __name__ == '__main__':
     print(f"FPS: {FPS}")
     
     try:
-        uvicorn.run(app, host='0.0.0.0', port=5000)
+        port = int(os.getenv('SERVER_PORT', '8000'))
+        uvicorn.run(app, host='0.0.0.0', port=port)
     except KeyboardInterrupt:
         print("Server shutdown requested")
     except Exception as e:
