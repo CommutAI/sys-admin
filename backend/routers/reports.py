@@ -173,7 +173,7 @@ async def export_report(
     report_id: str,
     start_date: date,
     end_date: date,
-    format: str = Query("json", regex="^(json|csv)$")
+    format: str = Query("json", pattern="^(json|csv)$")
 ):
     """
     Export report in specified format

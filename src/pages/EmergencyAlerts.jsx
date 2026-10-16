@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { AlertTriangle, CheckCircle, XCircle, Clock, MapPin, Search, Filter, Phone, Mail, User, Plus, Edit, Trash2, Save, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle, XCircle, Clock, MapPin, Search, Filter, Phone, Mail, User, Plus, Edit, Trash2, Save, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const EmergencyAlerts = () => {
@@ -17,6 +17,9 @@ const EmergencyAlerts = () => {
     relationship: '',
     is_active: true
   });
+  const [alertsCurrentPage, setAlertsCurrentPage] = useState(1);
+  const [contactsCurrentPage, setContactsCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
 
   useEffect(() => {
     fetchAlerts();
@@ -202,6 +205,22 @@ const EmergencyAlerts = () => {
     return matchesSearch && matchesStatus;
   });
 
+  const alertsTotalPages = Math.ceil(filteredAlerts.length / itemsPerPage);
+  const paginatedAlerts = filteredAlerts.slice(
+    (alertsCurrentPage - 1) * itemsPerPage,
+    alertsCurrentPage * itemsPerPage
+  );
+
+  const contactsTotalPages = Math.ceil(contacts.length / itemsPerPage);
+  const paginatedContacts = contacts.slice(
+    (contactsCurrentPage - 1) * itemsPerPage,
+    contactsCurrentPage * itemsPerPage
+  );
+
+  useEffect(() => {
+    setAlertsCurrentPage(1);
+  }, [searchTerm, filterStatus]);
+
   const statusColors = {
     active: 'bg-red-500/20 text-red-400 border-red-500/50',
     acknowledged: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50',
@@ -288,65 +307,121 @@ const EmergencyAlerts = () => {
           <span className="text-white/60 text-sm">{contacts.length} contact(s)</span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {contacts.map((contact) => (
-            <div key={contact.id} className="bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 transition-colors">
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-orange-500/20 rounded-full flex items-center justify-center">
-                    <User className="w-5 h-5 text-orange-400" />
-                  </div>
-                  <div>
-                    <h3 className="text-white font-semibold">{contact.name}</h3>
-                    {contact.relationship && (
-                      <p className="text-white/60 text-sm">{contact.relationship}</p>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-white/10">
+                <th className="text-left text-white/60 text-sm font-medium py-3 px-4">Name</th>
+                <th className="text-left text-white/60 text-sm font-medium py-3 px-4">Phone</th>
+                <th className="text-left text-white/60 text-sm font-medium py-3 px-4">Email</th>
+                <th className="text-left text-white/60 text-sm font-medium py-3 px-4">Relationship</th>
+                <th className="text-left text-white/60 text-sm font-medium py-3 px-4">Status</th>
+                <th className="text-right text-white/60 text-sm font-medium py-3 px-4">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedContacts.map((contact) => (
+                <tr key={contact.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                  <td className="py-3 px-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-orange-500/20 rounded-full flex items-center justify-center">
+                        <User className="w-4 h-4 text-orange-400" />
+                      </div>
+                      <span className="text-white font-medium">{contact.name}</span>
+                    </div>
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="flex items-center gap-2 text-white/70 text-sm">
+                      <Phone size={14} />
+                      <span>{contact.phone}</span>
+                    </div>
+                  </td>
+                  <td className="py-3 px-4">
+                    {contact.email ? (
+                      <div className="flex items-center gap-2 text-white/70 text-sm">
+                        <Mail size={14} />
+                        <span>{contact.email}</span>
+                      </div>
+                    ) : (
+                      <span className="text-white/40 text-sm">—</span>
                     )}
-                  </div>
+                  </td>
+                  <td className="py-3 px-4 text-white/70 text-sm">{contact.relationship || '—'}</td>
+                  <td className="py-3 px-4">
+                    <span className={`text-xs px-2 py-1 rounded-full ${contact.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                      {contact.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => handleEditContact(contact)}
+                        className="text-white/60 hover:text-white transition-colors"
+                      >
+                        <Edit size={16} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteContact(contact.id)}
+                        className="text-white/60 hover:text-red-400 transition-colors"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {contacts.length === 0 && (
+                <tr>
+                  <td colSpan="6" className="text-center py-8">
+                    <User className="w-12 h-12 text-white/20 mx-auto mb-3" />
+                    <p className="text-white/60">No emergency contacts configured</p>
+                    <button
+                      onClick={handleAddContact}
+                      className="mt-3 text-orange-400 hover:text-orange-300 text-sm"
+                    >
+                      Add your first emergency contact
+                    </button>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          {contactsTotalPages > 1 && (
+            <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
+              <p className="text-white/60 text-sm">
+                Showing {((contactsCurrentPage - 1) * itemsPerPage) + 1} to {Math.min(contactsCurrentPage * itemsPerPage, contacts.length)} of {contacts.length} contacts
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setContactsCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={contactsCurrentPage === 1}
+                  className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: contactsTotalPages }, (_, i) => i + 1).map(page => (
+                    <button
+                      key={page}
+                      onClick={() => setContactsCurrentPage(page)}
+                      className={`w-8 h-8 rounded-lg text-sm transition-colors ${
+                        contactsCurrentPage === page
+                          ? 'bg-orange-500 text-white'
+                          : 'bg-white/10 hover:bg-white/20 text-white/70'
+                      }`}
+                    >
+                      {page}
+                    </button>
+                  ))}
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleEditContact(contact)}
-                    className="text-white/60 hover:text-white transition-colors"
-                  >
-                    <Edit size={16} />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteContact(contact.id)}
-                    className="text-white/60 hover:text-red-400 transition-colors"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
+                <button
+                  onClick={() => setContactsCurrentPage(prev => Math.min(prev + 1, contactsTotalPages))}
+                  disabled={contactsCurrentPage === contactsTotalPages}
+                  className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <ChevronRight size={16} />
+                </button>
               </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-white/70 text-sm">
-                  <Phone size={14} />
-                  <span>{contact.phone}</span>
-                </div>
-                {contact.email && (
-                  <div className="flex items-center gap-2 text-white/70 text-sm">
-                    <Mail size={14} />
-                    <span>{contact.email}</span>
-                  </div>
-                )}
-              </div>
-              <div className="mt-3 pt-3 border-t border-white/10">
-                <span className={`text-xs px-2 py-1 rounded-full ${contact.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-                  {contact.is_active ? 'Active' : 'Inactive'}
-                </span>
-              </div>
-            </div>
-          ))}
-          {contacts.length === 0 && (
-            <div className="col-span-full text-center py-8">
-              <User className="w-12 h-12 text-white/20 mx-auto mb-3" />
-              <p className="text-white/60">No emergency contacts configured</p>
-              <button
-                onClick={handleAddContact}
-                className="mt-3 text-orange-400 hover:text-orange-300 text-sm"
-              >
-                Add your first emergency contact
-              </button>
             </div>
           )}
         </div>
@@ -469,8 +544,8 @@ const EmergencyAlerts = () => {
         </div>
 
         <div className="space-y-4">
-          {filteredAlerts.length > 0 ? (
-            filteredAlerts.map((alert) => {
+          {paginatedAlerts.length > 0 ? (
+            paginatedAlerts.map((alert) => {
               const StatusIcon = statusIcons[alert.status];
               return (
                 <div key={alert.id} className={`p-4 rounded-xl border ${statusColors[alert.status]}`}>
@@ -536,6 +611,46 @@ const EmergencyAlerts = () => {
             </div>
           )}
         </div>
+
+        {/* Alerts Pagination */}
+        {alertsTotalPages > 1 && (
+          <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
+            <p className="text-white/60 text-sm">
+              Showing {((alertsCurrentPage - 1) * itemsPerPage) + 1} to {Math.min(alertsCurrentPage * itemsPerPage, filteredAlerts.length)} of {filteredAlerts.length} alerts
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setAlertsCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={alertsCurrentPage === 1}
+                className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: alertsTotalPages }, (_, i) => i + 1).map(page => (
+                  <button
+                    key={page}
+                    onClick={() => setAlertsCurrentPage(page)}
+                    className={`w-8 h-8 rounded-lg text-sm transition-colors ${
+                      alertsCurrentPage === page
+                        ? 'bg-orange-500 text-white'
+                        : 'bg-white/10 hover:bg-white/20 text-white/70'
+                    }`}
+                  >
+                    {page}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setAlertsCurrentPage(prev => Math.min(prev + 1, alertsTotalPages))}
+                disabled={alertsCurrentPage === alertsTotalPages}
+                className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -4,12 +4,24 @@ Analytics endpoints - complex data aggregations
 
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from datetime import datetime, date, timedelta
 from database import supabase
 from cache import cache
 
 router = APIRouter()
+
+
+class DateRangeQuery(BaseModel):
+    """Validated date range query"""
+    start_date: date
+    end_date: date
+    
+    @validator('end_date')
+    def end_date_after_start_date(cls, v, values):
+        if 'start_date' in values and v < values['start_date']:
+            raise ValueError('end_date must be after start_date')
+        return v
 
 
 class PassengerTrend(BaseModel):
@@ -35,7 +47,9 @@ class RoutePerformance(BaseModel):
 async def get_passenger_trends(
     start_date: date,
     end_date: date,
-    group_by: str = Query("day", regex="^(day|hour)$")
+    group_by: str = Query("day", pattern="^(day|hour)$"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0)
 ) -> List[PassengerTrend]:
     """
     Get passenger count trends with flexible grouping
@@ -56,7 +70,7 @@ async def get_passenger_trends(
         end_iso = (end_date + timedelta(days=1)).isoformat()
         
         # Optimize: Select only needed fields instead of '*'
-        result = supabase.table('passenger_counts').select('count, created_at').gte('created_at', start_iso).lt('created_at', end_iso).execute()
+        result = supabase.table('passenger_counts').select('count, created_at').gte('created_at', start_iso).lt('created_at', end_iso).range(offset, offset + limit - 1).execute()
         passenger_counts = result[1] if result[1] else []
         
         if not passenger_counts:

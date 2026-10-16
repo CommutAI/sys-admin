@@ -15,7 +15,7 @@
     "autoprefixer": "^10.5.4",
     "clsx": "^2.1.1",
     "jspdf": "^4.2.1",
-    "jspdf-autotable": "^5.0.8",
+    "jspdf-autotable": "^5.0.9",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.28.0",
     "postcss": "^8.5.25",

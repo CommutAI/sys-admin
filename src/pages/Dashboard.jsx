@@ -1,11 +1,120 @@
 import { useState, useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
-import { Users, DollarSign, Bus, AlertTriangle, Map as MapIcon, CheckCircle, Clock, Search, Video, Camera, Activity, Brain, RefreshCw } from 'lucide-react';
-import { supabaseAdmin } from '../lib/supabase';
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+import { Users, DollarSign, Bus, AlertTriangle, Map as MapIcon, CheckCircle, Clock, Search, Video, Camera, Activity, Brain, RefreshCw, Filter, Navigation, MapPin } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import 'leaflet/dist/leaflet.css';
 import { useRaspberryPi } from '../hooks/useRaspberryPi';
 import { getPiVideoFeedUrl } from '../services/raspberryPiApi';
 import AuditService from '../services/auditService';
+import L from 'leaflet';
+
+// Fix for default marker icons in Leaflet
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
+
+// Route coordinates: Manolo Fortich Terminal to Agora Terminal, Cagayan de Oro
+const ROUTE_COORDINATES = [
+  [8.366264151737736, 124.86574877578431], // Manolo Fortich Bus Terminal
+  [8.3720, 124.8580],
+  [8.3780, 124.8500],
+  [8.3840, 124.8420],
+  [8.3900, 124.8340],
+  [8.3960, 124.8260],
+  [8.4020, 124.8180],
+  [8.4080, 124.8100],
+  [8.4140, 124.8020],
+  [8.4200, 124.7940],
+  [8.4260, 124.7860],
+  [8.4320, 124.7780],
+  [8.4380, 124.7700],
+  [8.4440, 124.7620],
+  [8.4500, 124.7540],
+  [8.4560, 124.7460],
+  [8.4620, 124.7380],
+  [8.4680, 124.7300],
+  [8.4740, 124.7220],
+  [8.4800, 124.7140],
+  [8.4860, 124.7060],
+  [8.488898925316661, 124.65764707858631], // Agora Terminal
+];
+
+// Calculate distance between two coordinates in kilometers (Haversine formula)
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
+// Calculate total route distance
+const calculateRouteDistance = (coordinates) => {
+  return coordinates.reduce((total, coord, index) => {
+    if (index === 0) return 0;
+    const prevCoord = coordinates[index - 1];
+    return total + calculateDistance(prevCoord[0], prevCoord[1], coord[0], coord[1]);
+  }, 0);
+};
+
+let ROUTE_TOTAL_DISTANCE = calculateRouteDistance(ROUTE_COORDINATES);
+
+// Calculate bus progress along the route (0-100%)
+const calculateRouteProgress = (lat, lng, coordinates) => {
+  let minDistance = Infinity;
+  let closestIndex = 0;
+  let totalDistanceToClosest = 0;
+
+  // Find the closest point on the route
+  coordinates.forEach((coord, index) => {
+    const distance = calculateDistance(lat, lng, coord[0], coord[1]);
+    if (distance < minDistance) {
+      minDistance = distance;
+      closestIndex = index;
+    }
+  });
+
+  // Calculate distance from start to the closest point
+  for (let i = 0; i < closestIndex; i++) {
+    totalDistanceToClosest += calculateDistance(
+      coordinates[i][0], coordinates[i][1],
+      coordinates[i + 1][0], coordinates[i + 1][1]
+    );
+  }
+
+  const totalDistance = calculateRouteDistance(coordinates);
+  const progress = (totalDistanceToClosest / totalDistance) * 100;
+  return Math.min(Math.max(progress, 0), 100); // Clamp between 0-100
+};
+
+// Determine route direction based on progress
+const getRouteDirection = (progress) => {
+  if (progress < 50) return 'Manolo Fortich → Agora';
+  if (progress > 50) return 'Agora → Manolo Fortich';
+  return 'Near Agora Terminal';
+};
+
+// Estimate time to destination (assuming average speed of 40 km/h)
+const estimateTimeToDestination = (progress, routeDistance = ROUTE_TOTAL_DISTANCE) => {
+  const remainingProgress = 100 - progress;
+  const remainingDistance = (remainingProgress / 100) * routeDistance;
+  const avgSpeed = 40; // km/h
+  const timeHours = remainingDistance / avgSpeed;
+  const timeMinutes = Math.round(timeHours * 60);
+
+  if (timeMinutes < 60) return `${timeMinutes} min`;
+  const hours = Math.floor(timeMinutes / 60);
+  const mins = timeMinutes % 60;
+  return `${hours}h ${mins}m`;
+};
+
+
 
 const KPICard = ({ title, value, change, icon: Icon, color }) => (
   <div className="glass-card p-6 hover:scale-105 transition-transform duration-300">
@@ -22,14 +131,69 @@ const KPICard = ({ title, value, change, icon: Icon, color }) => (
   </div>
 );
 
-const MapRecenter = ({ center, zoom }) => {
-  const map = useMap();
+// Animated Bus Marker Component
+const AnimatedBusMarker = ({ bus, onClick }) => {
+  const markerRef = useRef(null);
 
   useEffect(() => {
-    map.setView(center, zoom);
-  }, [center, zoom, map]);
+    if (markerRef.current) {
+      // Smooth transition to new position
+      markerRef.current.setLatLng([bus.lat, bus.lng]);
+    }
+  }, [bus.lat, bus.lng]);
 
-  return null;
+  return (
+    <Marker
+      ref={markerRef}
+      position={[bus.lat, bus.lng]}
+      eventHandlers={{
+        click: () => onClick && onClick(bus),
+      }}
+    >
+      <Popup>
+        <div className="p-3 min-w-[250px]">
+          <h3 className="font-bold text-lg mb-2 text-gray-800">Bus #{bus.plate || 'N/A'}</h3>
+          <div className="space-y-1 text-sm text-gray-700">
+            <p><strong>Route:</strong> {bus.route}</p>
+            <p><strong>Status:</strong> <span className={`px-2 py-0.5 rounded text-xs ${bus.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>{bus.status}</span></p>
+            <p><strong>Passengers:</strong> {bus.passengers}</p>
+
+            {/* Route Progress */}
+            {bus.routeProgress !== undefined && (
+              <>
+                <div className="mt-2">
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-gray-600">Route Progress</span>
+                    <span className="font-semibold text-orange-600">{bus.routeProgress.toFixed(1)}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="bg-orange-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${bus.routeProgress}%` }}
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-600"><strong>Direction:</strong> {bus.routeDirection}</p>
+                <p className="text-xs text-gray-600"><strong>ETA to Destination:</strong> {bus.eta}</p>
+              </>
+            )}
+
+            <p className="text-gray-500 text-xs mt-2">
+              GPS: {Number(bus.lat).toFixed(6)}, {Number(bus.lng).toFixed(6)}
+            </p>
+            <p className="text-gray-500 text-xs">
+              Source: {bus.locationSource || 'fallback'}
+            </p>
+            {bus.locationUpdatedAt && (
+              <p className="text-gray-500 text-xs">
+                Last update: {new Date(bus.locationUpdatedAt).toLocaleString()}
+              </p>
+            )}
+          </div>
+        </div>
+      </Popup>
+    </Marker>
+  );
 };
 
 // Compact video widget for the dashboard — receives Pi state from parent to avoid duplicate WebSocket connections
@@ -137,6 +301,7 @@ const Dashboard = () => {
   const [emergencyAlerts, setEmergencyAlerts] = useState([]);
   const [alertFilterStatus, setAlertFilterStatus] = useState('all');
   const [alertSearchTerm, setAlertSearchTerm] = useState('');
+  const [routeCoordinates, setRouteCoordinates] = useState(ROUTE_COORDINATES);
 
   // Single Raspberry Pi connection — shared between status indicators and the video widget
   const {
@@ -158,19 +323,20 @@ const Dashboard = () => {
     fetchDashboardData();
     fetchLiveMapData();
     fetchEmergencyAlerts();
-    
+    fetchRouteFromOSRM();
+
     // Log page view to audit logs
     AuditService.logPageView('Dashboard');
-    
+
     // Set up real-time subscription for trips
-    const tripsSubscription = supabaseAdmin
+    const tripsSubscription = supabase
       .channel('trips-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trips' }, () => {
         fetchLiveMapData();
       })
       .subscribe();
 
-    const gpsSubscription = supabaseAdmin
+    const gpsSubscription = supabase
       .channel('dashboard-gps-channel')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'gps_locations' }, () => {
         fetchLiveMapData();
@@ -178,7 +344,7 @@ const Dashboard = () => {
       .subscribe();
 
     // Set up real-time subscription for emergency alerts
-    const alertsSubscription = supabaseAdmin
+    const alertsSubscription = supabase
       .channel('emergency-alerts-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'emergency_alerts' }, () => {
         fetchEmergencyAlerts();
@@ -191,6 +357,96 @@ const Dashboard = () => {
       alertsSubscription.unsubscribe();
     };
   }, []);
+
+  const fetchRouteFromOSRM = async () => {
+    try {
+      // Use OSRM (Open Source Routing Machine) public API
+      const startLat = 8.366264151737736;
+      const startLng = 124.86574877578431;
+      const endLat = 8.488898925316661;
+      const endLng = 124.65764707858631;
+
+      console.log('Fetching route from OSRM:', startLat, startLng, 'to', endLat, endLng);
+
+      // Try multiple OSRM servers
+      const servers = [
+        'https://router.project-osrm.org',
+        'https://routing.openstreetmap.de',
+        'https://osrm.gosm.io'
+      ];
+
+      let routeFound = false;
+
+      for (const server of servers) {
+        try {
+          const response = await fetch(
+            `${server}/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`
+          );
+
+          if (!response.ok) {
+            console.log(`Server ${server} returned error:`, response.statusText);
+            continue;
+          }
+
+          const data = await response.json();
+          console.log(`OSRM response from ${server}:`, data);
+
+          if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+            const geometry = data.routes[0].geometry;
+            // Convert GeoJSON coordinates to Leaflet format [lat, lng]
+            const coordinates = geometry.coordinates.map(coord => [coord[1], coord[0]]);
+            setRouteCoordinates(coordinates);
+            ROUTE_TOTAL_DISTANCE = calculateRouteDistance(coordinates);
+            console.log('Route fetched from OSRM:', coordinates.length, 'points');
+            console.log('Total route distance:', ROUTE_TOTAL_DISTANCE.toFixed(2), 'km');
+            routeFound = true;
+            break;
+          }
+        } catch (err) {
+          console.log(`Error with server ${server}:`, err);
+          continue;
+        }
+      }
+
+      if (!routeFound) {
+        console.log('No OSRM server returned a valid route, using detailed manual waypoints');
+        // Use detailed manual waypoints that follow the actual road
+        const manualRoute = [
+          [8.366264151737736, 124.86574877578431], // Manolo Fortich Bus Terminal
+          [8.3700, 124.8600],
+          [8.3750, 124.8520],
+          [8.3800, 124.8440],
+          [8.3850, 124.8360],
+          [8.3900, 124.8280],
+          [8.3950, 124.8200],
+          [8.4000, 124.8120],
+          [8.4050, 124.8040],
+          [8.4100, 124.7960],
+          [8.4150, 124.7880],
+          [8.4200, 124.7800],
+          [8.4250, 124.7720],
+          [8.4300, 124.7640],
+          [8.4350, 124.7560],
+          [8.4400, 124.7480],
+          [8.4450, 124.7400],
+          [8.4500, 124.7320],
+          [8.4550, 124.7240],
+          [8.4600, 124.7160],
+          [8.4650, 124.7080],
+          [8.4700, 124.7000],
+          [8.4750, 124.6920],
+          [8.4800, 124.6840],
+          [8.4850, 124.6760],
+          [8.488898925316661, 124.65764707858631], // Agora Terminal
+        ];
+        setRouteCoordinates(manualRoute);
+        ROUTE_TOTAL_DISTANCE = calculateRouteDistance(manualRoute);
+        console.log('Using manual route with', manualRoute.length, 'waypoints');
+      }
+    } catch (error) {
+      console.error('Error fetching route from OSRM:', error);
+    }
+  };
 
   const fetchDashboardData = async () => {
     try {
@@ -209,33 +465,33 @@ const Dashboard = () => {
         { data: transactions }
       ] = await Promise.all([
         // Fetch active buses
-        supabaseAdmin.from('buses').select('*').eq('status', 'active'),
+        supabase.from('buses').select('*').eq('status', 'active'),
         
         // Fetch today's trips
-        supabaseAdmin.from('trips').select('*, buses(*)').gte('started_at', today),
+        supabase.from('trips').select('*, buses(*)').gte('started_at', today),
         
         // Fetch passenger counts for today
-        supabaseAdmin.from('passenger_counts').select('count').gte('recorded_at', today),
+        supabase.from('passenger_counts').select('count').gte('recorded_at', today),
         
         // Fetch fare irregularities for today
-        supabaseAdmin.from('fare_irregularities')
+        supabase.from('fare_irregularities')
           .select('*, trips(*, buses(*))')
           .gte('detected_at', today)
           .order('detected_at', { ascending: false })
           .limit(10),
         
         // Fetch emergency alerts - simplified query to avoid 400 error
-        supabaseAdmin.from('emergency_alerts')
+        supabase.from('emergency_alerts')
           .select('*')
           .eq('status', 'active')
           .order('created_at', { ascending: false })
           .limit(5),
         
         // Fetch staff users
-        supabaseAdmin.from('staff_users').select('*').eq('is_active', true),
+        supabase.from('staff_users').select('*').eq('is_active', true),
         
         // Calculate revenue (from transactions)
-        supabaseAdmin.from('transactions').select('amount, type').gte('created_at', today)
+        supabase.from('transactions').select('amount, type').gte('created_at', today)
       ]);
 
       // Calculate KPIs
@@ -325,12 +581,12 @@ const Dashboard = () => {
         { data: activeTrips },
         { data: gpsRows }
       ] = await Promise.all([
-        supabaseAdmin.from('buses').select('*').order('bus_number', { ascending: true }),
-        supabaseAdmin.from('trips')
+        supabase.from('buses').select('*').order('bus_number', { ascending: true }),
+        supabase.from('trips')
           .select('*, buses(*)')
           .eq('status', 'in_progress')
           .order('started_at', { ascending: false }),
-        supabaseAdmin.from('gps_locations')
+        supabase.from('gps_locations')
           .select('trip_id, latitude, longitude, source, recorded_at')
           .order('recorded_at', { ascending: false })
           .limit(100)
@@ -372,18 +628,27 @@ const Dashboard = () => {
         const gps = trip
           ? latestGpsByTripId[trip.id] || latestGpsAny
           : (!activeTripBusIds.size && bus.id === fallbackGpsBusId ? latestGpsAny : null);
+        const lat = gps?.lat ?? trip?.current_lat ?? 8.43;
+        const lng = gps?.lng ?? trip?.current_lng ?? 124.76;
+        const routeProgress = calculateRouteProgress(lat, lng, routeCoordinates);
+        const routeDirection = getRouteDirection(routeProgress);
+        const eta = estimateTimeToDestination(routeProgress, calculateRouteDistance(routeCoordinates));
+
         return {
           id: bus.id,
           plate: bus.plate_number,
           route: bus.route,
-          lat: gps?.lat ?? trip?.current_lat ?? 8.43,
-          lng: gps?.lng ?? trip?.current_lng ?? 124.76,
+          lat,
+          lng,
           passengers: 0,
           status: trip ? 'active' : bus.status,
           locationSource: gps ? (gps.tripId ? gps.source : `${gps.source} (latest GPS)`) : 'fallback',
           locationUpdatedAt: gps?.recordedAt || trip?.gps_updated_at || null,
           busId: bus.id,
-          tripId: trip?.id || null
+          tripId: trip?.id || null,
+          routeProgress,
+          routeDirection,
+          eta
         };
       });
 
@@ -392,7 +657,7 @@ const Dashboard = () => {
       let totalPassengers = 0;
 
       if (tripIds.length > 0) {
-        const { data: passengerCounts } = await supabaseAdmin
+        const { data: passengerCounts } = await supabase
           .from('passenger_counts')
           .select('trip_id, count')
           .in('trip_id', tripIds)
@@ -428,7 +693,7 @@ const Dashboard = () => {
       // Select only columns that are guaranteed to exist in the base table.
       // Avoid joining buses() here to prevent 400 errors if the FK relationship
       // isn't recognised by PostgREST (e.g. migration not yet applied).
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await supabase
         .from('emergency_alerts')
         .select('id, status, notes, created_at, acknowledged_at, resolved_at, bus_id, conductor_id, lat, lng')
         .order('created_at', { ascending: false });
@@ -443,15 +708,20 @@ const Dashboard = () => {
 
   const handleAcknowledgeAlert = async (alertId) => {
     try {
-      const { error } = await supabaseAdmin
-        .from('emergency_alerts')
-        .update({ 
-          status: 'acknowledged',
-          acknowledged_at: new Date().toISOString()
-        })
-        .eq('id', alertId);
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      const response = await fetch(`${API_URL}/api/emergency-alerts/${alertId}/acknowledge`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${user.session.access_token}`,
+        },
+      });
 
-      if (error) throw error;
+      if (!response.ok) {
+        throw new Error('Failed to acknowledge alert');
+      }
 
       // Log alert acknowledgment to audit logs
       await AuditService.logAuditEvent({
@@ -471,16 +741,21 @@ const Dashboard = () => {
     try {
       const alert = emergencyAlerts.find(a => a.id === alertId);
       const notes = alert?.notes || 'No notes provided';
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const { data: { user } } = await supabase.auth.getUser();
 
-      const { error } = await supabaseAdmin
-        .from('emergency_alerts')
-        .update({ 
-          status: 'resolved',
-          resolved_at: new Date().toISOString()
-        })
-        .eq('id', alertId);
+      const response = await fetch(`${API_URL}/api/emergency-alerts/${alertId}/resolve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${user.session.access_token}`,
+        },
+        body: JSON.stringify({ notes }),
+      });
 
-      if (error) throw error;
+      if (!response.ok) {
+        throw new Error('Failed to resolve alert');
+      }
 
       // Log alert resolution to audit logs
       await AuditService.logEmergencyAlertResolved(alertId, notes);
@@ -523,42 +798,12 @@ const Dashboard = () => {
     );
   }
 
-  const BusMarker = ({ bus }) => (
-    <Marker position={[bus.lat, bus.lng]}>
-      <Popup>
-        <div className="p-2">
-          <h3 className="font-bold text-gray-800">{bus.plate}</h3>
-          <p className="text-sm text-gray-600">{bus.route}</p>
-          <p className="text-xs text-gray-700 mt-2">
-            {Number(bus.lat).toFixed(6)}, {Number(bus.lng).toFixed(6)}
-          </p>
-          <p className="text-xs text-gray-500 mt-1">
-            Source: {bus.locationSource || 'fallback'}
-          </p>
-          {bus.locationUpdatedAt && (
-            <p className="text-xs text-gray-500">
-              Updated: {new Date(bus.locationUpdatedAt).toLocaleString()}
-            </p>
-          )}
-          <div className="flex items-center gap-2 mt-2">
-            <Users size={16} className="text-orange-500" />
-            <span className="text-sm">{bus.passengers} passengers</span>
-          </div>
-          <span className={`inline-block px-2 py-1 rounded text-xs mt-2 ${bus.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
-            {bus.status}
-          </span>
-        </div>
-      </Popup>
-    </Marker>
-  );
-
   // Route: Manolo Fortich Terminal ↔ Agora Terminal, Cagayan de Oro
-  // Midpoint of the route is roughly 8.43°N, 124.76°E — zoom 11 shows the full route
-  const ROUTE_CENTER = [8.43, 124.76];
+  // Calculate midpoint for centering the map
+  const ROUTE_CENTER = [8.4276, 124.7617]; // Midpoint of the route
   const ROUTE_ZOOM = 11;
-  const liveBus = buses.find(bus => bus.locationSource && bus.locationSource !== 'fallback');
-  const mapCenter = liveBus ? [liveBus.lat, liveBus.lng] : ROUTE_CENTER;
-  const mapZoom = liveBus ? 15 : ROUTE_ZOOM;
+  const mapCenter = ROUTE_CENTER;
+  const mapZoom = ROUTE_ZOOM;
 
 
 
@@ -662,119 +907,216 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Live Map Section */}
+      {/* Live Map Section - Enhanced */}
       <div className="glass-card p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-white text-xl font-bold flex items-center gap-2">
-            <MapIcon className="text-orange-400" />
+            <MapPin className="text-orange-400" />
             Live Bus Tracking
           </h2>
+          <button
+            onClick={() => {
+              fetchLiveMapData();
+              fetchDashboardData();
+            }}
+            className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+          >
+            <RefreshCw size={18} />
+            Refresh
+          </button>
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          <div className="lg:col-span-3">
-            <div className="h-[400px] rounded-xl overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <div className="h-[500px] rounded-xl overflow-hidden">
               <MapContainer center={mapCenter} zoom={mapZoom} style={{ height: '100%', width: '100%' }}>
-                <MapRecenter center={mapCenter} zoom={mapZoom} />
                 <TileLayer
-                  attribution=""
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
-                {buses.map((bus) => (
-                  <BusMarker key={bus.id} bus={bus} />
+                <Polyline
+                  positions={routeCoordinates}
+                  color="#f97316"
+                  weight={4}
+                  opacity={0.7}
+                />
+                {buses.filter(bus => bus.status === 'active').map((bus) => (
+                  <AnimatedBusMarker key={bus.id} bus={bus} onClick={setSelectedBus} />
                 ))}
               </MapContainer>
             </div>
             <div className="bg-white/5 p-4 rounded-xl mt-4">
               <h3 className="text-white text-sm font-bold mb-3">Map Legend</h3>
-              <div className="flex gap-6 text-xs">
+              <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-green-400" />
-                  <span className="text-white/70">On Active Trip</span>
+                  <div className="w-8 h-1 bg-orange-500 rounded"></div>
+                  <span className="text-white/70 text-xs">Route: Manolo Fortich ↔ Agora</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-gray-400" />
-                  <span className="text-white/70">Inactive / Idle</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-yellow-400" />
-                  <span className="text-white/70">Maintenance</span>
+                <div className="flex gap-6 text-xs">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-green-400" />
+                    <span className="text-white/70">On Active Trip</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-gray-400" />
+                    <span className="text-white/70">Inactive / Idle</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-yellow-400" />
+                    <span className="text-white/70">Maintenance</span>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
           <div className="space-y-4">
-            {/* Summary Cards */}
-            <div className="grid grid-cols-1 gap-3">
+            {/* Quick Stats */}
+            <div className="grid grid-cols-2 gap-3">
               <div className="bg-white/5 p-4 rounded-xl">
-                <p className="text-white/60 text-xs">Active Buses</p>
+                <div className="flex items-center gap-2 mb-2">
+                  <Bus className="w-4 h-4 text-blue-400" />
+                  <p className="text-white/60 text-xs">Active Buses</p>
+                </div>
                 <p className="text-white text-2xl font-bold">{mapStats.activeBuses}</p>
                 <p className="text-white/40 text-xs mt-1">on trip now</p>
               </div>
               <div className="bg-white/5 p-4 rounded-xl">
-                <p className="text-white/60 text-xs">Fleet</p>
-                <p className="text-white text-2xl font-bold">{buses.length}</p>
-                <p className="text-white/40 text-xs mt-1">total buses</p>
-              </div>
-              <div className="bg-white/5 p-4 rounded-xl">
-                <p className="text-white/60 text-xs">Passengers</p>
+                <div className="flex items-center gap-2 mb-2">
+                  <Users className="w-4 h-4 text-green-400" />
+                  <p className="text-white/60 text-xs">Passengers</p>
+                </div>
                 <p className="text-white text-2xl font-bold">{mapStats.totalPassengers}</p>
-              </div>
-              <div className="bg-white/5 p-4 rounded-xl">
-                <p className="text-white/60 text-xs">Route</p>
-                <p className="text-white text-sm font-bold">Manolo Fortich ↔ Agora</p>
+                <p className="text-white/40 text-xs mt-1">on buses</p>
               </div>
             </div>
 
-            {/* All Buses List */}
+            {/* Fleet List */}
             <div className="bg-white/5 p-4 rounded-xl">
               <h3 className="text-white text-sm font-bold mb-3 flex items-center gap-2">
-                <Bus className="text-orange-400" size={16} />
-                Fleet
+                <Navigation className="text-green-400" size={16} />
+                Active Fleet
               </h3>
-              <div className="space-y-3">
-                {buses.length > 0 ? (
-                  <select
-                    value={selectedBus || ''}
-                    onChange={(e) => setSelectedBus(e.target.value)}
-                    className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-orange-500"
-                  >
-                    <option value="">Select a bus…</option>
-                    {buses.map((bus) => (
-                      <option key={bus.id} value={bus.id}>
-                        {bus.plate} — {bus.status === 'active' ? '🟢 on trip' : bus.status}
-                      </option>
-                    ))}
-                  </select>
+              <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                {buses.filter(bus => bus.status === 'active').length > 0 ? (
+                  buses.filter(bus => bus.status === 'active').map((bus) => (
+                    <div
+                      key={bus.id}
+                      className={`p-3 rounded-lg cursor-pointer transition-colors ${
+                        selectedBus === bus.id ? 'bg-orange-500/20 border border-orange-500/50' : 'bg-white/5 hover:bg-white/10'
+                      }`}
+                      onClick={() => setSelectedBus(bus.id)}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-white font-semibold text-sm">Bus #{bus.plate || 'N/A'}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400">
+                          Active
+                        </span>
+                      </div>
+                      <p className="text-white/70 text-xs mb-1">{bus.route}</p>
+                      
+                      {/* Route Progress Bar */}
+                      {bus.routeProgress !== undefined && (
+                        <div className="mt-2 mb-2">
+                          <div className="flex justify-between text-xs mb-1">
+                            <span className="text-white/60">Progress</span>
+                            <span className="text-orange-400 font-semibold">{bus.routeProgress.toFixed(0)}%</span>
+                          </div>
+                          <div className="w-full bg-white/10 rounded-full h-1.5">
+                            <div
+                              className="bg-orange-500 h-1.5 rounded-full transition-all duration-300"
+                              style={{ width: `${bus.routeProgress}%` }}
+                            />
+                          </div>
+                          <p className="text-white/50 text-xs mt-1">
+                            ETA: {bus.eta}
+                          </p>
+                        </div>
+                      )}
+                      
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-white/60 text-xs flex items-center gap-1">
+                          <Users size={12} />
+                          {bus.passengers} passengers
+                        </span>
+                        <span className="text-white/60 text-xs">
+                          {bus.locationUpdatedAt ? new Date(bus.locationUpdatedAt).toLocaleTimeString() : 'No GPS'}
+                        </span>
+                      </div>
+                    </div>
+                  ))
                 ) : (
-                  <p className="text-white/40 text-sm text-center py-2">No buses found</p>
-                )}
-                {selectedBus && buses.find(b => b.id === selectedBus) && (
-                  <div className="p-3 bg-black/30 rounded-lg border border-white/10">
-                    {(() => {
-                      const bus = buses.find(b => b.id === selectedBus);
-                      return (
-                        <>
-                          <p className="text-white/80 text-sm mb-2">{bus.route}</p>
-                          <div className="flex items-center gap-2 text-white/70 text-sm">
-                            <Users size={14} />
-                            <span>{bus.passengers} passengers</span>
-                          </div>
-                          <div className="mt-1">
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${
-                              bus.status === 'active' ? 'bg-green-500/20 text-green-400' :
-                              bus.status === 'maintenance' ? 'bg-yellow-500/20 text-yellow-400' :
-                              'bg-white/10 text-white/50'
-                            }`}>
-                              {bus.status === 'active' ? 'On Trip' : bus.status}
-                            </span>
-                          </div>
-                        </>
-                      );
-                    })()}
+                  <div className="text-center py-4">
+                    <Bus className="w-8 h-8 text-white/20 mx-auto mb-2" />
+                    <p className="text-white/60 text-xs">No active buses</p>
                   </div>
                 )}
               </div>
             </div>
+
+            {/* Selected Bus Details */}
+            {selectedBus && (() => {
+              const bus = buses.find(b => b.id === selectedBus);
+              if (!bus) return null;
+              return (
+                <div className="bg-white/5 p-4 rounded-xl">
+                  <h3 className="text-white text-sm font-bold mb-3">Bus #{bus.plate || 'N/A'} Details</h3>
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-white/60 text-xs">Route</p>
+                      <p className="text-white font-semibold text-sm">{bus.route}</p>
+                    </div>
+                    <div>
+                      <p className="text-white/60 text-xs">Status</p>
+                      <p className="text-white font-semibold text-sm">{bus.status}</p>
+                    </div>
+                    <div>
+                      <p className="text-white/60 text-xs">Passengers</p>
+                      <p className="text-white font-semibold text-sm">{bus.passengers}</p>
+                    </div>
+
+                    {/* Route Progress Details */}
+                    {bus.routeProgress !== undefined && (
+                      <>
+                        <div>
+                          <p className="text-white/60 text-xs">Route Progress</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <div className="flex-1 bg-white/10 rounded-full h-2">
+                              <div
+                                className="bg-orange-500 h-2 rounded-full"
+                                style={{ width: `${bus.routeProgress}%` }}
+                              />
+                            </div>
+                            <span className="text-orange-400 font-semibold text-sm">{bus.routeProgress.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-white/60 text-xs">Direction</p>
+                          <p className="text-white font-semibold text-sm">{bus.routeDirection}</p>
+                        </div>
+                        <div>
+                          <p className="text-white/60 text-xs">ETA to Destination</p>
+                          <p className="text-white font-semibold text-sm">{bus.eta}</p>
+                        </div>
+                      </>
+                    )}
+
+                    <div>
+                      <p className="text-white/60 text-xs">GPS Coordinates</p>
+                      <p className="text-white font-semibold text-sm">{Number(bus.lat).toFixed(6)}, {Number(bus.lng).toFixed(6)}</p>
+                    </div>
+                    <div>
+                      <p className="text-white/60 text-xs">Last Update</p>
+                      <p className="text-white font-semibold text-sm">
+                        {bus.locationUpdatedAt ? new Date(bus.locationUpdatedAt).toLocaleString() : 'No data'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-white/60 text-xs">GPS Source</p>
+                      <p className="text-white font-semibold text-sm">{bus.locationSource || 'fallback'}</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       </div>

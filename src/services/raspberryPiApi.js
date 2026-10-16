@@ -7,7 +7,7 @@
  * Falls back to VITE_RASPBERRY_PI_URL if Supabase has no record yet.
  */
 
-import { supabaseAdmin } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 
 const FALLBACK_URL    = import.meta.env.VITE_RASPBERRY_PI_URL || 'http://commutai.local:5000';
 const DEFAULT_TIMEOUT = 8000;
@@ -39,7 +39,7 @@ export async function resolvePiUrl() {
 
   _resolving = (async () => {
     try {
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await supabase
         .from('pi_devices')
         .select('ip_address, port')
         .eq('bus_number', BUS_NUMBER)
@@ -50,7 +50,6 @@ export async function resolvePiUrl() {
         const url = `http://${data.ip_address}:${data.port || 5000}`;
         _resolvedUrl  = url;
         _lastResolved = Date.now();
-        console.log(`[Pi] Discovered URL from Supabase: ${url}`);
         return url;
       }
 
@@ -65,7 +64,6 @@ export async function resolvePiUrl() {
     // Fallback to env var — cache it so we don't retry Supabase on every frame
     _resolvedUrl  = FALLBACK_URL;
     _lastResolved = Date.now();
-    console.log(`[Pi] Using fallback URL: ${FALLBACK_URL}`);
     return FALLBACK_URL;
   })().finally(() => { _resolving = null; });
 
@@ -84,7 +82,7 @@ export function invalidatePiUrl() {
  * Returns an unsubscribe function.
  */
 export function subscribePiDeviceChanges(onIpChange) {
-  const channel = supabaseAdmin
+  const channel = supabase
     .channel('pi-device-watch')
     .on(
       'postgres_changes',
@@ -96,14 +94,13 @@ export function subscribePiDeviceChanges(onIpChange) {
           // Update cache immediately
           _resolvedUrl  = url;
           _lastResolved = Date.now();
-          console.log(`[Pi] Realtime IP update: ${url}`);
           onIpChange(url);
         }
       }
     )
     .subscribe();
 
-  return () => supabaseAdmin.removeChannel(channel);
+  return () => supabase.removeChannel(channel);
 }
 
 // ── HTTP helper ───────────────────────────────────────────────────────────────

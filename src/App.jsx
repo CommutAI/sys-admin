@@ -8,14 +8,15 @@ import TripManagement from './pages/TripManagement';
 import PassengerAnalytics from './pages/PassengerAnalytics';
 import Reports from './pages/Reports';
 import ManageUsers from './pages/ManageUsers';
-import Settings from './pages/Settings';
 import AuditLogs from './pages/AuditLogs';
 import FareMatrix from './pages/FareMatrix';
 import CardManagement from './pages/CardManagement';
+import EmergencyAlerts from './pages/EmergencyAlerts';
 
-function ProtectedRoute({ children }) {
+function ProtectedRoute({ children, requireAdmin = false }) {
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     checkAuth();
@@ -24,6 +25,18 @@ function ProtectedRoute({ children }) {
   const checkAuth = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     setAuthenticated(!!session);
+
+    if (session) {
+      // Check user role
+      const { data: staffData } = await supabase
+        .from('staff_users')
+        .select('role')
+        .eq('id', session.user.id)
+        .single();
+      
+      setIsAdmin(staffData?.role === 'admin');
+    }
+
     setLoading(false);
   };
 
@@ -35,7 +48,15 @@ function ProtectedRoute({ children }) {
     );
   }
 
-  return authenticated ? children : <Navigate to="/login" />;
+  if (!authenticated) {
+    return <Navigate to="/login" />;
+  }
+
+  if (requireAdmin && !isAdmin) {
+    return <Navigate to="/" />;
+  }
+
+  return children;
 }
 
 function App() {
@@ -49,11 +70,11 @@ function App() {
           <Route path="buses" element={<Navigate to="/trips" replace />} />
           <Route path="analytics" element={<PassengerAnalytics />} />
           <Route path="reports" element={<Reports />} />
-          <Route path="users" element={<ManageUsers />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="audit-logs" element={<AuditLogs />} />
-          <Route path="fare-matrix" element={<FareMatrix />} />
+          <Route path="users" element={<ProtectedRoute requireAdmin={true}><ManageUsers /></ProtectedRoute>} />
+          <Route path="audit-logs" element={<ProtectedRoute requireAdmin={true}><AuditLogs /></ProtectedRoute>} />
+          <Route path="fare-matrix" element={<ProtectedRoute requireAdmin={true}><FareMatrix /></ProtectedRoute>} />
           <Route path="card-management" element={<CardManagement />} />
+          <Route path="emergency-alerts" element={<EmergencyAlerts />} />
         </Route>
       </Routes>
     </BrowserRouter>

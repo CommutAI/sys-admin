@@ -1,5 +1,5 @@
 -- ============================================================
--- CommutAI · Complete Database Schema
+-- CommutAI · System Admin Focused Database Schema
 -- Run this in the Supabase SQL Editor on a clean slate.
 -- All statements use IF NOT EXISTS / IF EXISTS guards so
 -- re-running is safe.
@@ -232,7 +232,39 @@ CREATE TABLE IF NOT EXISTS qr_cards (
   created_at      TIMESTAMPTZ    NOT NULL DEFAULT NOW()
 );
 
--- ── 5. Temporary Tickets ──────────────────────────────────────────────────────
+-- ── 5. Card Reservations ───────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS card_reservations (
+  id                BIGSERIAL   PRIMARY KEY,
+  reservation_id    VARCHAR(50) UNIQUE NOT NULL,
+  name              VARCHAR(255) NOT NULL,
+  contact           VARCHAR(50) NOT NULL,
+  card_type         VARCHAR(50) NOT NULL,
+  pickup_terminal   VARCHAR(100) NOT NULL,
+  status            VARCHAR(20) DEFAULT 'pending',
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Add index for faster lookups
+CREATE INDEX IF NOT EXISTS idx_card_reservations_reservation_id ON card_reservations(reservation_id);
+CREATE INDEX IF NOT EXISTS idx_card_reservations_status ON card_reservations(status);
+
+-- Trigger to automatically update updated_at
+CREATE OR REPLACE FUNCTION update_card_reservations_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS update_card_reservations_updated_at_trigger ON card_reservations;
+CREATE TRIGGER update_card_reservations_updated_at_trigger
+  BEFORE UPDATE ON card_reservations
+  FOR EACH ROW
+  EXECUTE FUNCTION update_card_reservations_updated_at();
+
+-- ── 6. Temporary Tickets ──────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS temporary_tickets (
   id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   ticket_uid      TEXT          NOT NULL UNIQUE,
@@ -681,6 +713,7 @@ ALTER TABLE staff_users           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE buses                 ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trips                 ENABLE ROW LEVEL SECURITY;
 ALTER TABLE qr_cards              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE card_reservations     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE temporary_tickets     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE passenger_counts      ENABLE ROW LEVEL SECURITY;
@@ -701,6 +734,19 @@ ALTER TABLE baggage_fee_matrix     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bus_schedules          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trip_schedules         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE video_recordings       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE system_config         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE api_rate_limit_logs   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE system_metrics        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE performance_logs      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE security_events       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE maintenance_schedules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE backup_restore_logs   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE system_incidents      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_sessions         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE storage_usage         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE query_performance     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE network_traffic       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE external_api_logs     ENABLE ROW LEVEL SECURITY;
 
 -- Staff can view their own profile (admins see all)
 DO $$ BEGIN
@@ -781,6 +827,19 @@ DO $$ BEGIN
     CREATE POLICY "qr_cards_update_authenticated"
       ON qr_cards FOR UPDATE
       USING (auth.role() = 'authenticated');
+  END IF;
+END $$;
+
+-- Card reservations: full access for authenticated staff
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'card_reservations' AND policyname = 'card_reservations_rw_authenticated'
+  ) THEN
+    CREATE POLICY "card_reservations_rw_authenticated"
+      ON card_reservations FOR ALL
+      USING (auth.role() = 'authenticated')
+      WITH CHECK (auth.role() = 'authenticated');
   END IF;
 END $$;
 
@@ -1054,6 +1113,175 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- System config - admin only
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'system_config' AND policyname = 'system_config_admin_only'
+  ) THEN
+    CREATE POLICY "system_config_admin_only"
+      ON system_config FOR ALL
+      USING (current_user_role() = 'admin')
+      WITH CHECK (current_user_role() = 'admin');
+  END IF;
+END $$;
+
+-- API rate limit logs - admin only
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'api_rate_limit_logs' AND policyname = 'api_rate_limit_logs_admin_only'
+  ) THEN
+    CREATE POLICY "api_rate_limit_logs_admin_only"
+      ON api_rate_limit_logs FOR ALL
+      USING (current_user_role() = 'admin')
+      WITH CHECK (current_user_role() = 'admin');
+  END IF;
+END $$;
+
+-- System metrics - admin only
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'system_metrics' AND policyname = 'system_metrics_admin_only'
+  ) THEN
+    CREATE POLICY "system_metrics_admin_only"
+      ON system_metrics FOR ALL
+      USING (current_user_role() = 'admin')
+      WITH CHECK (current_user_role() = 'admin');
+  END IF;
+END $$;
+
+-- Performance logs - admin only
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'performance_logs' AND policyname = 'performance_logs_admin_only'
+  ) THEN
+    CREATE POLICY "performance_logs_admin_only"
+      ON performance_logs FOR ALL
+      USING (current_user_role() = 'admin')
+      WITH CHECK (current_user_role() = 'admin');
+  END IF;
+END $$;
+
+-- Security events - admin only
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'security_events' AND policyname = 'security_events_admin_only'
+  ) THEN
+    CREATE POLICY "security_events_admin_only"
+      ON security_events FOR ALL
+      USING (current_user_role() = 'admin')
+      WITH CHECK (current_user_role() = 'admin');
+  END IF;
+END $$;
+
+-- Maintenance schedules - admin and operator
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'maintenance_schedules' AND policyname = 'maintenance_schedules_admin_operator'
+  ) THEN
+    CREATE POLICY "maintenance_schedules_admin_operator"
+      ON maintenance_schedules FOR ALL
+      USING (current_user_role() IN ('admin', 'operator'))
+      WITH CHECK (current_user_role() IN ('admin', 'operator'));
+  END IF;
+END $$;
+
+-- Backup restore logs - admin only
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'backup_restore_logs' AND policyname = 'backup_restore_logs_admin_only'
+  ) THEN
+    CREATE POLICY "backup_restore_logs_admin_only"
+      ON backup_restore_logs FOR ALL
+      USING (current_user_role() = 'admin')
+      WITH CHECK (current_user_role() = 'admin');
+  END IF;
+END $$;
+
+-- System incidents - admin and operator
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'system_incidents' AND policyname = 'system_incidents_admin_operator'
+  ) THEN
+    CREATE POLICY "system_incidents_admin_operator"
+      ON system_incidents FOR ALL
+      USING (current_user_role() IN ('admin', 'operator'))
+      WITH CHECK (current_user_role() IN ('admin', 'operator'));
+  END IF;
+END $$;
+
+-- User sessions - admin only
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'user_sessions' AND policyname = 'user_sessions_admin_only'
+  ) THEN
+    CREATE POLICY "user_sessions_admin_only"
+      ON user_sessions FOR ALL
+      USING (current_user_role() = 'admin')
+      WITH CHECK (current_user_role() = 'admin');
+  END IF;
+END $$;
+
+-- Storage usage - admin only
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'storage_usage' AND policyname = 'storage_usage_admin_only'
+  ) THEN
+    CREATE POLICY "storage_usage_admin_only"
+      ON storage_usage FOR ALL
+      USING (current_user_role() = 'admin')
+      WITH CHECK (current_user_role() = 'admin');
+  END IF;
+END $$;
+
+-- Query performance - admin only
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'query_performance' AND policyname = 'query_performance_admin_only'
+  ) THEN
+    CREATE POLICY "query_performance_admin_only"
+      ON query_performance FOR ALL
+      USING (current_user_role() = 'admin')
+      WITH CHECK (current_user_role() = 'admin');
+  END IF;
+END $$;
+
+-- Network traffic - admin only
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'network_traffic' AND policyname = 'network_traffic_admin_only'
+  ) THEN
+    CREATE POLICY "network_traffic_admin_only"
+      ON network_traffic FOR ALL
+      USING (current_user_role() = 'admin')
+      WITH CHECK (current_user_role() = 'admin');
+  END IF;
+END $$;
+
+-- External API logs - admin only
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'external_api_logs' AND policyname = 'external_api_logs_admin_only'
+  ) THEN
+    CREATE POLICY "external_api_logs_admin_only"
+      ON external_api_logs FOR ALL
+      USING (current_user_role() = 'admin')
+      WITH CHECK (current_user_role() = 'admin');
+  END IF;
+END $$;
+
 -- ── 25. Indexes for Performance ───────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_trips_conductor_status
   ON trips(conductor_id, status) WHERE status = 'in_progress';
@@ -1188,6 +1416,98 @@ FROM video_recordings
 GROUP BY DATE(recorded_at), storage_type, format
 ORDER BY date DESC, storage_type, format;
 
+-- Admin monitoring views for new tables
+CREATE OR REPLACE VIEW system_config_overview AS
+SELECT
+  category,
+  COUNT(*) as total_configs,
+  COUNT(*) FILTER (WHERE is_public = TRUE) as public_configs,
+  COUNT(*) FILTER (WHERE is_public = FALSE) as private_configs,
+  MAX(updated_at) as last_updated
+FROM system_config
+GROUP BY category
+ORDER BY category;
+
+CREATE OR REPLACE VIEW security_event_summary AS
+SELECT
+  DATE(created_at) as date,
+  event_type,
+  severity,
+  COUNT(*) as total_events,
+  COUNT(*) FILTER (WHERE success = FALSE) as failed_attempts,
+  COUNT(*) FILTER (WHERE success = TRUE) as successful_attempts
+FROM security_events
+GROUP BY DATE(created_at), event_type, severity
+ORDER BY date DESC, severity DESC;
+
+CREATE OR REPLACE VIEW performance_summary AS
+SELECT
+  DATE(created_at) as date,
+  endpoint,
+  method,
+  COUNT(*) as total_requests,
+  AVG(response_time) as avg_response_time_ms,
+  MAX(response_time) as max_response_time_ms,
+  MIN(response_time) as min_response_time_ms,
+  COUNT(*) FILTER (WHERE status_code >= 400) as error_count,
+  ROUND((COUNT(*) FILTER (WHERE status_code >= 400)::NUMERIC / COUNT(*) * 100), 2) as error_rate_percent
+FROM performance_logs
+GROUP BY DATE(created_at), endpoint, method
+ORDER BY date DESC, avg_response_time_ms DESC;
+
+CREATE OR REPLACE VIEW maintenance_status AS
+SELECT
+  status,
+  priority,
+  COUNT(*) as total_tasks,
+  COUNT(*) FILTER (WHERE scheduled_start <= NOW() AND scheduled_end >= NOW()) as active_now,
+  COUNT(*) FILTER (WHERE scheduled_start > NOW()) as upcoming,
+  COUNT(*) FILTER (WHERE scheduled_end < NOW()) as overdue
+FROM maintenance_schedules
+GROUP BY status, priority
+ORDER BY priority DESC, status;
+
+CREATE OR REPLACE VIEW system_health_dashboard AS
+SELECT
+  'System Health' as metric,
+  jsonb_build_object(
+    'active_sessions', (SELECT COUNT(*) FROM user_sessions WHERE status = 'active'),
+    'active_incidents', (SELECT COUNT(*) FROM system_incidents WHERE status IN ('open', 'investigating')),
+    'critical_incidents', (SELECT COUNT(*) FROM system_incidents WHERE severity = 'critical' AND status IN ('open', 'investigating')),
+    'maintenance_tasks', (SELECT COUNT(*) FROM maintenance_schedules WHERE status = 'in_progress'),
+    'backup_status', (SELECT COUNT(*) FILTER (WHERE status = 'completed') FROM backup_restore_logs WHERE created_at > NOW() - INTERVAL '24 hours'),
+    'api_errors_last_hour', (SELECT COUNT(*) FROM performance_logs WHERE status_code >= 400 AND created_at > NOW() - INTERVAL '1 hour'),
+    'security_events_today', (SELECT COUNT(*) FROM security_events WHERE DATE(created_at) = CURRENT_DATE),
+    'security_critical_today', (SELECT COUNT(*) FROM security_events WHERE DATE(created_at) = CURRENT_DATE AND severity = 'critical')
+  ) as metrics;
+
+CREATE OR REPLACE VIEW storage_trend AS
+SELECT
+  DATE(recorded_at) as date,
+  storage_type,
+  SUM(used_bytes) as total_used_bytes,
+  SUM(used_bytes) / 1024.0 / 1024.0 / 1024.0 as total_used_gb,
+  SUM(file_count) as total_files,
+  AVG(used_bytes) as avg_size_bytes
+FROM storage_usage
+GROUP BY DATE(recorded_at), storage_type
+ORDER BY date DESC, storage_type;
+
+CREATE OR REPLACE VIEW external_api_performance AS
+SELECT
+  DATE(created_at) as date,
+  api_provider,
+  endpoint,
+  COUNT(*) as total_calls,
+  AVG(response_time_ms) as avg_response_time_ms,
+  MAX(response_time_ms) as max_response_time_ms,
+  COUNT(*) FILTER (WHERE success = TRUE) as successful_calls,
+  COUNT(*) FILTER (WHERE success = FALSE) as failed_calls,
+  ROUND((COUNT(*) FILTER (WHERE success = TRUE)::NUMERIC / COUNT(*) * 100), 2) as success_rate_percent
+FROM external_api_logs
+GROUP BY DATE(created_at), api_provider, endpoint
+ORDER BY date DESC, success_rate_percent ASC;
+
 CREATE INDEX IF NOT EXISTS idx_gcash_transactions_created_at
   ON gcash_transactions(created_at DESC);
 
@@ -1235,6 +1555,121 @@ CREATE INDEX IF NOT EXISTS idx_video_recordings_status
 
 CREATE INDEX IF NOT EXISTS idx_trip_schedules_trip_number
   ON trip_schedules(trip_number);
+
+-- Admin-focused indexes for new tables
+CREATE INDEX IF NOT EXISTS idx_system_config_key
+  ON system_config(key);
+
+CREATE INDEX IF NOT EXISTS idx_system_config_category
+  ON system_config(category);
+
+CREATE INDEX IF NOT EXISTS idx_api_rate_limit_logs_endpoint
+  ON api_rate_limit_logs(endpoint);
+
+CREATE INDEX IF NOT EXISTS idx_api_rate_limit_logs_client_ip
+  ON api_rate_limit_logs(client_ip);
+
+CREATE INDEX IF NOT EXISTS idx_api_rate_limit_logs_window
+  ON api_rate_limit_logs(window_start, window_end);
+
+CREATE INDEX IF NOT EXISTS idx_system_metrics_name
+  ON system_metrics(metric_name);
+
+CREATE INDEX IF NOT EXISTS idx_system_metrics_component
+  ON system_metrics(component);
+
+CREATE INDEX IF NOT EXISTS idx_system_metrics_recorded_at
+  ON system_metrics(recorded_at);
+
+CREATE INDEX IF NOT EXISTS idx_performance_logs_endpoint
+  ON performance_logs(endpoint);
+
+CREATE INDEX IF NOT EXISTS idx_performance_logs_response_time
+  ON performance_logs(response_time);
+
+CREATE INDEX IF NOT EXISTS idx_performance_logs_created_at
+  ON performance_logs(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_event_type
+  ON security_events(event_type);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_severity
+  ON security_events(severity);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_user_id
+  ON security_events(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_created_at
+  ON security_events(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_maintenance_schedules_status
+  ON maintenance_schedules(status);
+
+CREATE INDEX IF NOT EXISTS idx_maintenance_schedules_scheduled_start
+  ON maintenance_schedules(scheduled_start);
+
+CREATE INDEX IF NOT EXISTS idx_maintenance_schedules_component
+  ON maintenance_schedules(component);
+
+CREATE INDEX IF NOT EXISTS idx_backup_restore_logs_status
+  ON backup_restore_logs(status);
+
+CREATE INDEX IF NOT EXISTS idx_backup_restore_logs_operation_type
+  ON backup_restore_logs(operation_type);
+
+CREATE INDEX IF NOT EXISTS idx_backup_restore_logs_created_at
+  ON backup_restore_logs(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_system_incidents_status
+  ON system_incidents(status);
+
+CREATE INDEX IF NOT EXISTS idx_system_incidents_severity
+  ON system_incidents(severity);
+
+CREATE INDEX IF NOT EXISTS idx_system_incidents_incident_type
+  ON system_incidents(incident_type);
+
+CREATE INDEX IF NOT EXISTS idx_system_incidents_detected_at
+  ON system_incidents(detected_at);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id
+  ON user_sessions(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_status
+  ON user_sessions(status);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_last_activity
+  ON user_sessions(last_activity);
+
+CREATE INDEX IF NOT EXISTS idx_storage_usage_type
+  ON storage_usage(storage_type);
+
+CREATE INDEX IF NOT EXISTS idx_storage_usage_recorded_at
+  ON storage_usage(recorded_at);
+
+CREATE INDEX IF NOT EXISTS idx_query_performance_hash
+  ON query_performance(query_hash);
+
+CREATE INDEX IF NOT EXISTS idx_query_performance_avg_time
+  ON query_performance(avg_time_ms);
+
+CREATE INDEX IF NOT EXISTS idx_network_traffic_source_ip
+  ON network_traffic(source_ip);
+
+CREATE INDEX IF NOT EXISTS idx_network_traffic_protocol
+  ON network_traffic(protocol);
+
+CREATE INDEX IF NOT EXISTS idx_network_traffic_recorded_at
+  ON network_traffic(recorded_at);
+
+CREATE INDEX IF NOT EXISTS idx_external_api_logs_provider
+  ON external_api_logs(api_provider);
+
+CREATE INDEX IF NOT EXISTS idx_external_api_logs_endpoint
+  ON external_api_logs(endpoint);
+
+CREATE INDEX IF NOT EXISTS idx_external_api_logs_created_at
+  ON external_api_logs(created_at);
 
 -- ── 26. Realtime Publications ─────────────────────────────────────────────────
 DO $$ BEGIN
@@ -1315,6 +1750,43 @@ DO $$ BEGIN
     WHERE pubname = 'supabase_realtime' AND tablename = 'hardware_status'
   ) THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE hardware_status;
+  END IF;
+END $$;
+
+-- Add admin-focused tables to realtime for dashboard updates
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'system_incidents'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE system_incidents;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'security_events'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE security_events;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'system_metrics'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE system_metrics;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'performance_logs'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE performance_logs;
   END IF;
 END $$;
 
@@ -1595,6 +2067,38 @@ $$;
 --    Email: csdesk@commutai.test  Password: CSDesk123!
 --    Role: cs_desk
 
+-- ── 33. Seed: System Configuration ─────────────────────────────────────────────
+INSERT INTO system_config (key, value, description, category, is_public) VALUES
+  ('system_name', '"CommutAI Transit System"', 'System display name', 'general', TRUE),
+  ('max_video_retention_days', '30', 'Number of days to retain video recordings', 'storage', FALSE),
+  ('max_gps_retention_days', '90', 'Number of days to retain GPS logs', 'storage', FALSE),
+  ('sms_gateway_enabled', 'true', 'Enable SMS gateway integration', 'general', FALSE),
+  ('emergency_notification_enabled', 'true', 'Enable emergency notifications', 'general', FALSE),
+  ('api_rate_limit_per_minute', '100', 'API rate limit per minute per IP', 'security', FALSE),
+  ('session_timeout_minutes', '60', 'User session timeout in minutes', 'security', FALSE),
+  ('backup_retention_days', '90', 'Number of days to retain backups', 'storage', FALSE),
+  ('hardware_check_interval_seconds', '60', 'Hardware health check interval', 'hardware', FALSE),
+  ('video_quality', '1080p', 'Default video recording quality', 'hardware', FALSE)
+ON CONFLICT (key) DO UPDATE SET
+  value = EXCLUDED.value,
+  description = EXCLUDED.description,
+  category = EXCLUDED.category,
+  is_public = EXCLUDED.is_public,
+  updated_at = NOW();
+
+-- ── 34. Seed: Sample Security Events ───────────────────────────────────────────
+-- (These would normally be populated by the application, adding samples for testing)
+-- INSERT INTO security_events (event_type, severity, ip_address, user_agent, resource, action, success, details) VALUES
+--   ('login_success', 'info', '192.168.1.100', 'Mozilla/5.0', '/api/auth/login', 'POST', TRUE, '{"user_id": "admin-uuid"}'::jsonb),
+--   ('login_failure', 'warning', '192.168.1.200', 'Mozilla/5.0', '/api/auth/login', 'POST', FALSE, '{"reason": "invalid_credentials"}'::jsonb)
+-- ON CONFLICT DO NOTHING;
+
+-- ── 35. Seed: Sample Maintenance Schedule ───────────────────────────────────────
+-- INSERT INTO maintenance_schedules (title, description, component, scheduled_start, scheduled_end, status, priority) VALUES
+--   ('Database Backup Verification', 'Verify daily backup integrity', 'database', NOW() + INTERVAL '2 days', NOW() + INTERVAL '2 days 1 hour', 'scheduled', 'high'),
+--   ('Video Storage Cleanup', 'Remove videos older than retention period', 'storage', NOW() + INTERVAL '7 days', NOW() + INTERVAL '7 days 2 hours', 'scheduled', 'normal')
+-- ON CONFLICT DO NOTHING;
+
 -- ── 32. Admin Monitoring & Analytics Queries ──────────────────────────────────────
 -- These queries are focused on admin dashboard functionality and system monitoring
 
@@ -1827,6 +2331,190 @@ BEGIN
 END;
 $$;
 
+-- ── 32.8. Security Overview Dashboard ─────────────────────────────────────────────
+-- Get comprehensive security overview for admin dashboard
+CREATE OR REPLACE FUNCTION admin_security_overview(days_range INTEGER DEFAULT 7)
+RETURNS JSONB LANGUAGE sql SECURITY DEFINER AS $$
+SELECT jsonb_build_object(
+  'timestamp', NOW(),
+  'total_security_events', (SELECT COUNT(*) FROM security_events WHERE created_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL),
+  'failed_login_attempts', (SELECT COUNT(*) FROM security_events WHERE event_type = 'login_failure' AND created_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL),
+  'permission_denials', (SELECT COUNT(*) FROM security_events WHERE event_type = 'permission_denied' AND created_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL),
+  'suspicious_activities', (SELECT COUNT(*) FROM security_events WHERE event_type = 'suspicious_activity' AND created_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL),
+  'active_sessions', (SELECT COUNT(*) FROM user_sessions WHERE status = 'active'),
+  'blocked_ips', (SELECT COUNT(DISTINCT ip_address) FROM api_rate_limit_logs WHERE blocked = TRUE AND window_start >= CURRENT_DATE - (days_range || ' days')::INTERVAL),
+  'critical_events', (SELECT COUNT(*) FROM security_events WHERE severity = 'critical' AND created_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL),
+  'top_blocked_ips', (
+    SELECT jsonb_agg(jsonb_build_object('ip', ip_address, 'block_count', COUNT(*)))
+    FROM api_rate_limit_logs
+    WHERE blocked = TRUE AND window_start >= CURRENT_DATE - (days_range || ' days')::INTERVAL
+    GROUP BY ip_address
+    ORDER BY COUNT(*) DESC
+    LIMIT 5
+  )
+);
+$$;
+
+-- ── 32.9. Performance Trends Analysis ───────────────────────────────────────────
+-- Get performance trends for capacity planning
+CREATE OR REPLACE FUNCTION admin_performance_trends(days_range INTEGER DEFAULT 30)
+RETURNS TABLE (
+  endpoint TEXT,
+  avg_response_time NUMERIC,
+  p95_response_time NUMERIC,
+  p99_response_time NUMERIC,
+  request_count BIGINT,
+  error_rate NUMERIC,
+  trend_direction TEXT
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  WITH endpoint_stats AS (
+    SELECT
+      endpoint,
+      AVG(response_time) as avg_time,
+      PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY response_time) as p95_time,
+      PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY response_time) as p99_time,
+      COUNT(*) as total_requests,
+      COUNT(*) FILTER (WHERE status_code >= 400) as error_count
+    FROM performance_logs
+    WHERE created_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL
+    GROUP BY endpoint
+  ),
+  recent_stats AS (
+    SELECT
+      endpoint,
+      AVG(response_time) as recent_avg_time
+    FROM performance_logs
+    WHERE created_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL * 0.5
+    GROUP BY endpoint
+  )
+  SELECT
+    es.endpoint,
+    es.avg_time,
+    es.p95_time,
+    es.p99_time,
+    es.total_requests,
+    CASE
+      WHEN es.total_requests > 0 THEN (es.error_count::NUMERIC / es.total_requests * 100)
+      ELSE 0
+    END as error_rate,
+    CASE
+      WHEN rs.recent_avg_time > es.avg_time * 1.1 THEN 'degrading'
+      WHEN rs.recent_avg_time < es.avg_time * 0.9 THEN 'improving'
+      ELSE 'stable'
+    END as trend_direction
+  FROM endpoint_stats es
+  LEFT JOIN recent_stats rs ON es.endpoint = rs.endpoint
+  ORDER BY es.avg_time DESC;
+END;
+$$;
+
+-- ── 32.10. Storage Capacity Planning ───────────────────────────────────────────
+-- Get storage metrics for capacity planning
+CREATE OR REPLACE FUNCTION admin_storage_capacity()
+RETURNS JSONB LANGUAGE sql SECURITY DEFINER AS $$
+SELECT jsonb_build_object(
+  'timestamp', NOW(),
+  'video_storage', (
+    SELECT jsonb_build_object(
+      'total_gb', COALESCE(SUM(file_size) / 1024.0 / 1024.0 / 1024.0, 0),
+      'recordings_count', COUNT(*),
+      'avg_size_mb', COALESCE(AVG(file_size) / 1024.0 / 1024.0, 0),
+      'by_storage_type', (
+        SELECT jsonb_agg(jsonb_build_object(
+          'type', storage_type,
+          'count', COUNT(*),
+          'total_gb', SUM(file_size) / 1024.0 / 1024.0 / 1024.0
+        ))
+        FROM video_recordings
+        WHERE recorded_at > NOW() - INTERVAL '30 days'
+        GROUP BY storage_type
+      )
+    )
+    FROM video_recordings
+    WHERE recorded_at > NOW() - INTERVAL '30 days'
+  ),
+  'database_size', (
+    SELECT pg_database_size(current_database()) / 1024.0 / 1024.0 / 1024.0
+  ),
+  'storage_trend', (
+    SELECT jsonb_agg(jsonb_build_object(
+      'date', date,
+      'total_gb', total_used_gb,
+      'type', storage_type
+    ))
+    FROM storage_trend
+    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+    ORDER BY date DESC
+    LIMIT 30
+  )
+);
+$$;
+
+-- ── 32.11. Incident Response Tracking ─────────────────────────────────────────
+-- Get incident response metrics
+CREATE OR REPLACE FUNCTION admin_incident_response(days_range INTEGER DEFAULT 30)
+RETURNS TABLE (
+  incident_type TEXT,
+  total_incidents BIGINT,
+  open_incidents BIGINT,
+  avg_resolution_hours NUMERIC,
+  critical_incidents BIGINT,
+  by_severity JSONB
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    incident_type,
+    COUNT(*) as total_incidents,
+    COUNT(*) FILTER (WHERE status IN ('open', 'investigating')) as open_incidents,
+    COALESCE(AVG(EXTRACT(EPOCH FROM (resolved_at - detected_at))/3600), 0) as avg_resolution_hours,
+    COUNT(*) FILTER (WHERE severity = 'critical') as critical_incidents,
+    jsonb_build_object(
+      'low', COUNT(*) FILTER (WHERE severity = 'low'),
+      'medium', COUNT(*) FILTER (WHERE severity = 'medium'),
+      'high', COUNT(*) FILTER (WHERE severity = 'high'),
+      'critical', COUNT(*) FILTER (WHERE severity = 'critical')
+    ) as by_severity
+  FROM system_incidents
+  WHERE detected_at >= CURRENT_DATE - (days_range || ' days')::INTERVAL
+  GROUP BY incident_type
+  ORDER BY total_incidents DESC;
+END;
+$$;
+
+-- ── 32.12. API Rate Limiting Status ───────────────────────────────────────────
+-- Get current rate limiting status
+CREATE OR REPLACE FUNCTION admin_rate_limit_status()
+RETURNS TABLE (
+  endpoint TEXT,
+  total_requests BIGINT,
+  blocked_requests BIGINT,
+  limit_reached_count BIGINT,
+  top_clients JSONB,
+  avg_requests_per_window NUMERIC
+) LANGUAGE sql SECURITY DEFINER AS $$
+SELECT
+  endpoint,
+  COUNT(*) as total_requests,
+  COUNT(*) FILTER (WHERE blocked = TRUE) as blocked_requests,
+  COUNT(*) FILTER (WHERE limit_reached = TRUE) as limit_reached_count,
+  (
+    SELECT jsonb_agg(jsonb_build_object('ip', client_ip, 'request_count', COUNT(*)))
+    FROM api_rate_limit_logs arl
+    WHERE arl.endpoint = api_rate_limit_logs.endpoint
+    GROUP BY client_ip
+    ORDER BY COUNT(*) DESC
+    LIMIT 5
+  ) as top_clients,
+  AVG(request_count) as avg_requests_per_window
+FROM api_rate_limit_logs
+WHERE window_start >= NOW() - INTERVAL '1 hour'
+GROUP BY endpoint
+ORDER BY blocked_requests DESC;
+$$;
+
 -- ── Pi Device Registry ────────────────────────────────────────────────────────
 -- Each Raspberry Pi upserts its current IP here on startup so the admin
 -- dashboard can discover it automatically without hardcoding an IP address.
@@ -1854,3 +2542,259 @@ BEGIN
       WITH CHECK (true);
   END IF;
 END $$;
+
+-- ── 33. System Configuration ─────────────────────────────────────────────────────
+-- Centralized system configuration management for admin
+CREATE TABLE IF NOT EXISTS system_config (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  key         TEXT        NOT NULL UNIQUE,
+  value       JSONB       NOT NULL,
+  description TEXT,
+  category    TEXT        NOT NULL DEFAULT 'general', -- 'general', 'hardware', 'network', 'storage', 'security'
+  is_public   BOOLEAN     NOT NULL DEFAULT FALSE, -- whether config can be exposed to non-admin users
+  updated_by  UUID        REFERENCES staff_users (id),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Trigger to update updated_at
+CREATE OR REPLACE FUNCTION update_system_config_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS update_system_config_updated_at_trigger ON system_config;
+CREATE TRIGGER update_system_config_updated_at_trigger
+  BEFORE UPDATE ON system_config
+  FOR EACH ROW
+  EXECUTE FUNCTION update_system_config_updated_at();
+
+-- ── 34. API Rate Limiting Logs ───────────────────────────────────────────────────
+-- Track API usage and rate limiting for security and performance monitoring
+CREATE TABLE IF NOT EXISTS api_rate_limit_logs (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  endpoint        TEXT        NOT NULL,
+  method          TEXT        NOT NULL,
+  client_ip       TEXT        NOT NULL,
+  user_id         UUID        REFERENCES staff_users (id),
+  request_count   INTEGER     NOT NULL,
+  limit_reached   BOOLEAN     NOT NULL DEFAULT FALSE,
+  blocked         BOOLEAN     NOT NULL DEFAULT FALSE,
+  window_start    TIMESTAMPTZ NOT NULL,
+  window_end      TIMESTAMPTZ NOT NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 35. System Metrics History ─────────────────────────────────────────────────
+-- Historical system metrics for trend analysis and capacity planning
+CREATE TABLE IF NOT EXISTS system_metrics (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  metric_name     TEXT        NOT NULL, -- 'cpu_usage', 'memory_usage', 'disk_usage', 'network_in', 'network_out'
+  metric_value     NUMERIC     NOT NULL,
+  unit            TEXT        NOT NULL, -- 'percent', 'bytes', 'count'
+  component       TEXT,       -- 'pi_device', 'database', 'storage', 'api_server'
+  component_id    UUID,
+  metadata        JSONB,
+  recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 36. Performance Monitoring ─────────────────────────────────────────────────
+-- Detailed performance metrics for API endpoints and database queries
+CREATE TABLE IF NOT EXISTS performance_logs (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  endpoint        TEXT        NOT NULL,
+  method          TEXT        NOT NULL,
+  response_time   INTEGER     NOT NULL, -- in milliseconds
+  status_code     INTEGER     NOT NULL,
+  user_id         UUID        REFERENCES staff_users (id),
+  client_ip       TEXT,
+  error_message   TEXT,
+  query_details   JSONB,      -- slow query details if applicable
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 37. Security Event Logs ─────────────────────────────────────────────────────
+-- Comprehensive security event logging for audit and incident response
+CREATE TABLE IF NOT EXISTS security_events (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_type      TEXT        NOT NULL, -- 'login_success', 'login_failure', 'permission_denied', 'suspicious_activity', 'data_access'
+  severity        TEXT        NOT NULL DEFAULT 'info', -- 'info', 'warning', 'critical'
+  user_id         UUID        REFERENCES staff_users (id),
+  ip_address      TEXT        NOT NULL,
+  user_agent      TEXT,
+  resource        TEXT,       -- what was accessed
+  action          TEXT,       -- what was attempted
+  success         BOOLEAN    NOT NULL,
+  details         JSONB,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 38. Maintenance Schedules ───────────────────────────────────────────────────
+-- Track scheduled and completed maintenance tasks
+CREATE TABLE IF NOT EXISTS maintenance_schedules (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  title           TEXT        NOT NULL,
+  description     TEXT,
+  component       TEXT        NOT NULL, -- 'pi_device', 'database', 'storage', 'network'
+  component_id    UUID,
+  scheduled_start TIMESTAMPTZ NOT NULL,
+  scheduled_end   TIMESTAMPTZ NOT NULL,
+  actual_start    TIMESTAMPTZ,
+  actual_end      TIMESTAMPTZ,
+  status          TEXT        NOT NULL DEFAULT 'scheduled', -- 'scheduled', 'in_progress', 'completed', 'cancelled', 'failed'
+  priority        TEXT        NOT NULL DEFAULT 'normal', -- 'low', 'normal', 'high', 'critical'
+  assigned_to     UUID        REFERENCES staff_users (id),
+  notes           TEXT,
+  created_by      UUID        REFERENCES staff_users (id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Trigger to update updated_at
+CREATE OR REPLACE FUNCTION update_maintenance_schedules_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS update_maintenance_schedules_updated_at_trigger ON maintenance_schedules;
+CREATE TRIGGER update_maintenance_schedules_updated_at_trigger
+  BEFORE UPDATE ON maintenance_schedules
+  FOR EACH ROW
+  EXECUTE FUNCTION update_maintenance_schedules_updated_at();
+
+-- ── 39. Backup and Restore Logs ─────────────────────────────────────────────────
+-- Track all backup and restore operations
+CREATE TABLE IF NOT EXISTS backup_restore_logs (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  operation_type  TEXT        NOT NULL, -- 'backup', 'restore'
+  backup_type     TEXT        NOT NULL, -- 'database', 'storage', 'full', 'incremental'
+  source          TEXT,
+  destination     TEXT,
+  status          TEXT        NOT NULL DEFAULT 'in_progress', -- 'in_progress', 'completed', 'failed'
+  file_size       BIGINT,
+  duration_seconds INTEGER,
+  error_message   TEXT,
+  initiated_by    UUID        REFERENCES staff_users (id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at    TIMESTAMPTZ
+);
+
+-- ── 40. System Alerts and Incidents ───────────────────────────────────────────
+-- Track system-wide alerts and incidents beyond emergency alerts
+CREATE TABLE IF NOT EXISTS system_incidents (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  incident_type   TEXT        NOT NULL, -- 'system_down', 'performance_degradation', 'security_breach', 'data_loss', 'network_outage'
+  severity        TEXT        NOT NULL, -- 'low', 'medium', 'high', 'critical'
+  title           TEXT        NOT NULL,
+  description     TEXT,
+  status          TEXT        NOT NULL DEFAULT 'open', -- 'open', 'investigating', 'resolved', 'closed'
+  affected_components TEXT[],
+  detected_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at      TIMESTAMPTZ,
+  resolved_by      UUID        REFERENCES staff_users (id),
+  resolution_notes TEXT,
+  root_cause      TEXT,
+  created_by      UUID        REFERENCES staff_users (id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Trigger to update updated_at
+CREATE OR REPLACE FUNCTION update_system_incidents_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS update_system_incidents_updated_at_trigger ON system_incidents;
+CREATE TRIGGER update_system_incidents_updated_at_trigger
+  BEFORE UPDATE ON system_incidents
+  FOR EACH ROW
+  EXECUTE FUNCTION update_system_incidents_updated_at();
+
+-- ── 41. User Session Tracking ──────────────────────────────────────────────────
+-- Track active user sessions for security and monitoring
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         UUID        NOT NULL REFERENCES staff_users (id) ON DELETE CASCADE,
+  session_token   TEXT        NOT NULL,
+  ip_address      TEXT        NOT NULL,
+  user_agent      TEXT,
+  device_type     TEXT,       -- 'mobile', 'desktop', 'tablet'
+  device_info     JSONB,
+  location        JSONB,      -- geolocation data if available
+  login_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_activity   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  logout_at       TIMESTAMPTZ,
+  status          TEXT        NOT NULL DEFAULT 'active', -- 'active', 'expired', 'terminated'
+  terminated_by   UUID        REFERENCES staff_users (id),
+  termination_reason TEXT
+);
+
+-- ── 42. Storage Usage Tracking ────────────────────────────────────────────────
+-- Track storage usage across different components
+CREATE TABLE IF NOT EXISTS storage_usage (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  storage_type    TEXT        NOT NULL, -- 'video_recordings', 'gps_logs', 'system_logs', 'database'
+  component_id    UUID,
+  path            TEXT,
+  used_bytes      BIGINT      NOT NULL,
+  total_bytes     BIGINT,
+  file_count      INTEGER,
+  recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 43. Database Query Performance ─────────────────────────────────────────────
+-- Track slow and frequently executed queries
+CREATE TABLE IF NOT EXISTS query_performance (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  query_hash      TEXT        NOT NULL,
+  query_text      TEXT        NOT NULL,
+  execution_count INTEGER     NOT NULL DEFAULT 1,
+  total_time_ms   NUMERIC     NOT NULL,
+  avg_time_ms     NUMERIC     NOT NULL,
+  max_time_ms     NUMERIC     NOT NULL,
+  min_time_ms     NUMERIC     NOT NULL,
+  last_executed   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 44. Network Traffic Logs ───────────────────────────────────────────────────
+-- Track network traffic for capacity planning and security
+CREATE TABLE IF NOT EXISTS network_traffic (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_ip       TEXT        NOT NULL,
+  destination_ip  TEXT        NOT NULL,
+  port            INTEGER,
+  protocol        TEXT        NOT NULL, -- 'http', 'https', 'websocket', 'tcp', 'udp'
+  bytes_in        BIGINT      NOT NULL DEFAULT 0,
+  bytes_out       BIGINT      NOT NULL DEFAULT 0,
+  duration_ms     INTEGER,
+  request_count   INTEGER     NOT NULL DEFAULT 1,
+  recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 45. External API Integration Logs ──────────────────────────────────────────
+-- Track calls to external APIs (SMS, payment gateways, etc.)
+CREATE TABLE IF NOT EXISTS external_api_logs (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  api_provider    TEXT        NOT NULL, -- 'sms_gateway', 'payment_gateway', 'maps_api', 'weather_api'
+  endpoint        TEXT        NOT NULL,
+  method          TEXT        NOT NULL,
+  request_payload JSONB,
+  response_status INTEGER,
+  response_payload JSONB,
+  error_message   TEXT,
+  response_time_ms INTEGER,
+  success         BOOLEAN    NOT NULL,
+  initiated_by    UUID        REFERENCES staff_users (id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

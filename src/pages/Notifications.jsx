@@ -1,34 +1,98 @@
-import { useState } from 'react';
-import { Bell, AlertTriangle, CheckCircle, XCircle, Info, Trash2, Check, Filter } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Bell, AlertTriangle, CheckCircle, XCircle, Info, Trash2, Check, Filter, Loader2 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 const Notifications = () => {
   const [filterType, setFilterType] = useState('all');
+  const [notifications, setNotifications] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const notifications = [
-    { id: 1, type: 'emergency', title: 'Emergency Alert', message: 'Bus #452 reported accident on Route 1', time: '2 mins ago', read: false },
-    { id: 2, type: 'alert', title: 'Fake QR Detected', message: 'Bus #123 - Multiple fake QR attempts detected', time: '5 mins ago', read: false },
-    { id: 3, type: 'warning', title: 'High Passenger Count', message: 'Bus #789 exceeding capacity by 10 passengers', time: '10 mins ago', read: false },
-    { id: 4, type: 'info', title: 'System Update', message: 'Scheduled maintenance at 11:00 PM tonight', time: '30 mins ago', read: true },
-    { id: 5, type: 'success', title: 'Trip Completed', message: 'Bus #234 completed Route 2 trip successfully', time: '45 mins ago', read: true },
-    { id: 6, type: 'alert', title: 'Payment Failed', message: 'Multiple payment failures on Bus #567', time: '1 hour ago', read: true },
-    { id: 7, type: 'warning', title: 'Driver Offline', message: 'Driver Juan Dela Cruz went offline unexpectedly', time: '2 hours ago', read: true },
-    { id: 8, type: 'info', title: 'New User Registered', message: 'New conductor account created: Maria Santos', time: '3 hours ago', read: true },
-  ];
+  useEffect(() => {
+    fetchNotifications();
+    
+    // Set up real-time subscription
+    const subscription = supabase
+      .channel('notifications-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => {
+        fetchNotifications();
+      })
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const fetchNotifications = async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+      setNotifications(data || []);
+    } catch (error) {
+      console.error('Error fetching notifications:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const markAsRead = async (id) => {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('id', id);
+
+      if (error) throw error;
+      fetchNotifications();
+    } catch (error) {
+      console.error('Error marking as read:', error);
+    }
+  };
+
+  const deleteNotification = async (id) => {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      fetchNotifications();
+    } catch (error) {
+      console.error('Error deleting notification:', error);
+    }
+  };
+
+  const markAllAsRead = async () => {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('read', false);
+
+      if (error) throw error;
+      fetchNotifications();
+    } catch (error) {
+      console.error('Error marking all as read:', error);
+    }
+  };
 
   const typeIcons = {
-    emergency: AlertTriangle,
-    alert: XCircle,
-    warning: AlertTriangle,
-    info: Info,
+    alert: AlertTriangle,
     success: CheckCircle,
+    info: Info,
   };
 
   const typeColors = {
-    emergency: 'bg-red-500/20 text-red-400 border-red-500/50',
-    alert: 'bg-orange-500/20 text-orange-400 border-orange-500/50',
-    warning: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50',
-    info: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
+    alert: 'bg-red-500/20 text-red-400 border-red-500/50',
     success: 'bg-green-500/20 text-green-400 border-green-500/50',
+    info: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
   };
 
   const filteredNotifications = notifications.filter(notif => {
@@ -37,17 +101,13 @@ const Notifications = () => {
     return notif.type === filterType;
   });
 
-  const markAsRead = (id) => {
-    console.log('Mark as read:', id);
-  };
-
-  const deleteNotification = (id) => {
-    console.log('Delete:', id);
-  };
-
-  const markAllAsRead = () => {
-    console.log('Mark all as read');
-  };
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="w-8 h-8 text-orange-400 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

@@ -17,12 +17,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from ultralytics import YOLO
 import queue
 import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from hardware_integration import HardwareManager
+
+# Optional AI imports - allow server to run without them
+try:
+    from ultralytics import YOLO
+    YOLO_AVAILABLE = True
+except ImportError:
+    YOLO_AVAILABLE = False
+    print("Warning: ultralytics not installed - AI detection disabled")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -367,6 +374,9 @@ class VideoProcessor:
             return True
         if DISABLE_AI:
             print("AI detection disabled via DISABLE_AI env var — skipping model load")
+            return False
+        if not YOLO_AVAILABLE:
+            print("AI detection disabled - ultralytics not installed")
             return False
         try:
             self.model = YOLO(MODEL_PATH)

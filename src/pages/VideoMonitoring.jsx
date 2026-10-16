@@ -174,7 +174,7 @@ const VideoMonitoring = ({ autoConnect = true }) => {
                   </>
                 ) : (
                   <>
-                    {cameraActive === false ? (
+                    {!isStreaming && !useMjpeg && connectionStatus === 'error' ? (
                       <>
                         <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
                         <p className="text-red-400 font-medium mb-1">Camera not connected</p>

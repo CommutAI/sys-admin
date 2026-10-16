@@ -36,13 +36,31 @@ This guide will help you set up the EMEET C60E Dual Camera 4K Webcam on a Raspbe
 
 ### 2. Install System Dependencies
 
-Install required system packages for video processing and AI:
+Install required system packages for video processing, AI, and camera support:
 
 ```bash
-sudo apt install -y python3-pip python3-dev libopencv-dev python3-opencv
-sudo apt install -y libatlas3-base libhdf5-dev libhdf5-serial-dev libhdf5-103
+# Core Python and development tools
+sudo apt install -y python3-pip python3-dev python3-venv build-essential git
+
+# OpenCV and image processing libraries
+sudo apt install -y libopencv-dev python3-opencv 
+
+# Machine learning and numerical computing libraries
+sudo apt install -y libatlas3-base libhdf5-dev libhdf5-serial-dev 
+
+sudo apt install -y liblapack-dev libblas-dev gfortran
+
+# Qt5 for GUI support (needed by some OpenCV functions)
 sudo apt install -y libqt5gui5 libqt5widgets5 libqt5core5a qtbase5-dev
-sudo apt install -y v4l-utils
+
+# Camera and video processing tools
+sudo apt install -y v4l-utils v4l2loopback-dkms ffmpeg
+
+# Additional dependencies for AI/ML
+sudo apt install -y libsm6 libxext6 libxrender-dev libgomp1
+
+# Hardware acceleration (optional, for better performance)
+sudo apt install -y libopenblas-dev libopenjp2-7 libtiff5
 ```
 
 ### 3. Enable Camera and USB
@@ -94,23 +112,39 @@ Then copy the server files to this directory:
 
 If you have the project files on a Windows machine:
 
+> **Important:** Your Raspberry Pi username may not be `pi`. Run `whoami` on your Pi to check your actual username (e.g., `chichi`).
+
 1. **On Raspberry Pi - Create the directory:**
    ```bash
    mkdir -p ~/raspberry-pi-server
    cd ~/raspberry-pi-server
    ```
 
-2. **On Raspberry Pi - Get your IP address:**
+2. **On Raspberry Pi - Get your IP address and username:**
    ```bash
    hostname -I
    # Note the IP address (e.g., 192.168.1.100)
+   whoami
+   # Note your username (e.g., chichi, pi, etc.)
    ```
 
-3. **On Windows PowerShell - Transfer files:**
-   ```powershell
-   # Replace 192.168.1.100 with your actual Raspberry Pi IP
-   scp -r C:\Users\lopez\sys-admin\raspberry-pi-server\* pi@192.168.1.100:~/raspberry-pi-server/
+3. **On Windows CMD - Transfer files using pscp (PuTTY):**
+   
+   First, ensure you have PuTTY installed (includes pscp). If not, download from [putty.org](https://www.putty.org/).
+   
+   ```cmd
+   REM Replace 192.168.1.100 with your actual Raspberry Pi IP
+   REM Replace chichi with your actual Raspberry Pi username
+   REM Replace C:\Users\lopez\sys-admin\raspberry-pi-server with your actual path
+   pscp -r C:\Users\lopez\sys-admin\raspberry-pi-server\* chichi@192.168.1.100:~/raspberry-pi-server/
    ```
+
+   **Alternative using WinSCP (GUI):**
+   - Download WinSCP from [winscp.net](https://winscp.net/)
+   - Connect to your Raspberry Pi using the IP address
+   - Username: Use your actual Raspberry Pi username (e.g., `chichi`)
+   - Navigate to `~/raspberry-pi-server` on the remote side
+   - Drag and drop files from your Windows folder
 
 4. **On Raspberry Pi - Verify files were transferred:**
    ```bash

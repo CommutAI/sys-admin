@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { DollarSign, Plus, Edit, X } from 'lucide-react';
+import { DollarSign, Plus, Edit, X, ChevronLeft, ChevronRight, Search, ArrowUpDown } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import AuditService from '../services/auditService';
 
@@ -9,6 +9,11 @@ const FareMatrix = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingFare, setEditingFare] = useState(null);
   const [selectedRoute, setSelectedRoute] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortColumn, setSortColumn] = useState('route_from');
+  const [sortDirection, setSortDirection] = useState('asc');
   const [newFare, setNewFare] = useState({
     route_from: '',
     route_to: '',
@@ -23,6 +28,10 @@ const FareMatrix = () => {
     AuditService.logPageView('Fare Matrix');
   }, []);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedRoute, searchTerm]);
+
   const fetchFareMatrix = async () => {
     try {
       setLoading(true);
@@ -32,9 +41,6 @@ const FareMatrix = () => {
         .order('route_from, route_to');
 
       if (error) throw error;
-      console.log('Fare Matrix Data:', data);
-      console.log('Route from values:', data?.map(f => f.route_from));
-      console.log('Route to values:', data?.map(f => f.route_to));
       setFareMatrix(data || []);
     } catch (error) {
       console.error('Error fetching fare matrix:', error);
@@ -116,6 +122,69 @@ const FareMatrix = () => {
     });
   };
 
+  const getFilteredFares = () => {
+    let fares = fareMatrix;
+
+    // Apply bus stop category filter
+    if (selectedRoute === 'manolo-to-agora') {
+      fares = fares.filter(fare => {
+        const routeTo = (fare.route_to || '').toLowerCase().trim();
+        return routeTo.includes('agora');
+      });
+    } else if (selectedRoute === 'agora-to-manolo') {
+      fares = fares.filter(fare => {
+        const routeFrom = (fare.route_from || '').toLowerCase().trim();
+        return routeFrom.includes('agora');
+      });
+    }
+
+    // Apply search filter
+    if (searchTerm) {
+      const searchLower = searchTerm.toLowerCase();
+      fares = fares.filter(fare =>
+        (fare.route_from || '').toLowerCase().includes(searchLower) ||
+        (fare.route_to || '').toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Apply sorting
+    fares = [...fares].sort((a, b) => {
+      let comparison = 0;
+      const aValue = a[sortColumn];
+      const bValue = b[sortColumn];
+
+      if (sortColumn === 'km_distance' || sortColumn === 'regular_fare' || sortColumn === 'discounted_fare') {
+        comparison = parseFloat(aValue) - parseFloat(bValue);
+      } else {
+        comparison = String(aValue).localeCompare(String(bValue));
+      }
+
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+
+    return fares;
+  };
+
+  const filteredFares = getFilteredFares();
+  const totalPages = Math.ceil(filteredFares.length / itemsPerPage);
+  const paginatedFares = filteredFares.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  const handleSort = (column) => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  };
+
+  const handlePageChange = (newPage) => {
+    setCurrentPage(newPage);
+  };
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -133,7 +202,7 @@ const FareMatrix = () => {
             <DollarSign className="text-orange-400" />
             Fare Matrix
           </h1>
-          <p className="text-white/60">Manage fare rates for different routes</p>
+          <p className="text-white/60">Manage fare rates for different bus stops</p>
         </div>
         <button
           onClick={() => setShowAddModal(true)}
@@ -147,234 +216,190 @@ const FareMatrix = () => {
       <div className="glass-card p-6">
         {fareMatrix.length > 0 ? (
           <div className="space-y-6">
-            {/* Route Selection Dropdown */}
-            <div className="flex items-center gap-4">
-              <label className="text-white/60 text-sm">Select Route Direction:</label>
-              <select
-                value={selectedRoute}
-                onChange={(e) => {
-                  const newValue = e.target.value;
-                  console.log('Dropdown changed to:', newValue);
-                  console.log('Is agora-to-manolo?', newValue === 'agora-to-manolo');
-                  console.log('Previous value:', selectedRoute);
-                  setSelectedRoute(newValue);
-                }}
-                className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500 appearance-none cursor-pointer"
-                style={{ backgroundColor: '#1f2937', color: 'white' }}
-              >
-                <option value="all" style={{ backgroundColor: '#1f2937', color: 'white' }}>All Routes</option>
-                <option value="manolo-to-agora" style={{ backgroundColor: '#1f2937', color: 'white' }}>Routes Ending in Agora Terminal</option>
-                <option value="agora-to-manolo" style={{ backgroundColor: '#1f2937', color: 'white' }}>Routes Starting from Agora Terminal</option>
-              </select>
+            {/* Route Selection Dropdown and Search */}
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex items-center gap-4">
+                <label className="text-white/60 text-sm">Select Bus Stops:</label>
+                <select
+                  value={selectedRoute}
+                  onChange={(e) => setSelectedRoute(e.target.value)}
+                  className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500 appearance-none cursor-pointer"
+                  style={{ backgroundColor: '#1f2937', color: 'white' }}
+                >
+                  <option value="all" style={{ backgroundColor: '#1f2937', color: 'white' }}>All Bus Stops</option>
+                  <option value="manolo-to-agora" style={{ backgroundColor: '#1f2937', color: 'white' }}>Bus Stops Ending in Agora Terminal</option>
+                  <option value="agora-to-manolo" style={{ backgroundColor: '#1f2937', color: 'white' }}>Bus Stops Starting from Agora Terminal</option>
+                </select>
+              </div>
+
+              <div className="flex-1 relative min-w-[200px]">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={18} />
+                <input
+                  type="text"
+                  placeholder="Search by bus stop name..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500"
+                />
+              </div>
+
+              <span className="text-white/40 text-sm">
+                Showing {filteredFares.length} {filteredFares.length === 1 ? 'stop' : 'stops'}
+              </span>
             </div>
 
-            {/* Dynamic Table based on selection */}
-            {(() => {
-              console.log('Current selectedRoute:', selectedRoute);
-              console.log('Is manolo-to-agora?', selectedRoute === 'manolo-to-agora');
-              
-              if (selectedRoute === 'all') {
-                console.log('Showing all routes');
-                return (
-                  <div>
-                    <h3 className="text-white text-lg font-bold mb-4">All Routes</h3>
-                    <p className="text-white/50 text-sm mb-4">Showing all available routes in the system</p>
-                    {fareMatrix.length === 0 ? (
-                      <div className="text-center py-8">
-                        <p className="text-white/60">No routes available</p>
-                      </div>
-                    ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full">
-                          <thead>
-                            <tr className="border-b border-white/10">
-                              <th className="text-left text-white/60 py-3 px-4">Route From</th>
-                              <th className="text-left text-white/60 py-3 px-4">Route To</th>
-                              <th className="text-left text-white/60 py-3 px-4">KM Distance</th>
-                              <th className="text-left text-white/60 py-3 px-4">Regular Fare</th>
-                              <th className="text-left text-white/60 py-3 px-4">Elderly / Disabled & Student Fare</th>
-                              <th className="text-left text-white/60 py-3 px-4">Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {fareMatrix.map((fare) => (
-                          <tr key={fare.id} className="border-b border-white/5 hover:bg-white/5">
-                            <td className="py-3 px-4 text-white font-medium">{fare.route_from}</td>
-                            <td className="py-3 px-4 text-white font-medium">{fare.route_to}</td>
-                            <td className="py-3 px-4 text-white/70">{fare.km_distance}</td>
-                            <td className="py-3 px-4 text-white/70">₱{parseFloat(fare.regular_fare).toFixed(2)}</td>
-                            <td className="py-3 px-4 text-white/70">₱{parseFloat(fare.discounted_fare).toFixed(2)}</td>
-                            <td className="py-3 px-4">
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => openEditFareModal(fare)}
-                                  className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                                >
-                                  <Edit size={16} className="text-white/70" />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteFare(fare.id)}
-                                  className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                                >
-                                  <X size={16} className="text-red-400" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+            {/* Category Header */}
+            <div>
+              <h3 className="text-white text-lg font-bold mb-2">
+                {selectedRoute === 'all' ? 'All Bus Stops' :
+                 selectedRoute === 'manolo-to-agora' ? 'Bus Stops Ending in Agora Terminal' :
+                 'Bus Stops Starting from Agora Terminal'}
+              </h3>
+              <p className="text-white/50 text-sm">
+                {selectedRoute === 'all' ? 'Showing all available bus stops in the system' :
+                 selectedRoute === 'manolo-to-agora' ? 'Showing all bus stops that end at Agora Terminal' :
+                 'Showing all bus stops that start from Agora Terminal'}
+              </p>
+            </div>
+
+            {/* Table */}
+            {paginatedFares.length > 0 ? (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-white/10">
+                        <th
+                          className="text-left text-white/60 py-3 px-4 cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('route_from')}
+                        >
+                          <div className="flex items-center gap-2">
+                            Stop From
+                            {sortColumn === 'route_from' && (
+                              <ArrowUpDown size={14} className={`transition-transform ${sortDirection === 'asc' ? 'rotate-180' : ''}`} />
+                            )}
+                          </div>
+                        </th>
+                        <th
+                          className="text-left text-white/60 py-3 px-4 cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('route_to')}
+                        >
+                          <div className="flex items-center gap-2">
+                            Stop To
+                            {sortColumn === 'route_to' && (
+                              <ArrowUpDown size={14} className={`transition-transform ${sortDirection === 'asc' ? 'rotate-180' : ''}`} />
+                            )}
+                          </div>
+                        </th>
+                        <th
+                          className="text-left text-white/60 py-3 px-4 cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('km_distance')}
+                        >
+                          <div className="flex items-center gap-2">
+                            KM Distance
+                            {sortColumn === 'km_distance' && (
+                              <ArrowUpDown size={14} className={`transition-transform ${sortDirection === 'asc' ? 'rotate-180' : ''}`} />
+                            )}
+                          </div>
+                        </th>
+                        <th
+                          className="text-left text-white/60 py-3 px-4 cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('regular_fare')}
+                        >
+                          <div className="flex items-center gap-2">
+                            Regular Fare
+                            {sortColumn === 'regular_fare' && (
+                              <ArrowUpDown size={14} className={`transition-transform ${sortDirection === 'asc' ? 'rotate-180' : ''}`} />
+                            )}
+                          </div>
+                        </th>
+                        <th
+                          className="text-left text-white/60 py-3 px-4 cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('discounted_fare')}
+                        >
+                          <div className="flex items-center gap-2">
+                            Elderly / Disabled & Student Fare
+                            {sortColumn === 'discounted_fare' && (
+                              <ArrowUpDown size={14} className={`transition-transform ${sortDirection === 'asc' ? 'rotate-180' : ''}`} />
+                            )}
+                          </div>
+                        </th>
+                        <th className="text-left text-white/60 py-3 px-4">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedFares.map((fare) => (
+                        <tr key={fare.id} className="border-b border-white/5 hover:bg-white/5">
+                          <td className="py-3 px-4 text-white font-medium">{fare.route_from}</td>
+                          <td className="py-3 px-4 text-white font-medium">{fare.route_to}</td>
+                          <td className="py-3 px-4 text-white/70">{fare.km_distance}</td>
+                          <td className="py-3 px-4 text-white/70">₱{parseFloat(fare.regular_fare).toFixed(2)}</td>
+                          <td className="py-3 px-4 text-white/70">₱{parseFloat(fare.discounted_fare).toFixed(2)}</td>
+                          <td className="py-3 px-4">
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => openEditFareModal(fare)}
+                                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                              >
+                                <Edit size={16} className="text-white/70" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteFare(fare.id)}
+                                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                              >
+                                <X size={16} className="text-red-400" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination */}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
+                    <span className="text-white/60 text-sm">
+                      Page {currentPage} of {totalPages} ({filteredFares.length} total)
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
+                        className="p-2 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <ChevronLeft size={16} className="text-white/70" />
+                      </button>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                        <button
+                          key={page}
+                          onClick={() => handlePageChange(page)}
+                          className={`px-3 py-1 rounded-lg transition-colors ${
+                            currentPage === page
+                              ? 'bg-orange-500 text-white'
+                              : 'bg-white/10 text-white/70 hover:bg-white/20'
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                        className="p-2 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <ChevronRight size={16} className="text-white/70" />
+                      </button>
+                    </div>
                   </div>
-                    )}
-                  </div>
-                );
-              } else if (selectedRoute === 'manolo-to-agora') {
-                console.log('Processing manolo-to-agora selection');
-                console.log('Total fareMatrix items:', fareMatrix.length);
-                console.log('All route_to values:', fareMatrix.map(f => f.route_to));
-                
-                const filteredFares = fareMatrix.filter(fare => {
-                  const routeTo = (fare.route_to || '').toLowerCase().trim();
-                  // Handle various ways Agora might be spelled: "agora", "agora terminal", "agora terminal, cdo", etc.
-                  const includesAgora = routeTo.includes('agora');
-                  console.log('Checking route_to:', fare.route_to, 'normalized:', routeTo, 'includes agora:', includesAgora);
-                  return includesAgora;
-                });
-                console.log('Filtered fares for Agora destination:', filteredFares);
-                console.log('Filtered count:', filteredFares.length);
-                
-                return (
-                  <div>
-                    <h3 className="text-white text-lg font-bold mb-4">Routes Ending in Agora Terminal</h3>
-                    <p className="text-white/50 text-sm mb-4">Showing all routes that end at Agora Terminal</p>
-                    {filteredFares.length === 0 ? (
-                      <div className="text-center py-8">
-                        <p className="text-white/60">No routes found ending in Agora Terminal</p>
-                        <p className="text-white/40 text-sm mt-2">Check if routes have "Agora Terminal" as destination. Total routes: {fareMatrix.length}</p>
-                      </div>
-                    ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full">
-                          <thead>
-                            <tr className="border-b border-white/10">
-                              <th className="text-left text-white/60 py-3 px-4">Route From</th>
-                              <th className="text-left text-white/60 py-3 px-4">Route To</th>
-                              <th className="text-left text-white/60 py-3 px-4">KM Distance</th>
-                              <th className="text-left text-white/60 py-3 px-4">Regular Fare</th>
-                              <th className="text-left text-white/60 py-3 px-4">Elderly / Disabled & Student Fare</th>
-                              <th className="text-left text-white/60 py-3 px-4">Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {filteredFares.map((fare) => (
-                          <tr key={fare.id} className="border-b border-white/5 hover:bg-white/5">
-                            <td className="py-3 px-4 text-white font-medium">{fare.route_from}</td>
-                            <td className="py-3 px-4 text-white font-medium">{fare.route_to}</td>
-                            <td className="py-3 px-4 text-white/70">{fare.km_distance}</td>
-                            <td className="py-3 px-4 text-white/70">₱{parseFloat(fare.regular_fare).toFixed(2)}</td>
-                            <td className="py-3 px-4 text-white/70">₱{parseFloat(fare.discounted_fare).toFixed(2)}</td>
-                            <td className="py-3 px-4">
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => openEditFareModal(fare)}
-                                  className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                                >
-                                  <Edit size={16} className="text-white/70" />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteFare(fare.id)}
-                                  className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                                >
-                                  <X size={16} className="text-red-400" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                    )}
+                )}
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-white/60">No bus stops found in this category</p>
               </div>
-                );
-              } else if (selectedRoute === 'agora-to-manolo') {
-                console.log('Processing agora-to-manolo selection');
-                console.log('Total fareMatrix items:', fareMatrix.length);
-                console.log('All route_from values:', fareMatrix.map(f => f.route_from));
-                
-                const filteredFares = fareMatrix.filter(fare => {
-                  const routeFrom = (fare.route_from || '').toLowerCase().trim();
-                  // Handle various ways Agora might be spelled: "agora", "agora terminal", "agora terminal, cdo", etc.
-                  const includesAgora = routeFrom.includes('agora');
-                  console.log('Checking route_from:', fare.route_from, 'normalized:', routeFrom, 'includes agora:', includesAgora);
-                  return includesAgora;
-                });
-                console.log('Filtered fares for Agora origin:', filteredFares);
-                console.log('Filtered count:', filteredFares.length);
-                
-                return (
-                  <div>
-                    <h3 className="text-white text-lg font-bold mb-4">Routes Starting from Agora Terminal</h3>
-                    <p className="text-white/50 text-sm mb-4">Showing all routes that start from Agora Terminal</p>
-                    {filteredFares.length === 0 ? (
-                      <div className="text-center py-8">
-                        <p className="text-white/60">No routes found starting from Agora Terminal</p>
-                        <p className="text-white/40 text-sm mt-2">Check if routes have "Agora Terminal" as origin. Total routes: {fareMatrix.length}</p>
-                      </div>
-                    ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full">
-                          <thead>
-                            <tr className="border-b border-white/10">
-                              <th className="text-left text-white/60 py-3 px-4">Route From</th>
-                              <th className="text-left text-white/60 py-3 px-4">Route To</th>
-                              <th className="text-left text-white/60 py-3 px-4">KM Distance</th>
-                              <th className="text-left text-white/60 py-3 px-4">Regular Fare</th>
-                              <th className="text-left text-white/60 py-3 px-4">Elderly / Disabled & Student Fare</th>
-                              <th className="text-left text-white/60 py-3 px-4">Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {filteredFares.map((fare) => (
-                          <tr key={fare.id} className="border-b border-white/5 hover:bg-white/5">
-                            <td className="py-3 px-4 text-white font-medium">{fare.route_from}</td>
-                            <td className="py-3 px-4 text-white font-medium">{fare.route_to}</td>
-                            <td className="py-3 px-4 text-white/70">{fare.km_distance}</td>
-                            <td className="py-3 px-4 text-white/70">₱{parseFloat(fare.regular_fare).toFixed(2)}</td>
-                            <td className="py-3 px-4 text-white/70">₱{parseFloat(fare.discounted_fare).toFixed(2)}</td>
-                            <td className="py-3 px-4">
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => openEditFareModal(fare)}
-                                  className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                                >
-                                  <Edit size={16} className="text-white/70" />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteFare(fare.id)}
-                                  className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                                >
-                                  <X size={16} className="text-red-400" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                    )}
-              </div>
-                );
-              } else {
-                console.log('Unknown route selection:', selectedRoute);
-                return (
-                  <div className="text-center py-8">
-                    <p className="text-white/60">Please select a valid route direction</p>
-                  </div>
-                );
-              }
-            })()}
+            )}
           </div>
         ) : (
           <div className="text-center py-12">
@@ -397,7 +422,7 @@ const FareMatrix = () => {
           <DollarSign className="text-orange-400" />
           Baggage Fee Matrix
         </h2>
-        <p className="text-white/60 mb-6">Standard baggage fees for different weight categories</p>
+        <p className="text-white/60 mb-6">Standard baggage fees for different weight categories per bus stop</p>
         
         <div className="overflow-x-auto">
           <table className="w-full">
