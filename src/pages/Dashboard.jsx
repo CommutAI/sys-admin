@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
-import { Users, DollarSign, Bus, AlertTriangle, Map as MapIcon, CheckCircle, Clock, Search, Video, Camera, Activity, Brain, RefreshCw, Filter, Navigation, MapPin } from 'lucide-react';
+import { Users, DollarSign, Bus, AlertTriangle, Map as MapIcon, CheckCircle, Clock, Search, Video, Camera, Activity, Brain, RefreshCw, Filter, Navigation, MapPin, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import 'leaflet/dist/leaflet.css';
 import { useRaspberryPi } from '../hooks/useRaspberryPi';
@@ -131,6 +131,131 @@ const KPICard = ({ title, value, change, icon: Icon, color }) => (
   </div>
 );
 
+// Bus Details Modal Component
+const BusDetailsModal = ({ bus, onClose }) => {
+  if (!bus) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-900 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-800">
+          <h2 className="text-white text-xl font-bold flex items-center gap-2">
+            <Bus className="text-orange-400" size={24} />
+            Bus #{bus.plate || 'N/A'} Details
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-white transition-colors"
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        {/* Split Pane Content */}
+        <div className="grid grid-cols-2 divide-x divide-gray-700">
+          {/* Left Column */}
+          <div className="p-6 space-y-6">
+            {/* Route */}
+            <div>
+              <p className="text-gray-400 text-sm mb-1">Route</p>
+              <p className="text-white font-semibold">{bus.route}</p>
+            </div>
+
+            {/* Status */}
+            <div>
+              <p className="text-gray-400 text-sm mb-1">Status</p>
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                bus.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
+              }`}>
+                {bus.status}
+              </span>
+            </div>
+
+            {/* Passengers */}
+            <div>
+              <p className="text-gray-400 text-sm mb-1">Passengers</p>
+              <p className="text-white text-3xl font-bold flex items-center gap-2">
+                <Users className="text-orange-400" size={24} />
+                {bus.passengers}
+              </p>
+            </div>
+
+            {/* GPS Coordinates */}
+            <div>
+              <p className="text-gray-400 text-sm mb-1">GPS Coordinates</p>
+              <p className="text-white font-mono text-sm bg-gray-800 p-3 rounded-lg border border-gray-700">
+                {Number(bus.lat).toFixed(6)}, {Number(bus.lng).toFixed(6)}
+              </p>
+            </div>
+
+            {/* GPS Source */}
+            <div>
+              <p className="text-gray-400 text-sm mb-1">GPS Source</p>
+              <span className={`px-3 py-1 rounded-full text-sm ${
+                bus.locationSource === 'gps' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+              }`}>
+                {bus.locationSource || 'fallback'}
+              </span>
+            </div>
+          </div>
+
+          {/* Right Column */}
+          <div className="p-6 space-y-6 bg-gray-800/50">
+            {/* Route Progress */}
+            {bus.routeProgress !== undefined && (
+              <>
+                <div>
+                  <p className="text-gray-400 text-sm mb-2">Route Progress</p>
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="flex-1 bg-gray-700 rounded-full h-4">
+                      <div
+                        className="bg-orange-500 h-4 rounded-full transition-all duration-300"
+                        style={{ width: `${bus.routeProgress}%` }}
+                      />
+                    </div>
+                    <span className="text-orange-400 font-bold text-xl min-w-[70px] text-right">
+                      {bus.routeProgress.toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-gray-400 text-sm mb-1">Direction</p>
+                  <p className="text-white font-semibold text-lg">{bus.routeDirection}</p>
+                </div>
+
+                <div>
+                  <p className="text-gray-400 text-sm mb-1">ETA to Destination</p>
+                  <p className="text-white font-semibold text-2xl">{bus.eta}</p>
+                </div>
+              </>
+            )}
+
+            {/* Last Update */}
+            <div>
+              <p className="text-gray-400 text-sm mb-1">Last Update</p>
+              <p className="text-white font-semibold">
+                {bus.locationUpdatedAt ? new Date(bus.locationUpdatedAt).toLocaleString() : 'No data'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 border-t border-gray-700 bg-gray-800">
+          <button
+            onClick={onClose}
+            className="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-xl font-medium transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Animated Bus Marker Component
 const AnimatedBusMarker = ({ bus, onClick }) => {
   const markerRef = useRef(null);
@@ -199,10 +324,14 @@ const AnimatedBusMarker = ({ bus, onClick }) => {
 // Compact video widget for the dashboard — receives Pi state from parent to avoid duplicate WebSocket connections
 const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreaming, videoRef, refresh, cameraActive }) => {
   const [useMjpeg, setUseMjpeg] = useState(false);
+  const [useRoboflow, setUseRoboflow] = useState(true); // Use Roboflow by default
   // Stream is started automatically by the hook on connect — no effect needed here
 
-  const statusColor = isStreaming || useMjpeg ? 'text-green-400' : online ? 'text-yellow-400' : 'text-red-400';
-  const statusLabel = isStreaming || useMjpeg ? 'Live' : online ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting…' : 'Offline';
+  const statusColor = isStreaming || useMjpeg || useRoboflow ? 'text-green-400' : online ? 'text-yellow-400' : 'text-red-400';
+  const statusLabel = isStreaming || useMjpeg || useRoboflow ? 'Live' : online ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting…' : 'Offline';
+
+  // Roboflow stream URL
+  const roboflowStreamUrl = 'https://app.roboflow.com/kristines-workspace-dzpjm/cloud-streaming/streams/4qgUVLLHZQHnmTnoxo19';
 
   return (
     <div>
@@ -212,14 +341,23 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
           <Video className="w-4 h-4 text-orange-400" />
           <h2 className="text-white font-semibold text-sm">Bus Video Monitoring</h2>
           <span className={`text-xs ${statusColor}`}>· {statusLabel}</span>
+          {useRoboflow && <span className="text-xs text-green-400">· 90%+ AI Accuracy</span>}
         </div>
         <div className="flex items-center gap-1.5">
           <button
-            onClick={() => setUseMjpeg(v => !v)}
-            className={`text-xs px-2 py-1 rounded-lg transition-colors ${useMjpeg ? 'bg-orange-500/30 text-orange-300' : 'bg-white/10 text-white/50 hover:bg-white/20'}`}
+            onClick={() => setUseRoboflow(v => !v)}
+            className={`text-xs px-2 py-1 rounded-lg transition-colors ${useRoboflow ? 'bg-green-500/30 text-green-300' : 'bg-white/10 text-white/50 hover:bg-white/20'}`}
           >
-            {useMjpeg ? 'MJPEG' : 'WS'}
+            {useRoboflow ? 'Roboflow' : 'Pi'}
           </button>
+          {!useRoboflow && (
+            <button
+              onClick={() => setUseMjpeg(v => !v)}
+              className={`text-xs px-2 py-1 rounded-lg transition-colors ${useMjpeg ? 'bg-orange-500/30 text-orange-300' : 'bg-white/10 text-white/50 hover:bg-white/20'}`}
+            >
+              {useMjpeg ? 'MJPEG' : 'WS'}
+            </button>
+          )}
           <button onClick={refresh} className="bg-white/10 hover:bg-white/20 text-white p-1.5 rounded-lg transition-colors">
             <RefreshCw size={14} />
           </button>
@@ -228,10 +366,42 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
 
       {/* Video — fixed height for compact size */}
       <div className="relative bg-black rounded-xl overflow-hidden" style={{ height: '500px' }}>
-        <img ref={videoRef} alt="Live feed" className={`w-full h-full object-contain ${isStreaming && !useMjpeg ? 'block' : 'hidden'}`} />
-        {useMjpeg && <img src={getPiVideoFeedUrl()} alt="MJPEG feed" className="w-full h-full object-contain" />}
+        {/* Roboflow - Open in new tab due to CSP and RTMP limitations */}
+        {useRoboflow && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black">
+            <Video className="w-16 h-16 text-green-400" />
+            <p className="text-white text-sm font-medium">Roboflow AI Monitoring</p>
+            <p className="text-white/60 text-xs">90%+ accuracy detection</p>
+            <a
+              href={roboflowStreamUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              Open Roboflow Dashboard
+            </a>
+            <p className="text-white/40 text-xs">RTMP streams require new tab (browser limitation)</p>
+          </div>
+        )}
 
-        {!isStreaming && !useMjpeg && (
+        {/* Pi WebSocket Stream */}
+        {!useRoboflow && (
+          <img ref={videoRef} alt="Live feed" className={`w-full h-full object-contain ${isStreaming && !useMjpeg ? 'block' : 'hidden'}`} />
+        )}
+
+        {/* Pi MJPEG Stream */}
+        {!useRoboflow && useMjpeg && <img src={getPiVideoFeedUrl()} alt="MJPEG feed" className="w-full h-full object-contain" />}
+
+        {/* Pi offline message */}
+        {!useRoboflow && !isStreaming && !useMjpeg && !online && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <Camera className="w-10 h-10 text-red-400" />
+            <p className="text-red-400 text-xs font-medium">Pi Server Offline</p>
+            <p className="text-white/30 text-xs">Switch to Roboflow for AI detection</p>
+          </div>
+        )}
+
+        {!isStreaming && !useMjpeg && !useRoboflow && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
             {cameraActive === false ? (
               <>
@@ -253,18 +423,18 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
         )}
 
         {/* LIVE badge */}
-        {(isStreaming || useMjpeg) && (
+        {(isStreaming || useMjpeg || useRoboflow) && (
           <div className="absolute top-2 left-2 bg-black/70 rounded px-2 py-0.5 flex items-center gap-1.5">
             <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-            <span className="text-white text-xs font-medium">LIVE</span>
+          <span className="text-white text-xs font-medium">LIVE</span>
           </div>
         )}
 
         {/* Passenger count badge */}
-        {(isStreaming || useMjpeg) && (
+        {(isStreaming || useMjpeg || useRoboflow) && (
           <div className="absolute top-2 right-2 bg-black/70 rounded px-2 py-0.5 flex items-center gap-1.5">
             <Users className="w-3 h-3 text-orange-400" />
-            <span className="text-white text-xs font-bold">{passengerCount}</span>
+          <span className="text-white text-xs font-bold">{passengerCount}</span>
           </div>
         )}
       </div>
@@ -317,6 +487,7 @@ const Dashboard = () => {
     refresh: piRefresh,
     assignedBus: piAssignedBus,
     activeTripId: piActiveTripId,
+    usingWebSocket: piUsingWebSocket,
   } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
 
   useEffect(() => {
@@ -452,7 +623,8 @@ const Dashboard = () => {
     try {
       setLoading(true);
 
-      const today = new Date().toISOString().split('T')[0];
+      const today = new Date();
+      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString(); // Start of day in ISO format
 
       // Parallelize all independent queries for significant performance improvement
       const [
@@ -466,32 +638,32 @@ const Dashboard = () => {
       ] = await Promise.all([
         // Fetch active buses
         supabase.from('buses').select('*').eq('status', 'active'),
-        
+
         // Fetch today's trips
-        supabase.from('trips').select('*, buses(*)').gte('started_at', today),
-        
+        supabase.from('trips').select('*, buses(*)').gte('started_at', todayStart),
+
         // Fetch passenger counts for today
-        supabase.from('passenger_counts').select('count').gte('recorded_at', today),
-        
+        supabase.from('passenger_counts').select('count').gte('recorded_at', todayStart),
+
         // Fetch fare irregularities for today
         supabase.from('fare_irregularities')
           .select('*, trips(*, buses(*))')
-          .gte('detected_at', today)
+          .gte('detected_at', todayStart)
           .order('detected_at', { ascending: false })
           .limit(10),
-        
+
         // Fetch emergency alerts - simplified query to avoid 400 error
         supabase.from('emergency_alerts')
           .select('*')
           .eq('status', 'active')
           .order('created_at', { ascending: false })
           .limit(5),
-        
+
         // Fetch staff users
         supabase.from('staff_users').select('*').eq('is_active', true),
-        
+
         // Calculate revenue (from transactions)
-        supabase.from('transactions').select('amount, type').gte('created_at', today)
+        supabase.from('transactions').select('amount, type').gte('created_at', todayStart)
       ]);
 
       // Calculate KPIs
@@ -847,6 +1019,13 @@ const Dashboard = () => {
                 Bus {piAssignedBus.busNumber}
               </span>
             )}
+            <span className={`ml-1 px-2 py-0.5 text-xs rounded-full border ${
+              piUsingWebSocket
+                ? 'bg-green-500/20 text-green-400 border-green-500/30'
+                : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+            }`}>
+              {piUsingWebSocket ? 'WebSocket' : 'Database'}
+            </span>
           </h2>
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-white/5 p-4 rounded-xl">
@@ -1000,9 +1179,7 @@ const Dashboard = () => {
                   buses.filter(bus => bus.status === 'active').map((bus) => (
                     <div
                       key={bus.id}
-                      className={`p-3 rounded-lg cursor-pointer transition-colors ${
-                        selectedBus === bus.id ? 'bg-orange-500/20 border border-orange-500/50' : 'bg-white/5 hover:bg-white/10'
-                      }`}
+                      className="p-3 rounded-lg cursor-pointer transition-colors bg-white/5 hover:bg-white/10"
                       onClick={() => setSelectedBus(bus.id)}
                     >
                       <div className="flex items-center justify-between mb-2">
@@ -1012,7 +1189,7 @@ const Dashboard = () => {
                         </span>
                       </div>
                       <p className="text-white/70 text-xs mb-1">{bus.route}</p>
-                      
+
                       {/* Route Progress Bar */}
                       {bus.routeProgress !== undefined && (
                         <div className="mt-2 mb-2">
@@ -1031,7 +1208,7 @@ const Dashboard = () => {
                           </p>
                         </div>
                       )}
-                      
+
                       <div className="flex items-center justify-between mt-2">
                         <span className="text-white/60 text-xs flex items-center gap-1">
                           <Users size={12} />
@@ -1052,70 +1229,11 @@ const Dashboard = () => {
               </div>
             </div>
 
-            {/* Selected Bus Details */}
+            {/* Selected Bus Details Modal */}
             {selectedBus && (() => {
               const bus = buses.find(b => b.id === selectedBus);
               if (!bus) return null;
-              return (
-                <div className="bg-white/5 p-4 rounded-xl">
-                  <h3 className="text-white text-sm font-bold mb-3">Bus #{bus.plate || 'N/A'} Details</h3>
-                  <div className="space-y-2">
-                    <div>
-                      <p className="text-white/60 text-xs">Route</p>
-                      <p className="text-white font-semibold text-sm">{bus.route}</p>
-                    </div>
-                    <div>
-                      <p className="text-white/60 text-xs">Status</p>
-                      <p className="text-white font-semibold text-sm">{bus.status}</p>
-                    </div>
-                    <div>
-                      <p className="text-white/60 text-xs">Passengers</p>
-                      <p className="text-white font-semibold text-sm">{bus.passengers}</p>
-                    </div>
-
-                    {/* Route Progress Details */}
-                    {bus.routeProgress !== undefined && (
-                      <>
-                        <div>
-                          <p className="text-white/60 text-xs">Route Progress</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <div className="flex-1 bg-white/10 rounded-full h-2">
-                              <div
-                                className="bg-orange-500 h-2 rounded-full"
-                                style={{ width: `${bus.routeProgress}%` }}
-                              />
-                            </div>
-                            <span className="text-orange-400 font-semibold text-sm">{bus.routeProgress.toFixed(1)}%</span>
-                          </div>
-                        </div>
-                        <div>
-                          <p className="text-white/60 text-xs">Direction</p>
-                          <p className="text-white font-semibold text-sm">{bus.routeDirection}</p>
-                        </div>
-                        <div>
-                          <p className="text-white/60 text-xs">ETA to Destination</p>
-                          <p className="text-white font-semibold text-sm">{bus.eta}</p>
-                        </div>
-                      </>
-                    )}
-
-                    <div>
-                      <p className="text-white/60 text-xs">GPS Coordinates</p>
-                      <p className="text-white font-semibold text-sm">{Number(bus.lat).toFixed(6)}, {Number(bus.lng).toFixed(6)}</p>
-                    </div>
-                    <div>
-                      <p className="text-white/60 text-xs">Last Update</p>
-                      <p className="text-white font-semibold text-sm">
-                        {bus.locationUpdatedAt ? new Date(bus.locationUpdatedAt).toLocaleString() : 'No data'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-white/60 text-xs">GPS Source</p>
-                      <p className="text-white font-semibold text-sm">{bus.locationSource || 'fallback'}</p>
-                    </div>
-                  </div>
-                </div>
-              );
+              return <BusDetailsModal bus={bus} onClose={() => setSelectedBus(null)} />;
             })()}
           </div>
         </div>

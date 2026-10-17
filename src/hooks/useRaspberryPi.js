@@ -1,10 +1,10 @@
 /**
- * useRaspberryPi
+ * useRaspberryPi - Hybrid Mode
  *
- * - Auto-discovers the Pi URL from Supabase (pi_devices table) on every connect.
- * - Survives React 18 StrictMode double-invoke: the cleanup flag prevents the
- *   zombie socket opened during the first (thrown-away) mount from being used.
- * - Reconnects automatically with exponential back-off; no hard attempt cap.
+ * - Tries WebSocket connection first for video streaming
+ * - Falls back to database mode if connection fails
+ * - Shows video when Pi is reachable, shows database data when it's not
+ * - Uses Supabase Realtime for database updates
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -23,6 +23,7 @@ const RECONNECT_BASE     = 3_000;
 const RECONNECT_MAX      = 30_000;
 const CONNECT_TIMEOUT_MS = 12_000;
 const HEARTBEAT_MS       = 30_000;
+const BUS_NUMBER         = 1;
 
 export function useRaspberryPi(options = {}) {
   const {
@@ -46,17 +47,19 @@ export function useRaspberryPi(options = {}) {
   const [emergencyStatus,   setEmergencyStatus]    = useState({ emergency_active:false, last_triggered:null, resolved:false });
   const [location,          setLocation]           = useState({ latitude:null, longitude:null, address:null, timestamp:null, speed:null, heading:null });
   const [error,             setError]              = useState(null);
-  const [piReachable,       setPiReachable]        = useState(null); // null=checking, true=online, false=offline
+  const [piReachable,       setPiReachable]        = useState(null);
   const [currentPiUrl,      setCurrentPiUrl]       = useState(getPiBaseUrl());
+  const [usingWebSocket,    setUsingWebSocket]    = useState(true); // true = WebSocket mode, false = DB mode
 
-  // ── Refs (never stale inside plain functions) ─────────────────────────────
+  // ── Refs ───────────────────────────────────────────────────────────────────
   const wsRef             = useRef(null);
   const videoRef          = useRef(null);
   const reconnectTimer    = useRef(null);
   const heartbeatTimer    = useRef(null);
   const connectTimer      = useRef(null);
   const attemptsRef       = useRef(0);
-  const deadRef           = useRef(false);   // true after component unmounts
+  const deadRef           = useRef(false);
+  const fallbackModeRef   = useRef(false); // true if we've switched to DB mode
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function safeSet(setter, value) {
@@ -76,18 +79,195 @@ export function useRaspberryPi(options = {}) {
   }
 
   function scheduleReconnect() {
-    if (deadRef.current) return;
+    if (deadRef.current || fallbackModeRef.current) return;
     clearTimeout(reconnectTimer.current);
     const delay = Math.min(RECONNECT_BASE * 1.5 ** attemptsRef.current, RECONNECT_MAX);
     attemptsRef.current += 1;
     reconnectTimer.current = setTimeout(openSocket, delay);
   }
 
-  // ── Main connect logic ────────────────────────────────────────────────────
-  async function openSocket() {
-    if (deadRef.current) return;
+  // ── Database fetch functions (fallback mode) ─────────────────────────────
+  const fetchAssignedBus = async () => {
+    try {
+      const { data } = await supabase
+        .from('pi_devices')
+        .select('bus_id, bus_number')
+        .eq('bus_number', BUS_NUMBER)
+        .maybeSingle();
 
-    // Close any existing socket cleanly
+      if (data && data.bus_id) {
+        const { data: busData } = await supabase
+          .from('buses')
+          .select('id, plate_number, bus_number')
+          .eq('id', data.bus_id)
+          .single();
+
+        if (busData) {
+          setAssignedBus({
+            busId: busData.id,
+            busNumber: busData.bus_number,
+            busPlate: busData.plate_number
+          });
+          return busData.id;
+        }
+      }
+      return null;
+    } catch (err) {
+      console.error('Error fetching assigned bus:', err);
+      return null;
+    }
+  };
+
+  const fetchActiveTrip = async (busId) => {
+    if (!busId) return null;
+    try {
+      const { data } = await supabase
+        .from('trips')
+        .select('id')
+        .eq('bus_id', busId)
+        .eq('status', 'in_progress')
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (data?.id) {
+        setActiveTripId(data.id);
+        setCurrentTripId(data.id);
+        return data.id;
+      }
+      return null;
+    } catch (err) {
+      console.error('Error fetching active trip:', err);
+      return null;
+    }
+  };
+
+  const fetchLatestPassengerCount = async (tripId) => {
+    if (!tripId) return;
+    try {
+      const { data } = await supabase
+        .from('passenger_counts')
+        .select('count, recorded_at')
+        .eq('trip_id', tripId)
+        .order('recorded_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (data) {
+        setPassengerCount(data.count || 0);
+        setLastUpdate(data.recorded_at ? new Date(data.recorded_at).toLocaleTimeString() : null);
+      }
+    } catch (err) {
+      console.error('Error fetching passenger count:', err);
+    }
+  };
+
+  const fetchHardwareStatus = async () => {
+    try {
+      const { data } = await supabase
+        .from('hardware_status')
+        .select('*')
+        .order('last_check', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (data) {
+        setHardwareStatus({
+          camera: data.component === 'camera' ? data.status : 'unknown',
+          gps: data.component === 'gps' ? data.status : 'unknown',
+          sms: data.component === 'sms' ? data.status : 'unknown',
+          emergency_button: data.component === 'emergency_button' ? data.status : 'unknown',
+          last_updated: data.last_check
+        });
+        setCameraActive(data.component === 'camera' && data.status === 'active');
+      }
+    } catch (err) {
+      console.error('Error fetching hardware status:', err);
+    }
+  };
+
+  const fetchEmergencyStatus = async () => {
+    try {
+      const { data } = await supabase
+        .from('emergency_alerts')
+        .select('*')
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (data) {
+        setEmergencyStatus({
+          emergency_active: true,
+          last_triggered: data.created_at,
+          resolved: false
+        });
+      } else {
+        setEmergencyStatus({
+          emergency_active: false,
+          last_triggered: null,
+          resolved: true
+        });
+      }
+    } catch (err) {
+      console.error('Error fetching emergency status:', err);
+    }
+  };
+
+  const fetchLatestLocation = async (tripId) => {
+    if (!tripId || !enableLocation) return;
+    try {
+      const { data } = await supabase
+        .from('gps_locations')
+        .select('*')
+        .eq('trip_id', tripId)
+        .order('recorded_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (data) {
+        setLocation({
+          latitude: data.latitude,
+          longitude: data.longitude,
+          address: null,
+          timestamp: data.recorded_at,
+          speed: data.speed,
+          heading: null
+        });
+      }
+    } catch (err) {
+      console.error('Error fetching location:', err);
+    }
+  };
+
+  // ── Switch to database fallback mode ───────────────────────────────────────
+  const switchToDatabaseMode = async () => {
+    console.log('[Pi] Switching to database fallback mode');
+    fallbackModeRef.current = true;
+    setUsingWebSocket(false);
+    clearAllTimers();
+    closeSocket(wsRef.current);
+    wsRef.current = null;
+
+    setConnectionStatus('connected (database mode)');
+    setOnline(true);
+    setError(null);
+
+    // Fetch data from database
+    const busId = await fetchAssignedBus();
+    if (busId) {
+      const tripId = await fetchActiveTrip(busId);
+      await fetchLatestPassengerCount(tripId);
+      await fetchHardwareStatus();
+      await fetchEmergencyStatus();
+      await fetchLatestLocation(tripId);
+    }
+  };
+
+  // ── WebSocket connect logic ────────────────────────────────────────────────
+  async function openSocket() {
+    if (deadRef.current || fallbackModeRef.current) return;
+
     closeSocket(wsRef.current);
     wsRef.current = null;
     clearAllTimers();
@@ -96,8 +276,9 @@ export function useRaspberryPi(options = {}) {
     safeSet(setOnline, false);
     safeSet(setIsStreaming, false);
     safeSet(setPiReachable, null);
+    setUsingWebSocket(true);
 
-    // Resolve URL from Supabase pi_devices (auto-discovery)
+    // Resolve URL from Supabase pi_devices
     let wsUrl, httpBase;
     try {
       const { resolvePiUrl } = await import('../services/raspberryPiApi');
@@ -105,13 +286,14 @@ export function useRaspberryPi(options = {}) {
       wsUrl = httpBase.replace(/^http/, 'ws').replace(/\/?$/, '/ws');
       safeSet(setCurrentPiUrl, httpBase);
     } catch {
-      scheduleReconnect();
+      console.log('[Pi] URL resolution failed, switching to database mode');
+      switchToDatabaseMode();
       return;
     }
 
     if (deadRef.current) return;
 
-    // Quick HTTP ping to tell the user whether the Pi is reachable at all
+    // Quick HTTP ping
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 4000);
@@ -119,9 +301,9 @@ export function useRaspberryPi(options = {}) {
       clearTimeout(t);
       safeSet(setPiReachable, res.ok);
     } catch {
+      console.log('[Pi] HTTP ping failed, switching to database mode');
       safeSet(setPiReachable, false);
-      // Pi not reachable — no point opening WebSocket; just retry later
-      scheduleReconnect();
+      switchToDatabaseMode();
       return;
     }
 
@@ -131,18 +313,19 @@ export function useRaspberryPi(options = {}) {
     try {
       ws = new WebSocket(wsUrl);
     } catch {
-      scheduleReconnect();
+      console.log('[Pi] WebSocket creation failed, switching to database mode');
+      switchToDatabaseMode();
       return;
     }
 
     wsRef.current = ws;
 
-    // Hard timeout — abort if socket hasn't opened in time
     connectTimer.current = setTimeout(() => {
       if (ws.readyState !== WebSocket.OPEN) {
+        console.log('[Pi] WebSocket timeout, switching to database mode');
         closeSocket(ws);
         if (wsRef.current === ws) wsRef.current = null;
-        scheduleReconnect();
+        switchToDatabaseMode();
       }
     }, CONNECT_TIMEOUT_MS);
 
@@ -156,19 +339,17 @@ export function useRaspberryPi(options = {}) {
       safeSet(setOnline, true);
       safeSet(setConnectionStatus, 'connected');
       safeSet(setError, null);
+      setUsingWebSocket(true);
 
-      // Heartbeat
       clearInterval(heartbeatTimer.current);
       heartbeatTimer.current = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'heartbeat' }));
         else clearInterval(heartbeatTimer.current);
       }, HEARTBEAT_MS);
 
-      // Start stream immediately
       ws.send(JSON.stringify({ action: 'start_stream' }));
       safeSet(setIsStreaming, true);
 
-      // Fetch health / bus assignment
       try {
         const health = await getPiHealth();
         if (deadRef.current) return;
@@ -236,47 +417,56 @@ export function useRaspberryPi(options = {}) {
 
     // ── onclose ──────────────────────────────────────────────────────────────
     ws.onclose = () => {
-      if (wsRef.current !== ws) return;  // stale socket — ignore
+      if (wsRef.current !== ws) return;
       clearAllTimers();
       if (deadRef.current) return;
-      safeSet(setOnline,           false);
-      safeSet(setIsStreaming,      false);
-      safeSet(setConnectionStatus, 'connecting');
-      scheduleReconnect();
+
+      // If this is the first failure, switch to database mode
+      if (attemptsRef.current < 3) {
+        console.log('[Pi] WebSocket closed, switching to database mode');
+        switchToDatabaseMode();
+      } else {
+        safeSet(setOnline,           false);
+        safeSet(setIsStreaming,      false);
+        safeSet(setConnectionStatus, 'connecting');
+        scheduleReconnect();
+      }
     };
 
     // ── onerror ───────────────────────────────────────────────────────────────
     ws.onerror = () => {
-      // onclose always fires after onerror — let it handle retry
       clearTimeout(connectTimer.current);
     };
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
   const connect = useCallback(() => {
-    invalidatePiUrl();          // force fresh discovery on manual connect
+    fallbackModeRef.current = false;
+    invalidatePiUrl();
     attemptsRef.current = 0;
     openSocket();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const disconnect = useCallback(() => {
     clearAllTimers();
     closeSocket(wsRef.current);
     wsRef.current = null;
+    fallbackModeRef.current = false;
     safeSet(setOnline,           false);
     safeSet(setIsStreaming,      false);
     safeSet(setConnectionStatus, 'disconnected');
     attemptsRef.current = 0;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const refresh = useCallback(() => {
+    fallbackModeRef.current = false;
     invalidatePiUrl();
     attemptsRef.current = 0;
     clearAllTimers();
     closeSocket(wsRef.current);
     wsRef.current = null;
     setTimeout(openSocket, 300);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const startStream = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -296,21 +486,89 @@ export function useRaspberryPi(options = {}) {
   useEffect(() => {
     deadRef.current = false;
 
-    // Start connecting immediately using fallback URL (env var) — no waiting
     if (autoConnect) openSocket();
 
-    // Subscribe to Supabase Realtime for pi_devices changes.
-    // When the Pi registers a new IP (new network), reconnect immediately.
-    const unsubscribe = subscribePiDeviceChanges((_newUrl) => {
+    // Subscribe to pi_devices changes for auto-reconnect on IP change
+    const unsubscribe = subscribePiDeviceChanges((newUrl) => {
       if (deadRef.current) return;
+      console.log('[Pi] Network changed, auto-reconnecting to:', newUrl);
+      
+      // Exit fallback mode and try WebSocket with new IP
+      fallbackModeRef.current = false;
       invalidatePiUrl();
       attemptsRef.current = 0;
       clearAllTimers();
       closeSocket(wsRef.current);
       wsRef.current = null;
-      // Small delay so the Pi's server has time to fully start
-      setTimeout(openSocket, 1500);
+      
+      // Small delay to ensure Pi is ready at new IP
+      setTimeout(openSocket, 2000);
     });
+
+    // Database realtime subscriptions (for fallback mode)
+    const subscriptions = [];
+
+    const passengerSub = supabase
+      .channel('passenger-counts-changes')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'passenger_counts'
+      }, (payload) => {
+        if (fallbackModeRef.current && activeTripId && payload.new?.trip_id === activeTripId) {
+          setPassengerCount(payload.new.count || 0);
+          setLastUpdate(payload.new.recorded_at ? new Date(payload.new.recorded_at).toLocaleTimeString() : null);
+        }
+      })
+      .subscribe();
+    subscriptions.push(passengerSub);
+
+    const hardwareSub = supabase
+      .channel('hardware-status-changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'hardware_status'
+      }, () => {
+        if (fallbackModeRef.current) fetchHardwareStatus();
+      })
+      .subscribe();
+    subscriptions.push(hardwareSub);
+
+    const emergencySub = supabase
+      .channel('emergency-alerts-changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'emergency_alerts'
+      }, () => {
+        if (fallbackModeRef.current) fetchEmergencyStatus();
+      })
+      .subscribe();
+    subscriptions.push(emergencySub);
+
+    if (enableLocation) {
+      const gpsSub = supabase
+        .channel('gps-locations-changes')
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'gps_locations'
+        }, (payload) => {
+          if (fallbackModeRef.current && activeTripId && payload.new?.trip_id === activeTripId) {
+            setLocation({
+              latitude: payload.new.latitude,
+              longitude: payload.new.longitude,
+              address: null,
+              timestamp: payload.new.recorded_at,
+              speed: payload.new.speed,
+              heading: null
+            });
+          }
+        })
+        .subscribe();
+      subscriptions.push(gpsSub);
+    }
 
     return () => {
       deadRef.current = true;
@@ -318,8 +576,9 @@ export function useRaspberryPi(options = {}) {
       closeSocket(wsRef.current);
       wsRef.current = null;
       unsubscribe();
+      subscriptions.forEach(sub => supabase.removeChannel(sub));
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [autoConnect, activeTripId, enableLocation]);
 
   // ── Return ────────────────────────────────────────────────────────────────
   return {
@@ -331,6 +590,7 @@ export function useRaspberryPi(options = {}) {
     currentTripId, connectedClients,
     hardwareStatus, emergencyStatus, location,
     isStreaming, lastUpdate, videoRef,
+    usingWebSocket,
     connect, disconnect, refresh, startStream, stopStream,
   };
 }

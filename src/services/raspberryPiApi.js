@@ -19,7 +19,7 @@ const BUS_NUMBER      = 1; // this dashboard manages bus 001
 let _resolvedUrl  = FALLBACK_URL;
 let _resolving    = null;
 let _lastResolved = 0;            // 0 forces a Supabase lookup on the first call
-const REDISCOVER_INTERVAL = 30_000; // re-check every 30 s (matches Pi re-register interval)
+const REDISCOVER_INTERVAL = 10_000; // re-check every 10 seconds for faster IP detection
 
 /**
  * Resolve the Pi's base HTTP URL.
