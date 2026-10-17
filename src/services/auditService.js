@@ -124,6 +124,14 @@ const AuditService = {
     });
   },
 
+  async logTripStatusChanged(tripId, oldStatus, newStatus, busInfo) {
+    return this.logAuditEvent({
+      action: 'UPDATE',
+      module: 'Trip Management',
+      details: `Changed trip ${tripId} status from ${oldStatus} to ${newStatus} for bus ${busInfo}`,
+    });
+  },
+
   /**
    * Bus Management events
    */

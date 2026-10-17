@@ -17,7 +17,7 @@ import {
   getPiEmergencyStatus,
   getPiBaseUrl,
 } from '../services/raspberryPiApi';
-import { supabaseAdmin } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 
 const RECONNECT_BASE     = 3_000;
 const RECONNECT_MAX      = 30_000;
@@ -182,7 +182,7 @@ export function useRaspberryPi(options = {}) {
           safeSet(setAssignedBus, { busId: health.bus_id, busNumber: health.bus_number, busPlate: health.bus_plate });
 
           try {
-            const { data } = await supabaseAdmin
+            const { data } = await supabase
               .from('trips')
               .select('id')
               .eq('bus_id', health.bus_id)
@@ -303,7 +303,6 @@ export function useRaspberryPi(options = {}) {
     // When the Pi registers a new IP (new network), reconnect immediately.
     const unsubscribe = subscribePiDeviceChanges((_newUrl) => {
       if (deadRef.current) return;
-      console.log('[Pi] IP changed via realtime — reconnecting…');
       invalidatePiUrl();
       attemptsRef.current = 0;
       clearAllTimers();

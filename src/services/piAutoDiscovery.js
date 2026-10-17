@@ -32,7 +32,6 @@ export function getPersistedIp() {
 export function persistIp(ip) {
   try {
     localStorage.setItem(STORAGE_KEY, ip);
-    console.log(`Persisted Raspberry Pi IP: ${ip}`);
   } catch (error) {
     console.warn('Failed to persist IP:', error);
   }
@@ -44,7 +43,6 @@ export function persistIp(ip) {
 export function clearPersistedIp() {
   try {
     localStorage.removeItem(STORAGE_KEY);
-    console.log('Cleared persisted Raspberry Pi IP');
   } catch (error) {
     console.warn('Failed to clear persisted IP:', error);
   }
@@ -58,7 +56,6 @@ export function clearLocalhostCache() {
     const cached = localStorage.getItem(STORAGE_KEY);
     if (cached && (cached === 'localhost' || cached === '127.0.0.1')) {
       localStorage.removeItem(STORAGE_KEY);
-      console.log('Cleared incorrectly cached localhost IP');
       return true;
     }
     return false;
@@ -216,7 +213,6 @@ export async function getRaspberryPiUrl(forceDiscovery = false) {
           return `http://${persistedIp}:5000`;
         }
       } catch (error) {
-        console.log('Persisted IP not responding, will discover...');
         clearPersistedIp(); // Clear invalid cached IP
       }
     }

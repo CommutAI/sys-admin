@@ -7,6 +7,9 @@ from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime
 from database import supabase
+import hmac
+import hashlib
+import os
 
 router = APIRouter()
 
@@ -21,9 +24,23 @@ class GCashWebhookPayload(BaseModel):
     timestamp: str
 
 
+def verify_gcash_signature(payload: str, signature: str, secret: str) -> bool:
+    """
+    Verify GCash webhook signature using HMAC-SHA256
+    """
+    expected_signature = hmac.new(
+        secret.encode(),
+        payload.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    
+    # Use constant-time comparison to prevent timing attacks
+    return hmac.compare_digest(expected_signature, signature)
+
+
 @router.post("/gcash")
 async def gcash_webhook(
-    payload: GCashWebhookPayload,
+    request: Request,
     x_webhook_signature: Optional[str] = Header(None)
 ):
     """
@@ -31,12 +48,24 @@ async def gcash_webhook(
     Processes payment notifications and updates system
     """
     try:
-        # Verify webhook signature (implement signature verification)
-        # if not verify_webhook_signature(payload, x_webhook_signature):
-        #     raise HTTPException(status_code=401, detail="Invalid signature")
+        # Get raw body for signature verification
+        body = await request.body()
+        payload_str = body.decode()
+        
+        # Get webhook secret from environment
+        webhook_secret = os.getenv("GCASH_WEBHOOK_SECRET")
+        
+        if webhook_secret and x_webhook_signature:
+            # Verify signature
+            if not verify_gcash_signature(payload_str, x_webhook_signature, webhook_secret):
+                raise HTTPException(status_code=401, detail="Invalid signature")
+        
+        # Parse payload
+        import json
+        payload = json.loads(payload_str)
         
         # Check if transaction already exists
-        existing_result = supabase.table('gcash_transactions').select('*').eq('stripe_payment_id', payload.payment_id).execute()
+        existing_result = supabase.table('gcash_transactions').select('*').eq('stripe_payment_id', payload.get('payment_id')).execute()
         existing = existing_result[1] if existing_result[1] else []
         
         if existing:
@@ -98,12 +127,18 @@ async def stripe_webhook(request: Request):
         signature = request.headers.get('stripe-signature')
         
         # Verify webhook signature
-        # webhook_secret = os.getenv('STRIPE_WEBHOOK_SECRET')
-        # event = stripe.Webhook.construct_event(body, signature, webhook_secret)
-        
-        # For now, parse as JSON
-        import json
-        payload = json.loads(body)
+        webhook_secret = os.getenv('STRIPE_WEBHOOK_SECRET')
+        if webhook_secret:
+            try:
+                event = stripe.Webhook.construct_event(body, signature, webhook_secret)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail="Invalid payload")
+            except stripe.error.SignatureVerificationError as e:
+                raise HTTPException(status_code=401, detail="Invalid signature")
+        else:
+            # Fallback to JSON parsing if no secret configured (for development)
+            import json
+            payload = json.loads(body)
         
         event_type = payload.get('type')
         data = payload.get('data', {})

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Bus, Plus, Search, Edit, Wrench, X, User } from 'lucide-react';
+import { Bus, Plus, Search, Edit, X, User } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const BusManagement = () => {
@@ -298,9 +298,15 @@ const BusManagement = () => {
                     )}
                   </td>
                   <td className="py-3 px-4">
-                    <span className={`px-3 py-1 rounded-full text-xs border ${statusColors[bus.status]}`}>
-                      {bus.status}
-                    </span>
+                    <select
+                      value={bus.status}
+                      onChange={(e) => handleUpdateStatus(bus.id, e.target.value)}
+                      className="bg-white/10 border border-white/20 rounded-lg px-2 py-1 text-white text-xs focus:outline-none focus:border-orange-500"
+                    >
+                      <option value="active">Active</option>
+                      <option value="maintenance">Maintenance</option>
+                      <option value="inactive">Inactive</option>
+                    </select>
                   </td>
                   <td className="py-3 px-4 text-white/60 text-sm">
                     {new Date(bus.created_at).toLocaleDateString()}
@@ -329,24 +335,6 @@ const BusManagement = () => {
                       >
                         <Edit size={16} className="text-white/70" />
                       </button>
-                      {bus.status === 'active' && (
-                        <button
-                          onClick={() => handleUpdateStatus(bus.id, 'maintenance')}
-                          className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                          title="Send to maintenance"
-                        >
-                          <Wrench size={16} className="text-yellow-400" />
-                        </button>
-                      )}
-                      {bus.status === 'maintenance' && (
-                        <button
-                          onClick={() => handleUpdateStatus(bus.id, 'active')}
-                          className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                          title="Activate"
-                        >
-                          <Bus size={16} className="text-green-400" />
-                        </button>
-                      )}
                       <button
                         onClick={() => handleDeleteBus(bus.id)}
                         className="p-2 hover:bg-white/10 rounded-lg transition-colors"

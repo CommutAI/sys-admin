@@ -30,3 +30,8 @@ body {
   backdrop-filter: blur(24px);
   border-right: 1px solid rgba(255, 255, 255, 0.1);
 }
+
+/* Hide Leaflet attribution logo */
+.leaflet-control-attribution {
+  display: none !important;
+}

@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
-import { UserPlus, Search, Edit, Trash2, Shield, UserCheck } from 'lucide-react';
-import { supabase, supabaseAdmin } from '../lib/supabase';
+import { UserPlus, Search, Edit, Trash2, Shield, UserCheck, ChevronLeft, ChevronRight } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import AuditService from '../services/auditService';
 
 const ManageUsers = () => {
-  const [userType, setUserType] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -12,6 +11,8 @@ const ManageUsers = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
   const [newUser, setNewUser] = useState({
     email: '',
     full_name: '',
@@ -34,7 +35,7 @@ const ManageUsers = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await supabase
         .from('staff_users')
         .select('*')
         .order('created_at', { ascending: false });
@@ -51,9 +52,7 @@ const ManageUsers = () => {
   const handleAddUser = async (e) => {
     e.preventDefault();
     try {
-      console.log('Creating user with:', newUser);
-
-      const { data: existingUser } = await supabaseAdmin
+      const { data: existingUser } = await supabase
         .from('staff_users')
         .select('email')
         .eq('email', newUser.email)
@@ -64,9 +63,8 @@ const ManageUsers = () => {
       }
 
       const userId = crypto.randomUUID();
-      console.log('Generated user ID:', userId);
 
-      const { data: rpcData, error: rpcError } = await supabaseAdmin.rpc('create_user_direct', {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('create_user_direct', {
         user_id: userId,
         user_email: newUser.email,
         user_password: newUser.password,
@@ -74,17 +72,15 @@ const ManageUsers = () => {
         user_role: newUser.role
       });
 
-      console.log('RPC Result:', { data: rpcData, error: rpcError });
-
       if (rpcError) {
         if (rpcError.code === '23505' && rpcError.message.includes('email')) {
           throw new Error(`User with email ${newUser.email} already exists`);
         }
 
         console.error('RPC Error:', rpcError);
-        console.warn('RPC not available, trying standard auth signup...');
+        // RPC not available, trying standard auth signup
 
-        const { data: authData, error: authError } = await supabaseAdmin.auth.signUp({
+        const { data: authData, error: authError } = await supabase.auth.signUp({
           email: newUser.email,
           password: newUser.password,
           options: {
@@ -99,11 +95,8 @@ const ManageUsers = () => {
           throw new Error(`Email validation failed: ${authError.message}. Try using a valid email format like user@gmail.com`);
         }
 
-        console.log('Auth signup successful:', authData);
-
         if (authData?.user?.id) {
-          console.log('Creating staff_users record manually for user:', authData.user.id);
-          const { error: staffError } = await supabaseAdmin
+          const { error: staffError } = await supabase
             .from('staff_users')
             .insert({
               id: authData.user.id,
@@ -114,8 +107,7 @@ const ManageUsers = () => {
             });
 
           if (staffError) {
-            console.error('Error creating staff_users record:', staffError);
-            const { error: updateError } = await supabaseAdmin
+            const { error: updateError } = await supabase
               .from('staff_users')
               .update({
                 full_name: newUser.full_name,
@@ -125,16 +117,10 @@ const ManageUsers = () => {
               .eq('id', authData.user.id);
 
             if (updateError) {
-              console.error('Error updating staff_users record:', updateError);
-            } else {
-              console.log('Staff_users record updated successfully');
+              throw new Error('Failed to update staff_users record');
             }
-          } else {
-            console.log('Staff_users record created successfully');
           }
         }
-      } else {
-        console.log('RPC creation successful:', rpcData);
       }
 
       await AuditService.logUserCreated(newUser.email, newUser.role, newUser.full_name);
@@ -155,7 +141,7 @@ const ManageUsers = () => {
       const email = user?.email || 'unknown';
       const newStatus = !currentStatus;
 
-      const { error } = await supabaseAdmin
+      const { error } = await supabase
         .from('staff_users')
         .update({ is_active: newStatus })
         .eq('id', userId);
@@ -241,9 +227,18 @@ const ManageUsers = () => {
   const filteredUsers = users.filter(user => {
     const matchesSearch = user.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          user.email?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = userType === 'all' || user.role === userType;
-    return matchesSearch && matchesType;
+    return matchesSearch;
   });
+
+  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
+  const paginatedUsers = filteredUsers.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
 
   const roleColors = {
     admin: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
@@ -260,15 +255,6 @@ const ManageUsers = () => {
     conductor: 'Conductor',
     cs_desk: 'Customer Service Staff',
   };
-
-  const userTypes = [
-    { id: 'all', label: 'All Users', icon: UserCheck },
-    { id: 'admin', label: 'System Admin', icon: Shield },
-    { id: 'operator', label: 'Operators', icon: Shield },
-    { id: 'driver', label: 'Drivers', icon: UserCheck },
-    { id: 'conductor', label: 'Conductors', icon: UserCheck },
-    { id: 'cs_desk', label: 'Customer Service', icon: UserCheck },
-  ];
 
   const roleCounts = {
     admin: users.filter(u => u.role === 'admin').length,
@@ -372,28 +358,8 @@ const ManageUsers = () => {
           <UserCheck className="text-orange-400" />
           All Staff Users
         </h2>
-        <div className="flex flex-wrap items-center gap-4 mb-4">
-          <div className="flex flex-wrap gap-2">
-            {userTypes.map((type) => {
-              const Icon = type.icon;
-              return (
-                <button
-                  key={type.id}
-                  onClick={() => setUserType(type.id)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                    userType === type.id
-                      ? 'bg-orange-500 text-white'
-                      : 'bg-white/10 text-white/70 hover:bg-white/20'
-                  }`}
-                >
-                  <Icon size={16} />
-                  {type.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex-1 relative">
+        <div className="mb-4">
+          <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={18} />
             <input
               type="text"
@@ -405,43 +371,97 @@ const ManageUsers = () => {
           </div>
         </div>
 
-        <div className="space-y-3 max-h-[500px] overflow-y-auto">
-          {filteredUsers.map((user) => (
-            <div key={user.id} className="bg-white/5 p-4 rounded-xl">
-              <div className="flex justify-between items-start mb-2">
-                <div>
-                  <p className="text-white font-medium">{user.full_name}</p>
-                  <p className="text-white/60 text-sm">{user.email}</p>
-                </div>
-                <span className={`px-2 py-1 rounded-full text-xs border ${roleColors[user.role] || 'bg-gray-500/20 text-gray-400 border-gray-500/50'}`}>
-                  {roleLabels[user.role] || user.role}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 text-white/70 text-sm mb-3">
-                <span className={`px-2 py-1 rounded text-xs ${user.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-                  {user.is_active ? 'Active' : 'Inactive'}
-                </span>
-                <span className="text-white/60">{new Date(user.created_at).toLocaleDateString()}</span>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleEditUser(user)}
-                  className="flex-1 px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-sm transition-colors flex items-center justify-center gap-1"
-                >
-                  <Edit size={14} />
-                  Edit
-                </button>
-                <button
-                  onClick={() => handleDeleteUser(user)}
-                  className="flex-1 px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm transition-colors flex items-center justify-center gap-1"
-                >
-                  <Trash2 size={14} />
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-white/10">
+                <th className="text-left text-white/60 text-sm py-3 px-4">Name</th>
+                <th className="text-left text-white/60 text-sm py-3 px-4">Email</th>
+                <th className="text-left text-white/60 text-sm py-3 px-4">Role</th>
+                <th className="text-left text-white/60 text-sm py-3 px-4">Status</th>
+                <th className="text-left text-white/60 text-sm py-3 px-4">Created</th>
+                <th className="text-left text-white/60 text-sm py-3 px-4">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedUsers.map((user) => (
+                <tr key={user.id} className="border-b border-white/5 hover:bg-white/5">
+                  <td className="text-white py-3 px-4">{user.full_name}</td>
+                  <td className="text-white/70 py-3 px-4">{user.email}</td>
+                  <td className="py-3 px-4">
+                    <span className={`px-2 py-1 rounded-full text-xs border ${roleColors[user.role] || 'bg-gray-500/20 text-gray-400 border-gray-500/50'}`}>
+                      {roleLabels[user.role] || user.role}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4">
+                    <span className={`px-2 py-1 rounded text-xs ${user.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                      {user.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td className="text-white/60 py-3 px-4">{new Date(user.created_at).toLocaleDateString()}</td>
+                  <td className="py-3 px-4">
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleEditUser(user)}
+                        className="p-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg transition-colors"
+                        title="Edit"
+                      >
+                        <Edit size={16} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteUser(user)}
+                        className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
+            <p className="text-white/60 text-sm">
+              Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredUsers.length)} of {filteredUsers.length} users
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                  <button
+                    key={page}
+                    onClick={() => setCurrentPage(page)}
+                    className={`w-8 h-8 rounded-lg text-sm transition-colors ${
+                      currentPage === page
+                        ? 'bg-orange-500 text-white'
+                        : 'bg-white/10 hover:bg-white/20 text-white/70'
+                    }`}
+                  >
+                    {page}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Add User Modal */}
