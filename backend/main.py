@@ -15,9 +15,10 @@ from slowapi.errors import RateLimitExceeded
 
 load_dotenv()
 
-from routers import cards, transactions, analytics, reports, webhooks, staff, anomaly_detection, emergency_alerts
+from routers import cards, transactions, analytics, reports, webhooks, staff, anomaly_detection, emergency_alerts, video_processing
 from database import supabase
 from auth import verify_supabase_token, require_admin
+from video_processor import video_processor
 
 # Rate limiting
 limiter = Limiter(key_func=get_remote_address)
@@ -27,6 +28,9 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
     # Startup
     print("Starting FastAPI backend service...")
+    # Initialize video processor model
+    print("Initializing video processor...")
+    video_processor.initialize_model()
     yield
     # Shutdown
     print("Shutting down FastAPI backend service...")
@@ -111,6 +115,7 @@ app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
 app.include_router(staff.router, prefix="/api/staff", tags=["Staff"])
 app.include_router(anomaly_detection.router, prefix="/api/anomaly-detection", tags=["Anomaly Detection"])
 app.include_router(emergency_alerts.router, prefix="/api/emergency-alerts", tags=["Emergency Alerts"])
+app.include_router(video_processing.router, tags=["Video Processing"])
 
 @app.get("/")
 @limiter.limit("100/minute")
