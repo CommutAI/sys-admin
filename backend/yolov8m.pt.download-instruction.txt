@@ -1,0 +1,9 @@
+YOLOv8m Model Download Required
+
+This directory should contain the YOLOv8m model file (yolov8m.pt) for video processing.
+
+Download from: https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8m.pt
+
+File size: ~50MB
+
+After downloading, rename the file to yolov8m.pt and place it in this directory.
