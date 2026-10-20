@@ -27,3 +27,14 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# AI model files (too large for git)
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# Dataset directories
+test/
+train/
+valid/
