@@ -10,6 +10,7 @@ A FastAPI backend service that handles complex operations, aggregations, and bus
 - **Report Generation**: Multiple report types with JSON/CSV export
 - **Webhook Handling**: GCash, Stripe, and emergency alert webhooks
 - **Efficient Aggregations**: Server-side data processing to reduce frontend load
+- **Video Processing**: Real-time passenger detection with YOLOv8 or Roboflow workflows
 
 ## Architecture
 
@@ -98,6 +99,41 @@ The API will be available at `http://localhost:8000`
 - `POST /api/webhooks/gcash` - GCash payment webhooks
 - `POST /api/webhooks/stripe` - Stripe payment webhooks
 - `POST /api/webhooks/emergency` - Emergency alert webhooks
+
+### Video Processing (`/api/video-processing`)
+
+- `GET /api/video-processing/status` - Get video processing status
+- `POST /api/video-processing/set-trip` - Set active trip ID
+- `POST /api/video-processing/clear-trip` - Clear active trip ID
+- `WS /ws/video-stream/{client_id}` - WebSocket for Pi video input
+- `WS /ws/video-feed` - WebSocket for frontend video output
+
+#### Detection Methods
+
+The backend supports two detection methods configured via `DETECTION_METHOD` in `.env`:
+
+1. **YOLO (Local)**: `DETECTION_METHOD=yolo`
+   - Uses local YOLOv8 model for offline detection
+   - Faster processing, no network dependency
+   - Configurable model size (yolov8n, yolov8m, yolov8x)
+
+2. **Roboflow (Cloud)**: `DETECTION_METHOD=roboflow`
+   - Uses Roboflow serverless workflows for detection
+   - Requires `ROBOFLOW_API_KEY` in `.env`
+   - Custom trained models, potentially higher accuracy
+   - Network latency dependent
+
+#### Configuration
+
+Add to your `.env`:
+
+```env
+# Detection method (yolo or roboflow)
+DETECTION_METHOD=yolo
+
+# For Roboflow detection
+ROBOFLOW_API_KEY=your-roboflow-api-key
+```
 
 ## Integration with Frontend
 
@@ -246,6 +282,57 @@ pip install pytest httpx
 
 # Run tests
 pytest
+
+# Test Roboflow integration (requires ROBOFLOW_API_KEY)
+python test_roboflow.py
+```
+
+### Roboflow Workflow Integration
+
+The backend integrates with Roboflow serverless workflows for custom-trained passenger detection models.
+
+#### Setup
+
+1. Get your Roboflow API key from [app.roboflow.com/settings/api](https://app.roboflow.com/settings/api)
+
+2. Add to your `.env`:
+```env
+ROBOFLOW_API_KEY=your-api-key-here
+DETECTION_METHOD=roboflow
+```
+
+3. Test the integration:
+```bash
+cd backend
+python test_roboflow.py
+```
+
+#### Workflow Details
+
+- **Workspace**: kristines-workspace-dzpjm
+- **Workflow ID**: bus-vbus-xtidt-jyqan-1-rfdetr-nas-t1-718e59-logic
+- **Endpoint**: https://serverless.roboflow.com/kristines-workspace-dzpjm/workflows/bus-vbus-xtidt-jyqan-1-rfdetr-nas-t1-718e59-logic
+
+#### Client Implementation
+
+The Roboflow client (`roboflow_client.py`) handles:
+- Base64 image encoding
+- Retry logic with exponential backoff
+- Timeout handling (30s default)
+- Response parsing and detection extraction
+- Fallback to YOLO on errors
+
+#### Usage
+
+```python
+from roboflow_client import roboflow_client
+
+# Run workflow on image bytes
+result = await roboflow_client.run_workflow(image_bytes)
+
+# Extract detections
+detections = roboflow_client.extract_detections(result)
+passenger_count = roboflow_client.extract_passenger_count(result)
 ```
 
 ## License

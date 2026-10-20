@@ -4,6 +4,7 @@ import { Users, DollarSign, Bus, AlertTriangle, Map as MapIcon, CheckCircle, Clo
 import { supabase } from '../lib/supabase';
 import 'leaflet/dist/leaflet.css';
 import { useRaspberryPi } from '../hooks/useRaspberryPi';
+import { useBackendVideo } from '../hooks/useBackendVideo';
 import { getPiVideoFeedUrl } from '../services/raspberryPiApi';
 import AuditService from '../services/auditService';
 import L from 'leaflet';
@@ -324,14 +325,11 @@ const AnimatedBusMarker = ({ bus, onClick }) => {
 // Compact video widget for the dashboard — receives Pi state from parent to avoid duplicate WebSocket connections
 const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreaming, videoRef, refresh, cameraActive }) => {
   const [useMjpeg, setUseMjpeg] = useState(false);
-  const [useRoboflow, setUseRoboflow] = useState(true); // Use Roboflow by default
+  const [useBackend, setUseBackend] = useState(true); // Use Backend YOLO by default
   // Stream is started automatically by the hook on connect — no effect needed here
 
-  const statusColor = isStreaming || useMjpeg || useRoboflow ? 'text-green-400' : online ? 'text-yellow-400' : 'text-red-400';
-  const statusLabel = isStreaming || useMjpeg || useRoboflow ? 'Live' : online ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting…' : 'Offline';
-
-  // Roboflow stream URL
-  const roboflowStreamUrl = 'https://app.roboflow.com/kristines-workspace-dzpjm/cloud-streaming/streams/4qgUVLLHZQHnmTnoxo19';
+  const statusColor = isStreaming || useMjpeg || useBackend ? 'text-green-400' : online ? 'text-yellow-400' : 'text-red-400';
+  const statusLabel = isStreaming || useMjpeg || useBackend ? 'Live' : online ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting…' : 'Offline';
 
   return (
     <div>
@@ -341,16 +339,16 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
           <Video className="w-4 h-4 text-orange-400" />
           <h2 className="text-white font-semibold text-sm">Bus Video Monitoring</h2>
           <span className={`text-xs ${statusColor}`}>· {statusLabel}</span>
-          {useRoboflow && <span className="text-xs text-green-400">· 90%+ AI Accuracy</span>}
+          {useBackend && <span className="text-xs text-green-400">· 90%+ AI Accuracy</span>}
         </div>
         <div className="flex items-center gap-1.5">
           <button
-            onClick={() => setUseRoboflow(v => !v)}
-            className={`text-xs px-2 py-1 rounded-lg transition-colors ${useRoboflow ? 'bg-green-500/30 text-green-300' : 'bg-white/10 text-white/50 hover:bg-white/20'}`}
+            onClick={() => setUseBackend(v => !v)}
+            className={`text-xs px-2 py-1 rounded-lg transition-colors ${useBackend ? 'bg-blue-500/30 text-blue-300' : 'bg-white/10 text-white/50 hover:bg-white/20'}`}
           >
-            {useRoboflow ? 'Roboflow' : 'Pi'}
+            {useBackend ? 'Backend YOLO' : 'Pi'}
           </button>
-          {!useRoboflow && (
+          {!useBackend && (
             <button
               onClick={() => setUseMjpeg(v => !v)}
               className={`text-xs px-2 py-1 rounded-lg transition-colors ${useMjpeg ? 'bg-orange-500/30 text-orange-300' : 'bg-white/10 text-white/50 hover:bg-white/20'}`}
@@ -366,42 +364,38 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
 
       {/* Video — fixed height for compact size */}
       <div className="relative bg-black rounded-xl overflow-hidden" style={{ height: '500px' }}>
-        {/* Roboflow - Open in new tab due to CSP and RTMP limitations */}
-        {useRoboflow && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black">
-            <Video className="w-16 h-16 text-green-400" />
-            <p className="text-white text-sm font-medium">Roboflow AI Monitoring</p>
-            <p className="text-white/60 text-xs">90%+ accuracy detection</p>
-            <a
-              href={roboflowStreamUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-            >
-              Open Roboflow Dashboard
-            </a>
-            <p className="text-white/40 text-xs">RTMP streams require new tab (browser limitation)</p>
+        {/* Backend YOLO Stream */}
+        {useBackend && (
+          <img ref={videoRef} alt="Live feed" className={`w-full h-full object-contain ${isStreaming ? 'block' : 'hidden'}`} />
+        )}
+
+        {/* Backend connecting message */}
+        {useBackend && !isStreaming && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <Video className="w-10 h-10 text-blue-400" />
+            <p className="text-blue-400 text-xs font-medium">Connecting to Backend...</p>
+            <p className="text-white/30 text-xs">YOLOv8m AI Processing</p>
           </div>
         )}
 
         {/* Pi WebSocket Stream */}
-        {!useRoboflow && (
+        {!useBackend && (
           <img ref={videoRef} alt="Live feed" className={`w-full h-full object-contain ${isStreaming && !useMjpeg ? 'block' : 'hidden'}`} />
         )}
 
         {/* Pi MJPEG Stream */}
-        {!useRoboflow && useMjpeg && <img src={getPiVideoFeedUrl()} alt="MJPEG feed" className="w-full h-full object-contain" />}
+        {!useBackend && useMjpeg && <img src={getPiVideoFeedUrl()} alt="MJPEG feed" className="w-full h-full object-contain" />}
 
         {/* Pi offline message */}
-        {!useRoboflow && !isStreaming && !useMjpeg && !online && (
+        {!useBackend && !isStreaming && !useMjpeg && !online && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
             <Camera className="w-10 h-10 text-red-400" />
             <p className="text-red-400 text-xs font-medium">Pi Server Offline</p>
-            <p className="text-white/30 text-xs">Switch to Roboflow for AI detection</p>
+            <p className="text-white/30 text-xs">Switch to Backend for AI detection</p>
           </div>
         )}
 
-        {!isStreaming && !useMjpeg && !useRoboflow && (
+        {!isStreaming && !useMjpeg && !useBackend && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
             {cameraActive === false ? (
               <>
@@ -423,7 +417,7 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
         )}
 
         {/* LIVE badge */}
-        {(isStreaming || useMjpeg || useRoboflow) && (
+        {(isStreaming || useMjpeg || useBackend) && (
           <div className="absolute top-2 left-2 bg-black/70 rounded px-2 py-0.5 flex items-center gap-1.5">
             <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
           <span className="text-white text-xs font-medium">LIVE</span>
@@ -431,7 +425,7 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
         )}
 
         {/* Passenger count badge */}
-        {(isStreaming || useMjpeg || useRoboflow) && (
+        {(isStreaming || useMjpeg || useBackend) && (
           <div className="absolute top-2 right-2 bg-black/70 rounded px-2 py-0.5 flex items-center gap-1.5">
             <Users className="w-3 h-3 text-orange-400" />
           <span className="text-white text-xs font-bold">{passengerCount}</span>
@@ -488,7 +482,15 @@ const Dashboard = () => {
     assignedBus: piAssignedBus,
     activeTripId: piActiveTripId,
     usingWebSocket: piUsingWebSocket,
-  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
+  } = useRaspberryPi({ autoConnect: false, enableHealthCheck: true });
+
+  // Backend video connection for YOLOv8m processing
+  const {
+    isStreaming: backendStreaming,
+    passengerCount: backendCount,
+    videoRef: backendVideoRef,
+    refresh: backendRefresh,
+  } = useBackendVideo({ autoConnect: true });
 
   useEffect(() => {
     fetchDashboardData();
@@ -999,60 +1001,57 @@ const Dashboard = () => {
         {/* Live Video Monitoring — compact widget */}
         <div className="glass-card p-4 rounded-xl lg:col-span-2">
           <CompactVideoFeed
-            online={piOnline}
-            connectionStatus={piConnectionStatus}
-            passengerCount={piPassengerCount}
-            isStreaming={piIsStreaming}
-            videoRef={piVideoRef}
-            refresh={piRefresh}
+            online={backendStreaming || piOnline}
+            connectionStatus={backendStreaming ? 'connected' : piConnectionStatus}
+            passengerCount={backendCount || piPassengerCount}
+            isStreaming={backendStreaming || piIsStreaming}
+            videoRef={backendStreaming ? backendVideoRef : piVideoRef}
+            refresh={backendStreaming ? backendRefresh : piRefresh}
             cameraActive={piCameraActive}
           />
         </div>
 
-        {/* Raspberry Pi Status Indicators */}
+        {/* Video Processing Status Indicators */}
         <div className="glass-card p-6 rounded-xl">
           <h2 className="text-white text-lg font-bold mb-4 flex items-center gap-2">
             <Camera className="text-orange-400" size={20} />
-            Raspberry Pi Status
+            Video Processing Status
             {piAssignedBus?.busPlate && (
               <span className="ml-1 px-2 py-0.5 bg-orange-500/20 text-orange-300 text-xs rounded-full border border-orange-500/30">
                 Bus {piAssignedBus.busNumber}
               </span>
             )}
-            <span className={`ml-1 px-2 py-0.5 text-xs rounded-full border ${
-              piUsingWebSocket
-                ? 'bg-green-500/20 text-green-400 border-green-500/30'
-                : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-            }`}>
-              {piUsingWebSocket ? 'WebSocket' : 'Database'}
+            <span className="ml-1 px-2 py-0.5 bg-blue-500/20 text-blue-300 text-xs rounded-full border border-blue-500/30">
+              Stream Mode
             </span>
           </h2>
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-white/5 p-4 rounded-xl">
               <div className="flex items-center gap-2 mb-2">
                 <Video className="w-4 h-4 text-indigo-400" />
-                <p className="text-white/60 text-xs">Server</p>
+                <p className="text-white/60 text-xs">Backend</p>
               </div>
-              <p className={`text-lg font-bold ${piOnline ? 'text-green-400' : 'text-red-400'}`}>
-                {piOnline ? 'Online' : 'Offline'}
+              <p className={`text-lg font-bold ${backendStreaming ? 'text-green-400' : 'text-red-400'}`}>
+                {backendStreaming ? 'Online' : 'Offline'}
               </p>
-              <p className="text-white/40 text-xs mt-1">{piConnectionStatus}</p>
+              <p className="text-white/40 text-xs mt-1">{backendStreaming ? 'Processing frames' : 'Disconnected'}</p>
             </div>
             <div className="bg-white/5 p-4 rounded-xl">
               <div className="flex items-center gap-2 mb-2">
                 <Camera className="w-4 h-4 text-blue-400" />
                 <p className="text-white/60 text-xs">Camera</p>
               </div>
-              <p className={`text-lg font-bold ${piCameraActive ? 'text-green-400' : 'text-red-400'}`}>
-                {piCameraActive ? 'Active' : 'Inactive'}
+              <p className={`text-lg font-bold ${backendStreaming ? 'text-green-400' : 'text-red-400'}`}>
+                {backendStreaming ? 'Streaming' : 'Inactive'}
               </p>
+              <p className="text-white/40 text-xs mt-1">{backendStreaming ? 'Pi sending frames' : 'No stream'}</p>
             </div>
             <div className="bg-white/5 p-4 rounded-xl">
               <div className="flex items-center gap-2 mb-2">
                 <Users className="w-4 h-4 text-purple-400" />
                 <p className="text-white/60 text-xs">Passengers</p>
               </div>
-              <p className="text-lg font-bold text-white">{piPassengerCount}</p>
+              <p className="text-lg font-bold text-white">{backendCount || piPassengerCount}</p>
               <p className="text-white/40 text-xs mt-1">Current count</p>
             </div>
             <div className="bg-white/5 p-4 rounded-xl">
@@ -1070,8 +1069,8 @@ const Dashboard = () => {
                 <Brain className="w-4 h-4 text-purple-400" />
                 <p className="text-white/60 text-xs">Detection</p>
               </div>
-              <p className="text-lg font-bold text-white">YOLO</p>
-              <p className="text-white/40 text-xs mt-1">AI Model</p>
+              <p className="text-lg font-bold text-white">YOLOv8n</p>
+              <p className="text-white/40 text-xs mt-1">Backend AI</p>
             </div>
             <div className="bg-white/5 p-4 rounded-xl">
               <div className="flex items-center gap-2 mb-2">

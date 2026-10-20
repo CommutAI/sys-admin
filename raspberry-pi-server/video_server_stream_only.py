@@ -12,22 +12,84 @@ import time
 import asyncio
 import websockets
 import os
+import socket
+import subprocess
+import httpx
 from dotenv import load_dotenv
 from hardware_integration import HardwareManager
 from supabase import create_client, Client
 
 load_dotenv()
 
-# Backend configuration
-BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
+def discover_backend_ip():
+    """
+    Auto-discover Windows backend IP address on the local network
+    Returns the backend URL if found, None otherwise
+    """
+    # Check if BACKEND_URL is manually set in .env
+    manual_backend = os.getenv('BACKEND_URL')
+    if manual_backend and manual_backend != 'http://localhost:8000':
+        print(f"[Discovery] Using manually configured backend: {manual_backend}")
+        return manual_backend
+
+    print("[Discovery] Auto-discovering backend on local network...")
+
+    # Get local network interface
+    try:
+        # Get Pi's IP and network
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+
+        # Extract network (e.g., 192.168.1.35 -> 192.168.1)
+        network = '.'.join(local_ip.split('.')[:-1])
+        print(f"[Discovery] Local IP: {local_ip}, Network: {network}")
+
+        # Scan common IP range for port 8000
+        for i in range(1, 255):
+            target_ip = f"{network}.{i}"
+            if target_ip == local_ip:
+                continue
+
+            try:
+                # Quick port check for port 8000
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.1)
+                result = sock.connect_ex((target_ip, 8000))
+                sock.close()
+
+                if result == 0:
+                    # Verify it's actually our backend by checking health endpoint
+                    try:
+                        response = httpx.get(f"http://{target_ip}:8000/health", timeout=1.0)
+                        if response.status_code == 200:
+                            backend_url = f"http://{target_ip}:8000"
+                            print(f"[Discovery] Found backend at: {backend_url}")
+                            return backend_url
+                    except:
+                        continue
+
+            except:
+                continue
+
+        print("[Discovery] Backend not found on local network")
+        return None
+
+    except Exception as e:
+        print(f"[Discovery] Error during discovery: {e}")
+        return None
+
+# Backend configuration - auto-discover or use manual setting
+BACKEND_URL = discover_backend_ip() or os.getenv('BACKEND_URL', 'http://localhost:8000')
 BACKEND_WS_URL = BACKEND_URL.replace('http', 'ws')
 
-# Camera configuration
+# Camera configuration - Optimized for 30-60 FPS
 CAMERA_DEVICE = os.getenv('CAMERA_DEVICE', '/dev/video0')
 CAMERA_WIDTH = int(os.getenv('CAMERA_WIDTH', '640'))
 CAMERA_HEIGHT = int(os.getenv('CAMERA_HEIGHT', '480'))
-FPS = int(os.getenv('FPS', '10'))
-JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '60'))
+FPS = int(os.getenv('FPS', '30'))  # 30 FPS
+JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '25'))  # Very low quality for speed
 
 # Supabase configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -191,8 +253,29 @@ class VideoStreamer:
             print(f"Failed to connect to backend: {e}")
             return False
 
+    async def receive_detections(self):
+        """Receive detection results in background without blocking"""
+        while self.running:
+            try:
+                response = await self.websocket.recv()
+                result = json.loads(response)
+
+                if result.get('type') == 'detection':
+                    count = result.get('count', 0)
+                    detections = result.get('detections', [])
+
+                    if count != self.last_passenger_count:
+                        print(f"[Detection] Passengers: {count}")
+                        self.last_passenger_count = count
+                        self.last_detection_time = time.time()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"Error receiving detection: {e}")
+                break
+
     async def stream_frames(self):
-        """Stream frames to backend"""
+        """Stream frames to backend - non-blocking for maximum FPS"""
         if not self.initialize_camera():
             print("Failed to initialize camera")
             return
@@ -203,6 +286,9 @@ class VideoStreamer:
 
         self.running = True
         print("Starting video stream...")
+
+        # Create a task to receive detection results independently
+        receive_task = asyncio.create_task(self.receive_detections())
 
         try:
             while self.running:
@@ -216,7 +302,7 @@ class VideoStreamer:
                 if not frame_data:
                     continue
 
-                # Send frame to backend
+                # Send frame to backend immediately (don't wait for response)
                 message = {
                     'type': 'frame',
                     'frame': frame_data,
@@ -226,27 +312,12 @@ class VideoStreamer:
 
                 try:
                     await self.websocket.send(json.dumps(message))
-
-                    # Receive detection result
-                    response = await asyncio.wait_for(self.websocket.recv(), timeout=2.0)
-                    result = json.loads(response)
-
-                    if result.get('type') == 'detection':
-                        count = result.get('count', 0)
-                        detections = result.get('detections', [])
-
-                        if count != self.last_passenger_count:
-                            print(f"[Detection] Passengers: {count}")
-                            self.last_passenger_count = count
-                            self.last_detection_time = time.time()
-
-                except asyncio.TimeoutError:
-                    print("Timeout waiting for detection result")
                 except Exception as e:
-                    print(f"Error in WebSocket communication: {e}")
+                    print(f"Error sending frame: {e}")
                     # Try to reconnect
                     if not await self.connect_to_backend():
                         break
+                    receive_task = asyncio.create_task(self.receive_detections())
 
                 # Control frame rate
                 await asyncio.sleep(1.0 / FPS)
@@ -254,6 +325,9 @@ class VideoStreamer:
         except Exception as e:
             print(f"Streaming error: {e}")
         finally:
+            self.running = False
+            if receive_task:
+                receive_task.cancel()
             self.stop()
 
     def set_current_trip(self, trip_id):

@@ -32,7 +32,7 @@ class GPSLocation:
 class SIM900A:
     """SIM900A GSM Module for SMS Notifications"""
     
-    def __init__(self, port: str = '/dev/ttyS0', baudrate: int = 9600):
+    def __init__(self, port: str = '/dev/ttyUSB0', baudrate: int = 9600):
         self.port = port
         self.baudrate = baudrate
         self.serial_connection = None
@@ -148,7 +148,7 @@ class SIM900A:
 class NEO6M:
     """NEO-6M GPS Module for Location Tracking"""
     
-    def __init__(self, port: str = '/dev/serial0', baudrate: int = 9600):
+    def __init__(self, port: str = '/dev/ttyS0', baudrate: int = 9600):
         self.port = port
         self.baudrate = baudrate
         self.serial_connection = None
@@ -561,10 +561,10 @@ class HardwareManager:
         """Initialize all hardware components"""
         success = True
         
-        # Initialize SIM900A
+        # Initialize SIM900A (USB-TTL adapter)
         if self.config.get('enable_sms', True):
             self.sim900a = SIM900A(
-                port=self.config.get('sim900a_port', '/dev/ttyS0'),
+                port=self.config.get('sim900a_port', '/dev/ttyUSB0'),
                 baudrate=self.config.get('sim900a_baudrate', 9600)
             )
             if self.sim900a.connect():
@@ -576,10 +576,10 @@ class HardwareManager:
                 self._update_hardware_status('sim900a', 'offline')
                 success = False
         
-        # Initialize NEO-6M GPS
+        # Initialize NEO-6M GPS (GPIO pins 8 & 10 = UART0)
         if self.config.get('enable_gps', True):
             self.neo6m = NEO6M(
-                port=self.config.get('neo6m_port', '/dev/ttyS1'),
+                port=self.config.get('neo6m_port', '/dev/ttyS0'),
                 baudrate=self.config.get('neo6m_baudrate', 9600)
             )
             if self.neo6m.connect():

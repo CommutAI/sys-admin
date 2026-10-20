@@ -25,14 +25,32 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
         self.pi_connections: Set[WebSocket] = set()
-    
+        self.frontend_connections: Set[WebSocket] = set()
+        self.latest_frame: str = None  # Store latest processed frame for new clients
+
     async def connect_pi(self, websocket: WebSocket, client_id: str):
         """Connect a Raspberry Pi client"""
         await websocket.accept()
         self.active_connections[client_id] = websocket
         self.pi_connections.add(websocket)
         print(f"[Video Router] Pi connected: {client_id}")
-    
+
+    async def connect_frontend(self, websocket: WebSocket):
+        """Connect a frontend client"""
+        await websocket.accept()
+        self.frontend_connections.add(websocket)
+        print(f"[Video Router] Frontend connected")
+
+        # Send latest frame if available
+        if self.latest_frame:
+            try:
+                await websocket.send_json({
+                    'type': 'video_frame',
+                    'frame': self.latest_frame
+                })
+            except:
+                pass
+
     def disconnect_pi(self, websocket: WebSocket, client_id: str):
         """Disconnect a Raspberry Pi client"""
         if client_id in self.active_connections:
@@ -40,10 +58,16 @@ class ConnectionManager:
         if websocket in self.pi_connections:
             self.pi_connections.remove(websocket)
         print(f"[Video Router] Pi disconnected: {client_id}")
-    
-    async def broadcast_detections(self, message: dict):
-        """Broadcast detection results to all connected Pi clients"""
-        for connection in self.pi_connections:
+
+    def disconnect_frontend(self, websocket: WebSocket):
+        """Disconnect a frontend client"""
+        if websocket in self.frontend_connections:
+            self.frontend_connections.remove(websocket)
+        print(f"[Video Router] Frontend disconnected")
+
+    async def broadcast_to_frontends(self, message: dict):
+        """Broadcast processed video frame to all frontend clients"""
+        for connection in self.frontend_connections:
             try:
                 await connection.send_json(message)
             except:
@@ -79,19 +103,29 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
                     frame_data = message.get('frame')
                     if not frame_data:
                         continue
-                    
+
                     # Decode frame
                     frame = video_processor.decode_frame(frame_data)
                     if frame is None:
                         continue
-                    
-                    # Detect passengers
-                    detections = video_processor.detect_passengers(frame)
+
+                    # Detect passengers (async for Roboflow support)
+                    detections = await video_processor.detect_passengers(frame)
                     passenger_count = len(detections)
-                    
+
+                    # Draw detection boxes on frame
+                    frame_with_boxes = video_processor.draw_detections(frame, detections)
+
+                    # Encode frame with detections - very low quality for maximum speed
+                    _, buffer = cv2.imencode('.jpg', frame_with_boxes, [cv2.IMWRITE_JPEG_QUALITY, 40])
+                    frame_base64 = base64.b64encode(buffer).decode('utf-8')
+
+                    # Store latest frame for new frontend clients
+                    manager.latest_frame = frame_base64
+
                     # Save to database if trip is active
                     video_processor.save_passenger_count_to_db(passenger_count)
-                    
+
                     # Send detection results back to Pi
                     response = {
                         'type': 'detection',
@@ -100,6 +134,14 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
                         'timestamp': message.get('timestamp')
                     }
                     await websocket.send_json(response)
+
+                    # Broadcast processed frame to frontend clients
+                    await manager.broadcast_to_frontends({
+                        'type': 'video_frame',
+                        'frame': frame_base64,
+                        'count': passenger_count,
+                        'timestamp': message.get('timestamp')
+                    })
                     
                 elif message.get('type') == 'set_trip':
                     # Set current trip ID
@@ -157,3 +199,27 @@ async def get_status():
         'current_trip_id': video_processor.current_trip_id,
         'yolo_available': video_processor.model is not None
     }
+
+
+@router.websocket("/ws/video-feed")
+async def video_feed_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for frontend clients to receive processed video frames
+    """
+    await manager.connect_frontend(websocket)
+
+    try:
+        while True:
+            # Keep connection alive and handle any client messages
+            data = await websocket.receive_text()
+            try:
+                message = json.loads(data)
+                if message.get('type') == 'ping':
+                    await websocket.send_json({'type': 'pong'})
+            except:
+                pass
+    except WebSocketDisconnect:
+        manager.disconnect_frontend(websocket)
+    except Exception as e:
+        print(f"[Video Router] Frontend error: {e}")
+        manager.disconnect_frontend(websocket)

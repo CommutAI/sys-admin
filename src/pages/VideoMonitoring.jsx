@@ -1,64 +1,43 @@
 import { useState, useEffect } from 'react';
-import { Video, Users, AlertCircle, Wifi, WifiOff, RefreshCw, Tv2, Activity, CheckCircle, Loader2 } from 'lucide-react';
-import { useRaspberryPi } from '../hooks/useRaspberryPi';
-import { getPiVideoFeedUrl } from '../services/raspberryPiApi';
-import { getPersistedIp } from '../services/piAutoDiscovery';
+import { Video, Users, AlertCircle, Wifi, WifiOff, RefreshCw, CheckCircle, Loader2 } from 'lucide-react';
+import { useBackendVideo } from '../hooks/useBackendVideo';
 
 // Connection stages and their progress %
 const CONNECTION_STAGES = {
   disconnected: { pct: 0,   label: 'Disconnected',        color: 'bg-red-500'    },
-  connecting:   { pct: 20,  label: 'Checking Pi…',        color: 'bg-yellow-400' },
-  offline:      { pct: 0,   label: 'Pi offline',          color: 'bg-red-500'    },
-  connected:    { pct: 70,  label: 'Starting stream…',    color: 'bg-blue-400'   },
+  connecting:   { pct: 20,  label: 'Connecting…',         color: 'bg-yellow-400' },
+  connected:    { pct: 70, label: 'Starting stream…',    color: 'bg-blue-400'   },
   streaming:    { pct: 100, label: 'Streaming',            color: 'bg-green-500'  },
   error:        { pct: 20,  label: 'Reconnecting…',       color: 'bg-yellow-400' },
 };
 
 const VideoMonitoring = ({ autoConnect = true }) => {
-  const [useMjpeg, setUseMjpeg] = useState(false);
-  const [mjpegUrl, setMjpegUrl] = useState(null);
-  const [persistedIp, setPersistedIp] = useState(null);
-
-  // Load persisted IP on mount
-  useEffect(() => {
-    const ip = getPersistedIp();
-    setPersistedIp(ip);
-  }, []);
-
-  // Update MJPEG URL when needed
-  useEffect(() => {
-    if (useMjpeg) {
-      getPiVideoFeedUrl().then(url => setMjpegUrl(url));
-    }
-  }, [useMjpeg]);
-
+  // Backend video streaming (YOLOv8n processed)
   const {
-    online,
-    connectionStatus,
-    error,
-    passengerCount,
-    averageCount,
-    isStreaming,
-    lastUpdate,
-    videoRef,
-    refresh,
-    startStream,
-    stopStream,
-    connect,
-    assignedBus,
-    activeTripId,
-    piReachable,
-    raspberryPiUrl,
-  } = useRaspberryPi({ autoConnect, enableHealthCheck: false });
+    isStreaming: backendStreaming,
+    passengerCount: backendCount,
+    connectionStatus: backendStatus,
+    videoRef: backendVideoRef,
+    refresh: backendRefresh,
+  } = useBackendVideo({ autoConnect: autoConnect });
+
+  // Use backend values
+  const isStreaming = backendStreaming;
+  const passengerCount = backendCount;
+  const connectionStatus = backendStatus;
+  const videoRef = backendVideoRef;
+  const refresh = backendRefresh;
 
   // displayStage drives the progress bar — stream starts automatically inside the hook
-  const displayStage = isStreaming || useMjpeg
+  const displayStage = isStreaming
     ? 'streaming'
-    : piReachable === false
-    ? 'offline'
-    : connectionStatus === 'error'
-    ? 'error'
-    : connectionStatus;
+    : connectionStatus === 'connecting'
+      ? 'connecting'
+      : connectionStatus === 'connected'
+      ? 'connected'
+      : connectionStatus === 'error'
+      ? 'error'
+      : 'disconnected';
 
   const stage = CONNECTION_STAGES[displayStage] ?? CONNECTION_STAGES.disconnected;
 
@@ -69,25 +48,10 @@ const VideoMonitoring = ({ autoConnect = true }) => {
         <div>
           <h1 className="text-3xl font-bold text-white">Bus Video Monitoring</h1>
           <p className="text-white/60 mt-1">
-            Live video feed with AI passenger detection
-            {assignedBus.busPlate && (
-              <span className="ml-2 px-2 py-0.5 bg-orange-500/20 text-orange-300 text-xs rounded-full border border-orange-500/30">
-                Bus {assignedBus.busNumber} · {assignedBus.busPlate}
-              </span>
-            )}
+            Live video feed with AI passenger detection (Backend YOLOv8n)
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setUseMjpeg(!useMjpeg)}
-            title={useMjpeg ? 'Switch to WebSocket mode' : 'Switch to MJPEG mode (fallback)'}
-            className={`px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors ${
-              useMjpeg ? 'bg-orange-500/30 text-orange-300' : 'bg-white/10 text-white/60 hover:bg-white/20'
-            }`}
-          >
-            <Tv2 size={14} />
-            {useMjpeg ? 'MJPEG' : 'WebSocket'}
-          </button>
           <button
             onClick={refresh}
             className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg transition-colors"
@@ -142,28 +106,19 @@ const VideoMonitoring = ({ autoConnect = true }) => {
             ref={videoRef}
             alt="Live video feed"
             className={`absolute inset-0 w-full h-full object-contain ${
-              isStreaming && !useMjpeg ? 'block' : 'hidden'
+              isStreaming ? 'block' : 'hidden'
             }`}
           />
-          {/* MJPEG direct src */}
-          {useMjpeg && mjpegUrl && (
-            <img
-              src={mjpegUrl}
-              alt="MJPEG video feed"
-              className="absolute inset-0 w-full h-full object-contain"
-            />
-          )}
 
           {/* Placeholder / connecting state */}
-          {!isStreaming && !useMjpeg && (
+          {!isStreaming && (
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="text-center px-6">
-                {piReachable === false ? (
+                {connectionStatus === 'error' ? (
                   <>
-                    <WifiOff className="w-12 h-12 text-red-400/60 mx-auto mb-4" />
-                    <p className="text-red-400 font-medium mb-1">Raspberry Pi offline</p>
-                    <p className="text-white/40 text-sm mb-1">{raspberryPiUrl}</p>
-                    <p className="text-white/30 text-xs mb-4">Make sure the Pi is powered on and connected to the same network</p>
+                    <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
+                    <p className="text-red-400 font-medium mb-1">Backend connection error</p>
+                    <p className="text-white/40 text-sm mb-4">Make sure the backend server is running at localhost:8000</p>
                     <button
                       onClick={refresh}
                       className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm flex items-center gap-2 mx-auto transition-colors"
@@ -174,28 +129,11 @@ const VideoMonitoring = ({ autoConnect = true }) => {
                   </>
                 ) : (
                   <>
-                    {!isStreaming && !useMjpeg && connectionStatus === 'error' ? (
-                      <>
-                        <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-                        <p className="text-red-400 font-medium mb-1">Camera not connected</p>
-                        <p className="text-white/40 text-sm mb-4">Please check the camera connection on the Raspberry Pi</p>
-                        <button
-                          onClick={refresh}
-                          className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm flex items-center gap-2 mx-auto transition-colors"
-                        >
-                          <RefreshCw size={14} />
-                          Retry
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <Loader2 className="w-12 h-12 text-orange-400 animate-spin mx-auto mb-4" />
-                        <p className="text-white/60 text-lg">
-                          {piReachable === null ? 'Checking Pi…' : connectionStatus === 'connected' ? 'Starting stream…' : 'Connecting…'}
-                        </p>
-                        <p className="text-white/30 text-sm mt-1">{raspberryPiUrl}</p>
-                      </>
-                    )}
+                    <Loader2 className="w-12 h-12 text-orange-400 animate-spin mx-auto mb-4" />
+                    <p className="text-white/60 text-lg">
+                      {connectionStatus === 'connecting' ? 'Connecting to backend…' : 'Starting stream…'}
+                    </p>
+                    <p className="text-white/30 text-sm mt-1">Backend YOLOv8n processing</p>
                   </>
                 )}
               </div>
@@ -203,11 +141,11 @@ const VideoMonitoring = ({ autoConnect = true }) => {
           )}
 
           {/* LIVE badge */}
-          {(isStreaming || useMjpeg) && (
+          {isStreaming && (
             <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm rounded-lg px-3 py-1.5 flex items-center gap-2">
               <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
               <span className="text-white text-sm font-semibold tracking-wide">LIVE</span>
-              {useMjpeg && <span className="text-white/50 text-xs">· MJPEG</span>}
+
             </div>
           )}
         </div>
@@ -222,39 +160,23 @@ const VideoMonitoring = ({ autoConnect = true }) => {
           <div>
             <p className="text-white/60 text-sm">Current Passengers</p>
             <p className="text-white text-4xl font-bold leading-none mt-1">{passengerCount}</p>
-            {lastUpdate && (
-              <p className="text-white/30 text-xs mt-1">Updated {lastUpdate}</p>
-            )}
-          </div>
-        </div>
-
-        <div className="glass-card rounded-xl p-6 flex items-center gap-4">
-          <div className="w-14 h-14 bg-blue-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
-            <Activity className="w-7 h-7 text-blue-400" />
-          </div>
-          <div>
-            <p className="text-white/60 text-sm">Average (30 frames)</p>
-            <p className="text-white text-4xl font-bold leading-none mt-1">{averageCount}</p>
-            <p className="text-white/30 text-xs mt-1">Rolling average</p>
           </div>
         </div>
 
         <div className="glass-card rounded-xl p-6 flex items-center gap-4">
           <div className={`w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0 ${
-            isStreaming || useMjpeg ? 'bg-green-500/20' : 'bg-white/10'
+            isStreaming ? 'bg-green-500/20' : 'bg-white/10'
           }`}>
-            <Video className={`w-7 h-7 ${isStreaming || useMjpeg ? 'text-green-400' : 'text-white/40'}`} />
+            <Video className={`w-7 h-7 ${isStreaming ? 'text-green-400' : 'text-white/40'}`} />
           </div>
           <div>
             <p className="text-white/60 text-sm">Stream</p>
             <p className={`text-xl font-bold leading-none mt-1 ${
-              isStreaming || useMjpeg ? 'text-green-400' : 'text-white/50'
+              isStreaming ? 'text-green-400' : 'text-white/50'
             }`}>
-              {isStreaming || useMjpeg ? 'Active' : 'Inactive'}
+              {isStreaming ? 'Active' : 'Inactive'}
             </p>
-            <p className="text-white/30 text-xs mt-1">
-              {useMjpeg ? 'MJPEG mode' : 'WebSocket mode'}
-            </p>
+            <p className="text-white/30 text-xs mt-1">Backend YOLOv8n</p>
           </div>
         </div>
       </div>
@@ -264,36 +186,20 @@ const VideoMonitoring = ({ autoConnect = true }) => {
         <h3 className="text-sm font-semibold uppercase tracking-wider text-white/40 mb-3">Camera Info</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
           <div>
-            <p className="text-white/50">Assigned Bus</p>
-            <p className="text-white font-medium">
-              {assignedBus.busNumber ? `Bus ${assignedBus.busNumber}` : '—'}
-            </p>
-          </div>
-          <div>
-            <p className="text-white/50">Plate</p>
-            <p className="text-white font-medium">{assignedBus.busPlate || '—'}</p>
-          </div>
-          <div>
-            <p className="text-white/50">Active Trip</p>
-            <p className="text-white font-medium">
-              {activeTripId ? `#${activeTripId.slice(0, 8)}` : 'None'}
-            </p>
-          </div>
-          <div>
-            <p className="text-white/50">Model</p>
-            <p className="text-white font-medium">EMEET C60E</p>
+            <p className="text-white/50">Detection Model</p>
+            <p className="text-white font-medium">YOLOv8n</p>
           </div>
           <div>
             <p className="text-white/50">Resolution</p>
-            <p className="text-white font-medium">640×480</p>
+            <p className="text-white font-medium">640x480</p>
           </div>
           <div>
             <p className="text-white/50">FPS</p>
-            <p className="text-white font-medium">10</p>
+            <p className="text-white font-medium">30</p>
           </div>
           <div>
             <p className="text-white/50">Detection</p>
-            <p className="text-green-400 font-medium">HOG Person Detector</p>
+            <p className="text-green-400 font-medium">YOLOv8n (Backend)</p>
           </div>
         </div>
       </div>

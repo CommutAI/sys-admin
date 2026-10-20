@@ -1,6 +1,6 @@
 """
 Video Processing Service for CommutAI System
-Receives raw video frames from Raspberry Pi and processes them with YOLOv8
+Receives raw video frames from Raspberry Pi and processes them with YOLOv8 or Roboflow
 Optimized for CPU/Intel GPU for 90%+ accuracy in passenger counting
 """
 
@@ -26,6 +26,14 @@ except ImportError:
     YOLO_AVAILABLE = False
     print("Warning: ultralytics not installed - AI detection disabled")
 
+# Roboflow client import
+try:
+    from roboflow_client import roboflow_client, RoboflowWorkflowError
+    ROBOFLOW_AVAILABLE = True
+except ImportError:
+    ROBOFLOW_AVAILABLE = False
+    print("Warning: roboflow_client not available")
+
 # Supabase configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
@@ -38,13 +46,20 @@ if SUPABASE_URL and SUPABASE_KEY:
     except Exception as e:
         print(f"Video processor: Failed to initialize Supabase: {e}")
 
-# Model configuration - Optimized for 90%+ accuracy
-MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8m.pt')  # Use medium model for better accuracy
-CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.50'))  # Higher confidence for accuracy
+# Detection method: 'yolo' (local) or 'roboflow' (cloud workflow)
+DETECTION_METHOD = os.getenv('DETECTION_METHOD', 'yolo').lower()
+
+# Model configuration - Optimized for maximum speed (YOLOv8n)
+MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.pt')  # Nano model for maximum speed
+CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))  # Lower for speed
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.45'))
-YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.70'))  # Very high for accuracy
-DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '640'))  # Larger detection size for accuracy
-MAX_DET = int(os.getenv('MAX_DET', '20'))  # Maximum detections per frame
+YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.35'))  # Lower for speed
+DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '320'))  # Smallest for maximum speed
+MAX_DET = int(os.getenv('MAX_DET', '30'))  # Maximum detections
+
+# Update Roboflow client with API key from env
+if ROBOFLOW_AVAILABLE:
+    roboflow_client.api_key = os.getenv('ROBOFLOW_API_KEY')
 
 # Passenger detection classes (COCO dataset)
 PASSENGER_CLASSES = ['person']
@@ -55,11 +70,12 @@ DB_SAVE_INTERVAL = int(os.getenv('DB_SAVE_INTERVAL', '5'))
 print(f"[Video Processor] Model: {MODEL_PATH}")
 print(f"[Video Processor] Confidence threshold: {YOLO_CONFIDENCE_THRESHOLD}")
 print(f"[Video Processor] Detection size: {DETECTION_SIZE}px")
+print(f"[Video Processor] Detection method: {DETECTION_METHOD}")
 
 
 class VideoProcessor:
-    """Processes video frames from Raspberry Pi with YOLOv8 for high accuracy"""
-    
+    """Processes video frames from Raspberry Pi with YOLOv8 or Roboflow"""
+
     def __init__(self):
         self.model = None
         self.running = False
@@ -67,17 +83,28 @@ class VideoProcessor:
         self.last_db_save = 0
         self.detection_history = []
         self.frame_count = 0
-        
+
     def initialize_model(self):
-        """Initialize YOLOv8 model with accuracy optimizations"""
+        """Initialize detection model (YOLO or check Roboflow)"""
+        if DETECTION_METHOD == 'roboflow':
+            if ROBOFLOW_AVAILABLE:
+                print("[Video Processor] Using Roboflow workflow for detection")
+                return True
+            else:
+                print("[Video Processor] Roboflow not available, falling back to YOLO")
+                if not YOLO_AVAILABLE:
+                    print("[Video Processor] YOLO also not available - detection disabled")
+                    return False
+                # Fall through to YOLO initialization
+
         if not YOLO_AVAILABLE:
             print("YOLO not available - cannot initialize model")
             return False
-        
+
         try:
             # Load model with CPU optimization
             self.model = YOLO(MODEL_PATH)
-            
+
             # Optimize for CPU/Intel GPU
             # Use half precision if supported (not always available on CPU)
             try:
@@ -111,14 +138,26 @@ class VideoProcessor:
             print(f"[Video Processor] Frame decode error: {e}")
             return None
     
-    def detect_passengers(self, frame: np.ndarray) -> List[Dict]:
+    async def detect_passengers(self, frame: np.ndarray) -> List[Dict]:
         """
-        Detect passengers with high accuracy using YOLOv8
+        Detect passengers using configured method (YOLO or Roboflow)
         Optimized for 90%+ accuracy with confidence filtering and NMS
         """
+        if DETECTION_METHOD == 'roboflow' and ROBOFLOW_AVAILABLE:
+            return await self._detect_with_roboflow(frame)
+        elif DETECTION_METHOD == 'yolo' and YOLO_AVAILABLE:
+            return self._detect_with_yolo(frame)
+        else:
+            print(f"[Video Processor] Detection method '{DETECTION_METHOD}' not available, falling back to YOLO")
+            if YOLO_AVAILABLE:
+                return self._detect_with_yolo(frame)
+            return []
+
+    def _detect_with_yolo(self, frame: np.ndarray) -> List[Dict]:
+        """Detect passengers using local YOLO model"""
         if self.model is None:
             return []
-        
+
         try:
             # Run YOLO detection with accuracy-optimized parameters
             results = self.model(
@@ -158,19 +197,19 @@ class VideoProcessor:
                         if confidence < YOLO_CONFIDENCE_THRESHOLD:
                             continue
                         
-                        # Filter small detections (false positives)
+                        # Filter small detections (false positives) - relaxed for better coverage
                         box_width = x2 - x1
                         box_height = y2 - y1
                         box_area = box_width * box_height
                         frame_area = frame.shape[0] * frame.shape[1]
-                        
-                        # Minimum size: at least 1.5% of frame area
-                        if box_area < frame_area * 0.015:
+
+                        # Minimum size: at least 0.8% of frame area (lowered from 1.5%)
+                        if box_area < frame_area * 0.008:
                             continue
-                        
-                        # Aspect ratio check: people are taller than wide
+
+                        # Aspect ratio check: people are taller than wide (relaxed)
                         aspect_ratio = box_height / box_width if box_width > 0 else 0
-                        if aspect_ratio < 0.6 or aspect_ratio > 3.5:
+                        if aspect_ratio < 0.4 or aspect_ratio > 4.0:
                             continue
                         
                         filtered_detections.append({
@@ -189,9 +228,36 @@ class VideoProcessor:
                       f"After NMS: {len(final_detections)}")
             
             return final_detections
-            
+
         except Exception as e:
-            print(f"[Video Processor] Detection error: {e}")
+            print(f"[Video Processor] YOLO detection error: {e}")
+            return []
+
+    async def _detect_with_roboflow(self, frame: np.ndarray) -> List[Dict]:
+        """Detect passengers using Roboflow workflow"""
+        try:
+            # Encode frame to JPEG bytes
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            image_bytes = buffer.tobytes()
+
+            # Run Roboflow workflow
+            workflow_result = await roboflow_client.run_workflow(image_bytes)
+
+            # Extract detections from workflow result
+            detections = roboflow_client.extract_detections(workflow_result)
+
+            print(f"[Video Processor] Roboflow detected {len(detections)} passengers")
+            return detections
+
+        except RoboflowWorkflowError as e:
+            print(f"[Video Processor] Roboflow workflow error: {e}")
+            # Fall back to YOLO if available
+            if YOLO_AVAILABLE:
+                print("[Video Processor] Falling back to YOLO")
+                return self._detect_with_yolo(frame)
+            return []
+        except Exception as e:
+            print(f"[Video Processor] Roboflow detection error: {e}")
             return []
     
     def _apply_nms(self, detections: List[Dict], iou_threshold: float = 0.45) -> List[Dict]:
