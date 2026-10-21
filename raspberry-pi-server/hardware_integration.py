@@ -146,8 +146,8 @@ class SIM900A:
             logger.info("SIM900A disconnected")
 
 class NEO6M:
-    """NEO-6M GPS Module for Location Tracking"""
-    
+    """NEO-6M / NEO-M8L GPS Module for Location Tracking"""
+
     def __init__(self, port: str = '/dev/ttyS0', baudrate: int = 9600):
         self.port = port
         self.baudrate = baudrate
@@ -158,9 +158,9 @@ class NEO6M:
         self.running = False
         self.stability_threshold = 0.0001  # Degrees for stability check
         self.min_fix_time = 10  # Minimum seconds for stable fix
-        
+
     def connect(self) -> bool:
-        """Connect to NEO-6M GPS module"""
+        """Connect to NEO-6M / NEO-M8L GPS module"""
         try:
             self.serial_connection = serial.Serial(
                 port=self.port,
@@ -168,10 +168,10 @@ class NEO6M:
                 timeout=1
             )
             self.connected = True
-            logger.info("NEO-6M GPS connected successfully")
+            logger.info("GPS module connected successfully")
             return True
         except Exception as e:
-            logger.error(f"NEO-6M GPS connection error: {e}")
+            logger.error(f"GPS connection error: {e}")
             return False
     
     def parse_nmea_sentence(self, sentence: str) -> Optional[dict]:
@@ -576,19 +576,19 @@ class HardwareManager:
                 self._update_hardware_status('sim900a', 'offline')
                 success = False
         
-        # Initialize NEO-6M GPS (GPIO pins 8 & 10 = UART0)
+        # Initialize NEO-M8L GPS Module
         if self.config.get('enable_gps', True):
             self.neo6m = NEO6M(
-                port=self.config.get('neo6m_port', '/dev/ttyS0'),
-                baudrate=self.config.get('neo6m_baudrate', 9600)
+                port=self.config.get('gps_port', '/dev/ttyS1'),
+                baudrate=self.config.get('gps_baudrate', 9600)
             )
             if self.neo6m.connect():
                 self.gps_available = True
-                self._update_hardware_status('neo6m', 'online')
+                self._update_hardware_status('gps', 'online')
             else:
-                logger.error("Failed to initialize NEO-6M GPS")
+                logger.error("Failed to initialize GPS module")
                 self.gps_available = False
-                self._update_hardware_status('neo6m', 'offline')
+                self._update_hardware_status('gps', 'offline')
                 success = False
         
         # Initialize OpenStreetMap Geolocation (free alternative)

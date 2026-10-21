@@ -182,6 +182,9 @@ register_device()
 print(f"[Stream Mode] Backend URL: {BACKEND_URL}")
 print(f"[Stream Mode] Camera: {CAMERA_WIDTH}x{CAMERA_HEIGHT} @ {FPS}fps")
 
+# Global variable to track current trip ID
+current_trip_id = None
+
 
 class VideoStreamer:
     def __init__(self):
@@ -201,7 +204,13 @@ class VideoStreamer:
             self.camera = cv2.VideoCapture(CAMERA_DEVICE)
 
             if not self.camera.isOpened():
-                print(f"Error: Could not open camera at {CAMERA_DEVICE}")
+                print(f"❌ CAMERA ERROR: Could not open camera at {CAMERA_DEVICE}")
+                print(f"   Troubleshooting steps:")
+                print(f"   1. Check if camera is connected to Raspberry Pi")
+                print(f"   2. Run: ls -la /dev/video* to list available camera devices")
+                print(f"   3. Try: sudo modprobe bcm2835-v4l2")
+                print(f"   4. Enable camera: sudo raspi-config → Interface Options → Camera")
+                print(f"   5. Check camera cable connection")
                 return False
 
             # Force MJPG format
@@ -216,7 +225,10 @@ class VideoStreamer:
             for _ in range(3):
                 ret, test_frame = self.camera.read()
             if not ret or test_frame is None:
-                print("Error: Could not read test frame")
+                print("❌ CAMERA ERROR: Could not read test frame")
+                print(f"   Camera may be in use by another process")
+                print(f"   Try: sudo pkill -f python3 to stop other camera processes")
+                print(f"   Or: sudo libcamera-hello to test camera directly")
                 self.camera.release()
                 return False
 
@@ -224,10 +236,11 @@ class VideoStreamer:
             actual_height = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
             actual_fps = int(self.camera.get(cv2.CAP_PROP_FPS))
 
-            print(f"Camera initialized: {actual_width}x{actual_height} @ {actual_fps}fps")
+            print(f"✅ Camera initialized: {actual_width}x{actual_height} @ {actual_fps}fps")
             return True
         except Exception as e:
-            print(f"Camera initialization error: {e}")
+            print(f"❌ CAMERA ERROR: Initialization failed - {e}")
+            print(f"   Check if camera is properly connected and permissions are correct")
             return False
 
     def encode_frame(self, frame):
@@ -302,12 +315,27 @@ class VideoStreamer:
                 if not frame_data:
                     continue
 
+                # Get current GPS location if available
+                gps_data = None
+                if hardware_manager and hardware_manager.current_location:
+                    loc = hardware_manager.current_location
+                    gps_data = {
+                        'latitude': loc.latitude,
+                        'longitude': loc.longitude,
+                        'altitude': loc.altitude,
+                        'speed': loc.speed,
+                        'accuracy': loc.accuracy,
+                        'source': loc.source
+                    }
+
                 # Send frame to backend immediately (don't wait for response)
                 message = {
                     'type': 'frame',
                     'frame': frame_data,
                     'timestamp': time.time(),
-                    'bus_number': BUS_NUMBER
+                    'bus_number': BUS_NUMBER,
+                    'trip_id': self.current_trip_id,
+                    'gps': gps_data
                 }
 
                 try:
@@ -333,11 +361,15 @@ class VideoStreamer:
     def set_current_trip(self, trip_id):
         """Set current trip ID"""
         self.current_trip_id = trip_id
+        global current_trip_id
+        current_trip_id = trip_id
         print(f"Current trip ID set to: {trip_id}")
 
     def clear_current_trip(self):
         """Clear current trip ID"""
         self.current_trip_id = None
+        global current_trip_id
+        current_trip_id = None
         print("Current trip ID cleared")
 
     def stop(self):
@@ -350,15 +382,62 @@ class VideoStreamer:
         print("Video stream stopped")
 
 
+async def send_gps_to_backend():
+    """Send GPS data to backend independently of video stream"""
+    if not hardware_manager:
+        print("Hardware manager not available, GPS upload disabled")
+        return
+
+    backend_ws_url = BACKEND_URL.replace('http://', 'ws://') + '/ws/video-stream/pi-' + str(BUS_NUMBER)
+
+    while True:
+        try:
+            if hardware_manager.current_location:
+                loc = hardware_manager.current_location
+                gps_data = {
+                    'latitude': loc.latitude,
+                    'longitude': loc.longitude,
+                    'altitude': loc.altitude,
+                    'speed': loc.speed,
+                    'accuracy': loc.accuracy,
+                    'source': loc.source
+                }
+
+                message = {
+                    'type': 'gps_update',
+                    'gps': gps_data,
+                    'bus_number': BUS_NUMBER,
+                    'trip_id': current_trip_id,
+                    'timestamp': time.time()
+                }
+
+                async with websockets.connect(backend_ws_url) as ws:
+                    await ws.send(json.dumps(message))
+                    print(f"[GPS Upload] Sent GPS: {loc.latitude:.6f}, {loc.longitude:.6f}")
+            else:
+                print("[GPS Upload] No GPS location available yet")
+
+        except Exception as e:
+            print(f"[GPS Upload] Error: {e}")
+
+        # Send GPS every 5 seconds
+        await asyncio.sleep(5)
+
+
 async def main():
     """Main entry point"""
     streamer = VideoStreamer()
 
     try:
+        # Start GPS upload task independently
+        gps_task = asyncio.create_task(send_gps_to_backend())
+
+        # Start video streaming
         await streamer.stream_frames()
     except KeyboardInterrupt:
         print("\nShutting down...")
         streamer.stop()
+        gps_task.cancel()
 
 
 if __name__ == "__main__":

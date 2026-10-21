@@ -189,16 +189,20 @@ def register_device():
 resolve_assigned_bus()
 register_device()
 
+# Backend URL - use environment variable for now (can be automated later)
+BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
+print(f"[Backend] Using backend URL: {BACKEND_URL}")
+
 # Hardware Manager configuration
 HARDWARE_CONFIG = {
     'enable_sms': os.getenv('ENABLE_SMS', 'false').lower() == 'true',  # Disabled by default for testing
-    'enable_gps': os.getenv('ENABLE_GPS', 'false').lower() == 'true',  # Disabled by default for testing
+    'enable_gps': os.getenv('ENABLE_GPS', 'true').lower() == 'true',  # Enabled by default for NEO-M8L
     'enable_emergency_button': os.getenv('ENABLE_EMERGENCY_BUTTON', 'false').lower() == 'true',  # Disabled by default for testing
     'enable_geolocation': os.getenv('ENABLE_GEOLOCATION', 'true').lower() == 'true',
     'sim900a_port': os.getenv('SIM900A_PORT', '/dev/ttyS0'),
     'sim900a_baudrate': int(os.getenv('SIM900A_BAUDRATE', '9600')),
-    'neo6m_port': os.getenv('NEO6M_PORT', '/dev/serial0'),
-    'neo6m_baudrate': int(os.getenv('NEO6M_BAUDRATE', '9600')),
+    'gps_port': os.getenv('GPS_PORT', '/dev/ttyS1'),
+    'gps_baudrate': int(os.getenv('GPS_BAUDRATE', '9600')),
     'emergency_button_pin': int(os.getenv('EMERGENCY_BUTTON_PIN', '18')),
     'osm_user_agent': os.getenv('OSM_USER_AGENT', 'BusMonitoringSystem'),
     'emergency_contacts': os.getenv('EMERGENCY_CONTACTS', '').split(',') if os.getenv('EMERGENCY_CONTACTS') else [],
@@ -1083,9 +1087,8 @@ class VideoProcessor:
         try:
             import requests
             
-            # Get backend URL from environment or use default
-            backend_url = os.getenv('BACKEND_URL', 'http://localhost:8000')
-            detect_url = f"{backend_url}/api/anomaly-detection/detect"
+            # Use the globally resolved backend URL
+            detect_url = f"{BACKEND_URL}/api/anomaly-detection/detect"
             
             # Call anomaly detection for this specific trip
             payload = {
