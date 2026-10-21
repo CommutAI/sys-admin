@@ -7,7 +7,7 @@ import { supabase } from '../lib/supabase';
 import { clearPiTrip } from '../services/raspberryPiApi';
 import AuditService from '../services/auditService';
 
-const TripManagement = () => {
+const TripManagement = ({ userRole }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [trips, setTrips] = useState([]);
@@ -58,6 +58,16 @@ const TripManagement = () => {
     status: 'active',
     conductor_id: '',
     driver_id: ''
+  });
+
+  // Trip creation state (for drivers only)
+  const [showCreateTripModal, setShowCreateTripModal] = useState(false);
+  const [newTrip, setNewTrip] = useState({
+    bus_id: '',
+    conductor_id: '',
+    driver_id: '',
+    route: '',
+    status: 'in_progress'
   });
 
   useEffect(() => {
@@ -120,15 +130,50 @@ const TripManagement = () => {
 
   const fetchBuses = async () => {
     try {
+      // Simplified query without joins to avoid 400 errors
       const { data, error } = await supabase
         .from('buses')
-        .select('*, conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*)')
+        .select('*')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setBuses(data || []);
+
+      console.log('Buses fetched:', data);
+
+      // Fetch staff users separately to populate conductor/driver names
+      const { data: staffData, error: staffError } = await supabase
+        .from('staff_users')
+        .select('*');
+
+      if (staffError) {
+        console.error('Error fetching staff:', staffError);
+      } else {
+        console.log('Staff users fetched:', staffData);
+      }
+
+      // Create a map of staff users by ID
+      const staffMap = {};
+      (staffData || []).forEach(staff => {
+        staffMap[staff.id] = staff;
+      });
+
+      console.log('Staff map created:', staffMap);
+
+      // Enrich buses with conductor/driver objects
+      const enrichedBuses = (data || []).map(bus => {
+        const enriched = {
+          ...bus,
+          conductor: bus.assigned_conductor_id ? staffMap[bus.assigned_conductor_id] : null,
+          driver: bus.assigned_driver_id ? staffMap[bus.assigned_driver_id] : null
+        };
+        console.log(`Bus ${bus.id}: assigned_conductor_id=${bus.assigned_conductor_id}, assigned_driver_id=${bus.assigned_driver_id}, conductor=${enriched.conductor?.full_name}, driver=${enriched.driver?.full_name}`);
+        return enriched;
+      });
+
+      setBuses(enrichedBuses);
     } catch (error) {
       console.error('Error fetching buses:', error);
+      setBuses([]);
     }
   };
 
@@ -276,6 +321,38 @@ const TripManagement = () => {
     } catch (error) {
       console.error('Error editing trip:', error);
       alert('Error editing trip: ' + error.message);
+    }
+  };
+
+  const handleCreateTrip = async (e) => {
+    e.preventDefault();
+    try {
+      const { error } = await supabase
+        .from('trips')
+        .insert({
+          bus_id: newTrip.bus_id,
+          conductor_id: newTrip.conductor_id,
+          driver_id: newTrip.driver_id,
+          route: newTrip.route,
+          status: newTrip.status,
+          started_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+
+      alert('Trip created successfully!');
+      setShowCreateTripModal(false);
+      setNewTrip({
+        bus_id: '',
+        conductor_id: '',
+        driver_id: '',
+        route: '',
+        status: 'in_progress'
+      });
+      fetchTrips();
+    } catch (error) {
+      console.error('Error creating trip:', error);
+      alert('Error creating trip: ' + error.message);
     }
   };
 
@@ -450,14 +527,14 @@ const TripManagement = () => {
         status: newBus.status
       };
 
-      // Only include conductor_id if one is selected
+      // Only include assigned_conductor_id if one is selected
       if (newBus.conductor_id) {
-        busData.conductor_id = newBus.conductor_id;
+        busData.assigned_conductor_id = newBus.conductor_id;
       }
 
-      // Only include driver_id if one is selected
+      // Only include assigned_driver_id if one is selected
       if (newBus.driver_id) {
-        busData.driver_id = newBus.driver_id;
+        busData.assigned_driver_id = newBus.driver_id;
       }
 
       const { error } = await supabase
@@ -490,14 +567,14 @@ const TripManagement = () => {
         status: newBus.status
       };
 
-      // Only include conductor_id if one is selected
+      // Only include assigned_conductor_id if one is selected
       if (newBus.conductor_id) {
-        busData.conductor_id = newBus.conductor_id;
+        busData.assigned_conductor_id = newBus.conductor_id;
       }
 
-      // Only include driver_id if one is selected
+      // Only include assigned_driver_id if one is selected
       if (newBus.driver_id) {
-        busData.driver_id = newBus.driver_id;
+        busData.assigned_driver_id = newBus.driver_id;
       }
 
       const { error } = await supabase
@@ -573,8 +650,8 @@ const TripManagement = () => {
       route: bus.route,
       seat_capacity: bus.seat_capacity,
       status: bus.status,
-      conductor_id: bus.conductor_id || '',
-      driver_id: bus.driver_id || ''
+      conductor_id: bus.assigned_conductor_id || '',
+      driver_id: bus.assigned_driver_id || ''
     });
   };
 
@@ -832,6 +909,15 @@ const TripManagement = () => {
             {showHistory ? <ArrowLeft size={20} /> : <BarChart3 size={20} />}
             {showHistory ? 'Back to Trips' : 'Trip History'}
           </button>
+          {userRole === 'driver' && (
+            <button
+              onClick={() => setShowCreateTripModal(true)}
+              className="px-4 py-2 rounded-xl flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white transition-colors"
+            >
+              <Plus size={20} />
+              Create Trip
+            </button>
+          )}
           <button
             onClick={() => setShowAddBusModal(true)}
             className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
@@ -969,11 +1055,11 @@ const TripManagement = () => {
                             <select
                               value={trip.status}
                               onChange={(e) => handleUpdateTripStatus(trip.id, e.target.value)}
-                              className="bg-white/10 border border-white/20 rounded-lg px-2 py-1 text-white text-xs focus:outline-none focus:border-orange-500"
+                              className="bg-gray-800 border border-white/20 rounded-lg px-2 py-1 text-white text-xs focus:outline-none focus:border-orange-500"
                             >
-                              <option value="in_progress">In Progress</option>
-                              <option value="completed">Completed</option>
-                              <option value="cancelled">Cancelled</option>
+                              <option value="in_progress" className="bg-gray-800 text-white">In Progress</option>
+                              <option value="completed" className="bg-gray-800 text-white">Completed</option>
+                              <option value="cancelled" className="bg-gray-800 text-white">Cancelled</option>
                             </select>
                           </td>
                           <td className="py-3 px-4">
@@ -1057,12 +1143,12 @@ const TripManagement = () => {
             <select
               value={busStatusFilter}
               onChange={(e) => setBusStatusFilter(e.target.value)}
-              className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+              className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
             >
-              <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="maintenance">Maintenance</option>
-              <option value="inactive">Inactive</option>
+              <option value="all" className="bg-gray-800 text-white">All Status</option>
+              <option value="active" className="bg-gray-800 text-white">Active</option>
+              <option value="maintenance" className="bg-gray-800 text-white">Maintenance</option>
+              <option value="inactive" className="bg-gray-800 text-white">Inactive</option>
             </select>
           </div>
 
@@ -1082,42 +1168,49 @@ const TripManagement = () => {
               </thead>
               <tbody>
                 {busPaginatedBuses.map((bus) => (
-                  <tr key={bus.id} className="border-b border-white/5 hover:bg-white/5">
+                  <tr
+                    key={bus.id}
+                    className="border-b border-white/5 hover:bg-white/5 cursor-pointer"
+                    onClick={() => openBusDetailsModal(bus)}
+                  >
                     <td className="text-white py-3 px-4">
-                      <button
-                        onClick={() => openBusDetailsModal(bus)}
-                        className="text-white font-medium hover:text-orange-400 transition-colors cursor-pointer flex items-center gap-2"
-                      >
+                      <div className="text-white font-medium flex items-center gap-2">
                         #{bus.bus_number || 'N/A'}
                         <Bus size={14} className="text-orange-400" />
-                      </button>
+                      </div>
                     </td>
                     <td className="text-white py-3 px-4">{bus.plate_number}</td>
                     <td className="text-white/70 py-3 px-4">{bus.route}</td>
                     <td className="text-white/70 py-3 px-4">{bus.seat_capacity}</td>
                     <td className="text-white/70 py-3 px-4">{bus.conductor?.full_name || 'N/A'}</td>
                     <td className="text-white/70 py-3 px-4">{bus.driver?.full_name || 'N/A'}</td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
                       <select
                         value={bus.status}
                         onChange={(e) => handleUpdateBusStatus(bus.id, e.target.value)}
-                        className="bg-white/10 border border-white/20 rounded-lg px-2 py-1 text-white text-xs focus:outline-none focus:border-orange-500"
+                        className="bg-gray-800 border border-white/20 rounded-lg px-2 py-1 text-white text-xs focus:outline-none focus:border-orange-500"
                       >
-                        <option value="active">Active</option>
-                        <option value="maintenance">Maintenance</option>
-                        <option value="inactive">Inactive</option>
+                        <option value="active" className="bg-gray-800 text-white">Active</option>
+                        <option value="maintenance" className="bg-gray-800 text-white">Maintenance</option>
+                        <option value="inactive" className="bg-gray-800 text-white">Inactive</option>
                       </select>
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
                       <div className="flex gap-2">
                         <button
-                          onClick={() => openEditBusModal(bus)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEditBusModal(bus);
+                          }}
                           className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-white text-xs transition-colors"
                         >
                           Edit
                         </button>
                         <button
-                          onClick={() => handleDeleteBus(bus.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteBus(bus.id);
+                          }}
                           className="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-xs transition-colors"
                         >
                           Delete
@@ -1175,8 +1268,8 @@ const TripManagement = () => {
 
       {/* Edit Trip Modal - GPS Location Update */}
       {!showHistory && showEditModal && selectedTrip && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-md">
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999]">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-md relative z-[1000000]">
             <h2 className="text-white text-xl font-bold mb-4">Update GPS Location</h2>
             <p className="text-white/60 text-sm mb-4">Update the current GPS location for this trip</p>
             <form onSubmit={handleEditTrip} className="space-y-4">
@@ -1234,8 +1327,8 @@ const TripManagement = () => {
 
       {/* View Trip Modal */}
       {showViewModal && selectedTrip && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-lg">
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999]">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-lg relative z-[1000000]">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-white text-xl font-bold">Trip Details</h2>
               <button
@@ -1313,8 +1406,8 @@ const TripManagement = () => {
 
       {/* Add/Edit Bus Modal */}
       {!showHistory && (showAddBusModal || editingBus) && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-2xl">
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999]">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-2xl relative z-[1000000]">
             <h2 className="text-white text-xl font-bold mb-4">
               {editingBus ? 'Edit Bus' : 'Add New Bus'}
             </h2>
@@ -1366,11 +1459,11 @@ const TripManagement = () => {
                     <select
                       value={newBus.status}
                       onChange={(e) => setNewBus({ ...newBus, status: e.target.value })}
-                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                      className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                     >
-                      <option value="active">Active</option>
-                      <option value="maintenance">Maintenance</option>
-                      <option value="inactive">Inactive</option>
+                      <option value="active" className="bg-gray-800 text-white">Active</option>
+                      <option value="maintenance" className="bg-gray-800 text-white">Maintenance</option>
+                      <option value="inactive" className="bg-gray-800 text-white">Inactive</option>
                     </select>
                   </div>
                 </div>
@@ -1390,9 +1483,9 @@ const TripManagement = () => {
                           onChange={(e) => setNewBus({ ...newBus, conductor_id: e.target.value })}
                           className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                         >
-                          <option value="">No Conductor Assigned</option>
+                          <option value="" className="bg-gray-800 text-white">No Conductor Assigned</option>
                           {conductors.map(conductor => (
-                            <option key={conductor.id} value={conductor.id}>
+                            <option key={conductor.id} value={conductor.id} className="bg-gray-800 text-white">
                               {conductor.full_name}
                             </option>
                           ))}
@@ -1405,9 +1498,9 @@ const TripManagement = () => {
                           onChange={(e) => setNewBus({ ...newBus, driver_id: e.target.value })}
                           className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                         >
-                          <option value="">No Driver Assigned</option>
+                          <option value="" className="bg-gray-800 text-white">No Driver Assigned</option>
                           {drivers.map(driver => (
-                            <option key={driver.id} value={driver.id}>
+                            <option key={driver.id} value={driver.id} className="bg-gray-800 text-white">
                               {driver.full_name}
                             </option>
                           ))}
@@ -1443,8 +1536,8 @@ const TripManagement = () => {
 
       {/* Bus Details Modal */}
       {showBusDetailsModal && selectedBusForDetails && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999]">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto relative z-[1000000]">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-white text-2xl font-bold flex items-center gap-3">
                 <Bus className="text-orange-400" size={28} />
@@ -1707,6 +1800,101 @@ const TripManagement = () => {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Trip Modal - Driver Only */}
+      {userRole === 'driver' && showCreateTripModal && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999]">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-md relative z-[1000000]">
+            <h2 className="text-white text-xl font-bold mb-4">Create New Trip</h2>
+            <p className="text-white/60 text-sm mb-4">Start a new trip for your assigned bus</p>
+            <form onSubmit={handleCreateTrip} className="space-y-4">
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Bus</label>
+                <select
+                  required
+                  value={newTrip.bus_id}
+                  onChange={(e) => setNewTrip({ ...newTrip, bus_id: e.target.value })}
+                  className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                >
+                  <option value="" className="bg-gray-800 text-white">Select a bus</option>
+                  {buses.filter(bus => bus.status === 'active').map(bus => (
+                    <option key={bus.id} value={bus.id} className="bg-gray-800 text-white">
+                      {bus.plate_number} - {bus.route}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Conductor</label>
+                <select
+                  required
+                  value={newTrip.conductor_id}
+                  onChange={(e) => setNewTrip({ ...newTrip, conductor_id: e.target.value })}
+                  className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                >
+                  <option value="" className="bg-gray-800 text-white">Select a conductor</option>
+                  {conductors.map(conductor => (
+                    <option key={conductor.id} value={conductor.id} className="bg-gray-800 text-white">
+                      {conductor.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Driver</label>
+                <select
+                  required
+                  value={newTrip.driver_id}
+                  onChange={(e) => setNewTrip({ ...newTrip, driver_id: e.target.value })}
+                  className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                >
+                  <option value="" className="bg-gray-800 text-white">Select a driver</option>
+                  {drivers.map(driver => (
+                    <option key={driver.id} value={driver.id} className="bg-gray-800 text-white">
+                      {driver.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Route</label>
+                <input
+                  type="text"
+                  required
+                  value={newTrip.route}
+                  onChange={(e) => setNewTrip({ ...newTrip, route: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  placeholder="e.g., Route 1"
+                />
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateTripModal(false);
+                    setNewTrip({
+                      bus_id: '',
+                      conductor_id: '',
+                      driver_id: '',
+                      route: '',
+                      status: 'in_progress'
+                    });
+                  }}
+                  className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors"
+                >
+                  Create Trip
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
