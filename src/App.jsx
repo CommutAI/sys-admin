@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
+import React from 'react';
 import { supabase } from './lib/supabase';
 import Layout from './components/Layout';
 import Login from './pages/Login';
@@ -13,10 +14,12 @@ import FareMatrix from './pages/FareMatrix';
 import CardManagement from './pages/CardManagement';
 import EmergencyAlerts from './pages/EmergencyAlerts';
 
-function ProtectedRoute({ children, requireAdmin = false }) {
+function ProtectedRoute({ children, requireAdmin = false, requireDriver = false }) {
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isDriver, setIsDriver] = useState(false);
+  const [userRole, setUserRole] = useState(null);
 
   useEffect(() => {
     checkAuth();
@@ -34,7 +37,10 @@ function ProtectedRoute({ children, requireAdmin = false }) {
         .eq('id', session.user.id)
         .single();
       
-      setIsAdmin(staffData?.role === 'admin');
+      const role = staffData?.role || null;
+      setIsAdmin(role === 'admin');
+      setIsDriver(role === 'driver');
+      setUserRole(role);
     }
 
     setLoading(false);
@@ -56,7 +62,12 @@ function ProtectedRoute({ children, requireAdmin = false }) {
     return <Navigate to="/" />;
   }
 
-  return children;
+  if (requireDriver && !isDriver) {
+    return <Navigate to="/" />;
+  }
+
+  // Pass user role to children
+  return <>{React.cloneElement(children, { userRole })}</>;
 }
 
 function App() {
