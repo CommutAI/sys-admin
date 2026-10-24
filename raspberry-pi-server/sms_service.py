@@ -290,13 +290,8 @@ class SMSService:
         """
         Send confirmation SMS for successful pre-reservation from public dashboard
         """
-        message = f"RESERVATION CONFIRMED\n"
-        message += f"ID: {reservation_id}\n"
-        message += f"Passenger: {passenger_name}\n"
-        message += f"Route: {route}\n"
-        message += f"Schedule: {schedule}\n"
-        message += f"Seats: {seats}\n"
-        message += f"Total Fare: ₱{total_fare:.2f}"
+        message = f"RESERVATION CONFIRMED. ID: {reservation_id}. Passenger: {passenger_name}. Route: {route}. Schedule: {schedule}. Seats: {seats}. Total Fare: ₱{total_fare:.2f}"
+        logger.info(f"Message content: {message}")
 
         logger.info(f"Sending reservation confirmation to {phone_number}")
         return self.send_sms(phone_number, message, 'reservation_confirmation')
@@ -339,13 +334,14 @@ class SMSService:
         if not message:
             message = "EMERGENCY ALERT"
 
-        emergency_msg = f"🚨 {message}\n"
+        emergency_msg = f"🚨 {message}. "
         if bus_number:
-            emergency_msg += f"Bus: {bus_number}\n"
+            emergency_msg += f"Bus: {bus_number}. "
         if driver_name:
-            emergency_msg += f"Driver: {driver_name}\n"
+            emergency_msg += f"Driver: {driver_name}. "
         if location:
             emergency_msg += f"Location: {location.get('lat', 'N/A')}, {location.get('lng', 'N/A')}"
+        logger.info(f"Message content: {emergency_msg}")
 
         logger.warning(f"Sending emergency alert from bus to {len(self.emergency_contacts)} contacts")
         return self.send_bulk_sms(self.emergency_contacts, emergency_msg, 'emergency_bus')
@@ -356,15 +352,11 @@ class SMSService:
         """
         Send confirmation SMS after successful trip completion (alighting)
         """
-        message = f"TRIP COMPLETED\n"
-        message += f"Passenger: {passenger_name}\n"
-        message += f"Bus: {bus_number}\n"
-        message += f"Route: {route}\n"
-        message += f"Alighting: {alighting_stop}\n"
-        message += f"Fare: ₱{fare:.2f}\n"
+        message = f"TRIP COMPLETED. Passenger: {passenger_name}. Bus: {bus_number}. Route: {route}. Alighting: {alighting_stop}. Fare: ₱{fare:.2f}. "
         if distance:
-            message += f"Distance: {distance:.1f} km\n"
+            message += f"Distance: {distance:.1f} km. "
         message += f"Thank you for riding with us!"
+        logger.info(f"Message content: {message}")
 
         logger.info(f"Sending trip completion confirmation to {phone_number}")
         return self.send_sms(phone_number, message, 'trip_completion')
@@ -375,14 +367,11 @@ class SMSService:
         """
         Send SMS confirmation for QR card top-up in customer service
         """
-        message = f"TOP-UP SUCCESSFUL\n"
-        message += f"Card ID: {card_id}\n"
-        message += f"Holder: {card_holder}\n"
-        message += f"Amount: ₱{amount:.2f}\n"
-        message += f"New Balance: ₱{new_balance:.2f}\n"
+        message = f"TOP-UP SUCCESSFUL. Card ID: {card_id}. Holder: {card_holder}. Amount: ₱{amount:.2f}. New Balance: ₱{new_balance:.2f}. "
         if transaction_id:
-            message += f"Ref: {transaction_id}\n"
+            message += f"Ref: {transaction_id}. "
         message += f"Thank you for reloading!"
+        logger.info(f"Message content: {message}")
 
         logger.info(f"Sending top-up confirmation to {phone_number}")
         return self.send_sms(phone_number, message, 'topup')
