@@ -214,17 +214,19 @@ class SMSService:
             time.sleep(0.5)
 
             # Send message
-            self.serial_connection.write(f'{message}\x1A\r'.encode())
-            time.sleep(3)
+            self.serial_connection.write(f'{message}\x1A'.encode())  # Remove \r, just Ctrl+Z
+            time.sleep(5)  # Increased wait time
 
             # Read response in chunks to get full response
             response = ""
-            while self.serial_connection.in_waiting > 0:
-                response += self.serial_connection.read(self.serial_connection.in_waiting).decode('utf-8', errors='ignore')
-                time.sleep(0.1)
+            for _ in range(10):  # Try reading multiple times
+                if self.serial_connection.in_waiting > 0:
+                    response += self.serial_connection.read(self.serial_connection.in_waiting).decode('utf-8', errors='ignore')
+                time.sleep(0.5)
 
             response = response.strip()
             logger.info(f"SIM900A response: {response}")
+            logger.info(f"Message length: {len(message)} characters")
 
             if 'OK' in response:
                 logger.info(f"SMS sent successfully to {normalized_phone}")
@@ -311,6 +313,9 @@ class SMSService:
             message += f"Holder: {card_holder}\n"
             message += f"Your QR card reservation has been approved.\n"
             message += f"Please claim your card at the pickup terminal within 7 days."
+            # Remove newlines that might cause issues
+            message = message.replace('\n', ' ')
+            logger.info(f"Message content: {message}")
         else:
             message = f"CARD DECLINED\n"
             message += f"Card ID: {card_id}\n"
@@ -318,6 +323,9 @@ class SMSService:
             if reason:
                 message += f"Reason: {reason}\n"
             message += f"Please contact customer service for assistance."
+            # Remove newlines that might cause issues
+            message = message.replace('\n', ' ')
+            logger.info(f"Message content: {message}")
 
         logger.info(f"Sending card {status} notification to {phone_number}")
         return self.send_sms(phone_number, message, f'card_{status.lower()}')
