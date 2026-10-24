@@ -1,0 +1,18 @@
+[Unit]
+Description=Bus Monitoring SMS Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=chichi
+WorkingDirectory=/home/chichi/sys-admin/raspberry-pi-server
+Environment="PATH=/home/chichi/sys-admin/raspberry-pi-server/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/chichi/sys-admin/raspberry-pi-server/venv/bin/python /home/chichi/sys-admin/raspberry-pi-server/sms_service.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
