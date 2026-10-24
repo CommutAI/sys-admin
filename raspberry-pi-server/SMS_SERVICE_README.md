@@ -21,13 +21,7 @@ Sends confirmation when a passenger successfully makes a pre-reservation.
 
 **Message Template:**
 ```
-RESERVATION CONFIRMED
-ID: RES001
-Passenger: Juan Dela Cruz
-Route: Manila to Baguio
-Schedule: 2024-10-25 08:00
-Seats: 2
-Total Fare: ₱500.00
+RESERVATION CONFIRMED. ID: RES001. Passenger: Juan Dela Cruz. Route: Manila to Baguio. Schedule: 2024-10-25 08:00. Seats: 2. Total Fare: ₱500.00
 ```
 
 **SMS Type:** `reservation_confirmation`
@@ -37,20 +31,12 @@ Sends notification when an admin approves or declines a QR card application.
 
 **Approved Message:**
 ```
-CARD APPROVED
-Card ID: CARD001
-Holder: Juan Dela Cruz
-Your QR card reservation has been approved.
-Please claim your card at the pickup terminal within 7 days.
+CARD APPROVED. Card ID: CARD001. Holder: Juan Dela Cruz. Your QR card reservation has been approved. Please claim your card at the pickup terminal within 7 days.
 ```
 
 **Declined Message:**
 ```
-CARD DECLINED
-Card ID: CARD001
-Holder: Juan Dela Cruz
-Reason: Invalid ID documents
-Please contact customer service for assistance.
+CARD DECLINED. Card ID: CARD001. Holder: Juan Dela Cruz. Reason: Invalid ID documents. Please contact customer service for assistance.
 ```
 
 **SMS Type:** `card_approved` or `card_declined`
@@ -60,10 +46,7 @@ Sends emergency alert from bus driver or conductor to all emergency contacts.
 
 **Message Template:**
 ```
-🚨 EMERGENCY ALERT
-Bus: BUS-123
-Driver: Juan Dela Cruz
-Location: 16.4023, 120.5960
+🚨 EMERGENCY ALERT. Bus: BUS-123. Driver: Juan Dela Cruz. Location: 16.4023, 120.5960
 ```
 
 **SMS Type:** `emergency_bus`
@@ -73,14 +56,7 @@ Sends confirmation when a passenger completes their trip and alights.
 
 **Message Template:**
 ```
-TRIP COMPLETED
-Passenger: Juan Dela Cruz
-Bus: BUS-123
-Route: Manila to Baguio
-Alighting: Baguio Terminal
-Fare: ₱250.00
-Distance: 250.5 km
-Thank you for riding with us!
+TRIP COMPLETED. Passenger: Juan Dela Cruz. Bus: BUS-123. Route: Manila to Baguio. Alighting: Baguio Terminal. Fare: ₱250.00. Distance: 250.5 km. Thank you for riding with us!
 ```
 
 **SMS Type:** `trip_completion`
@@ -90,13 +66,7 @@ Sends confirmation when a QR card is topped up at customer service.
 
 **Message Template:**
 ```
-TOP-UP SUCCESSFUL
-Card ID: CARD001
-Holder: Juan Dela Cruz
-Amount: ₱500.00
-New Balance: ₱1500.00
-Ref: TXN12345
-Thank you for reloading!
+TOP-UP SUCCESSFUL. Card ID: CARD001. Holder: Juan Dela Cruz. Amount: ₱500.00. New Balance: ₱1500.00. Ref: TXN12345. Thank you for reloading!
 ```
 
 **SMS Type:** `topup`
