@@ -7,10 +7,14 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 from pydantic import BaseModel
 import os
-import subprocess
+import httpx
 from auth import verify_supabase_token, require_admin
 
 router = APIRouter(prefix="/api/sms", tags=["SMS"])
+
+# SMS Service API URL (Raspberry Pi)
+# Configure this in backend .env file
+SMS_API_URL = os.getenv('SMS_API_URL', 'http://192.168.1.100:8001')
 
 
 class CardApprovalRequest(BaseModel):
@@ -66,34 +70,42 @@ async def send_card_approval_sms(
     Send SMS notification for card approval/decline
     """
     try:
-        # Check if SMS service is available on the Pi
-        # For now, we'll use subprocess to call the SMS service
-        # In production, this should be an HTTP API call to the Pi
-
-        # For local development or when Pi is not available, just log
+        # Log the request
         print(f"Card {request.status} notification: {request.card_holder} ({request.phone_number})")
 
-        # Try to send SMS via subprocess (if running on Pi or accessible)
-        sms_service_path = os.getenv('SMS_SERVICE_PATH', '/home/chichi/sys-admin/raspberry-pi-server/sms_service.py')
+        # Send HTTP request to SMS service on Raspberry Pi
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{SMS_API_URL}/card-approval",
+                json={
+                    "phone_number": request.phone_number,
+                    "card_id": request.card_id,
+                    "card_holder": request.card_holder,
+                    "status": request.status,
+                    "reason": request.reason
+                }
+            )
 
-        try:
-            cmd = [
-                'python3', sms_service_path, 'card',
-                request.phone_number, request.card_id, request.card_holder, request.status
-            ]
-            if request.reason:
-                cmd.append(request.reason)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"SMS service returned error: {response.status_code} - {response.text}")
+                # Don't fail the request - just log and return success
+                return {
+                    "status": "success",
+                    "message": f"Card {request.status} notification sent (SMS service unavailable)",
+                    "phone_number": request.phone_number,
+                    "sms_sent": False
+                }
 
-            # Run in background
-            subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except Exception as e:
-            print(f"Failed to send SMS via subprocess: {e}")
-            # Don't fail the request if SMS fails - just log it
-
+    except httpx.RequestError as e:
+        print(f"Failed to connect to SMS service: {e}")
+        # Don't fail the request - just log and return success
         return {
             "status": "success",
-            "message": f"Card {request.status} notification sent",
-            "phone_number": request.phone_number
+            "message": f"Card {request.status} notification sent (SMS service unavailable)",
+            "phone_number": request.phone_number,
+            "sms_sent": False
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -110,22 +122,36 @@ async def send_reservation_confirmation_sms(
     try:
         print(f"Reservation confirmation: {request.passenger_name} ({request.phone_number})")
 
-        sms_service_path = os.getenv('SMS_SERVICE_PATH', '/home/chichi/sys-admin/raspberry-pi-server/sms_service.py')
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{SMS_API_URL}/reservation-confirmation",
+                json={
+                    "phone_number": request.phone_number,
+                    "reservation_id": request.reservation_id,
+                    "passenger_name": request.passenger_name,
+                    "route": request.route,
+                    "schedule": request.schedule,
+                    "seats": request.seats,
+                    "total_fare": request.total_fare
+                }
+            )
 
-        try:
-            cmd = [
-                'python3', sms_service_path, 'reservation',
-                request.phone_number, request.reservation_id, request.passenger_name,
-                request.route, request.schedule, str(request.seats), str(request.total_fare)
-            ]
-            subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except Exception as e:
-            print(f"Failed to send SMS via subprocess: {e}")
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"SMS service returned error: {response.status_code}")
+                return {
+                    "status": "success",
+                    "message": "Reservation confirmation sent (SMS service unavailable)",
+                    "sms_sent": False
+                }
 
+    except httpx.RequestError as e:
+        print(f"Failed to connect to SMS service: {e}")
         return {
             "status": "success",
-            "message": "Reservation confirmation sent",
-            "phone_number": request.phone_number
+            "message": "Reservation confirmation sent (SMS service unavailable)",
+            "sms_sent": False
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -142,24 +168,36 @@ async def send_trip_completion_sms(
     try:
         print(f"Trip completion: {request.passenger_name} ({request.phone_number})")
 
-        sms_service_path = os.getenv('SMS_SERVICE_PATH', '/home/chichi/sys-admin/raspberry-pi-server/sms_service.py')
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{SMS_API_URL}/trip-completion",
+                json={
+                    "phone_number": request.phone_number,
+                    "passenger_name": request.passenger_name,
+                    "bus_number": request.bus_number,
+                    "route": request.route,
+                    "fare": request.fare,
+                    "alighting_stop": request.alighting_stop,
+                    "distance": request.distance
+                }
+            )
 
-        try:
-            cmd = [
-                'python3', sms_service_path, 'trip',
-                request.phone_number, request.passenger_name, request.bus_number,
-                request.route, str(request.fare), request.alighting_stop
-            ]
-            if request.distance:
-                cmd.append(str(request.distance))
-            subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except Exception as e:
-            print(f"Failed to send SMS via subprocess: {e}")
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"SMS service returned error: {response.status_code}")
+                return {
+                    "status": "success",
+                    "message": "Trip completion confirmation sent (SMS service unavailable)",
+                    "sms_sent": False
+                }
 
+    except httpx.RequestError as e:
+        print(f"Failed to connect to SMS service: {e}")
         return {
             "status": "success",
-            "message": "Trip completion confirmation sent",
-            "phone_number": request.phone_number
+            "message": "Trip completion confirmation sent (SMS service unavailable)",
+            "sms_sent": False
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -176,24 +214,35 @@ async def send_topup_confirmation_sms(
     try:
         print(f"Top-up confirmation: {request.card_holder} ({request.phone_number})")
 
-        sms_service_path = os.getenv('SMS_SERVICE_PATH', '/home/chichi/sys-admin/raspberry-pi-server/sms_service.py')
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{SMS_API_URL}/topup",
+                json={
+                    "phone_number": request.phone_number,
+                    "card_id": request.card_id,
+                    "card_holder": request.card_holder,
+                    "amount": request.amount,
+                    "new_balance": request.new_balance,
+                    "transaction_id": request.transaction_id
+                }
+            )
 
-        try:
-            cmd = [
-                'python3', sms_service_path, 'topup',
-                request.phone_number, request.card_id, request.card_holder,
-                str(request.amount), str(request.new_balance)
-            ]
-            if request.transaction_id:
-                cmd.append(request.transaction_id)
-            subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except Exception as e:
-            print(f"Failed to send SMS via subprocess: {e}")
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"SMS service returned error: {response.status_code}")
+                return {
+                    "status": "success",
+                    "message": "Top-up confirmation sent (SMS service unavailable)",
+                    "sms_sent": False
+                }
 
+    except httpx.RequestError as e:
+        print(f"Failed to connect to SMS service: {e}")
         return {
             "status": "success",
-            "message": "Top-up confirmation sent",
-            "phone_number": request.phone_number
+            "message": "Top-up confirmation sent (SMS service unavailable)",
+            "sms_sent": False
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -210,17 +259,33 @@ async def send_emergency_alert_sms(
     try:
         print(f"Emergency alert: {request.message}")
 
-        sms_service_path = os.getenv('SMS_SERVICE_PATH', '/home/chichi/sys-admin/raspberry-pi-server/sms_service.py')
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{SMS_API_URL}/emergency",
+                json={
+                    "message": request.message,
+                    "location": request.location,
+                    "bus_number": request.bus_number,
+                    "driver_name": request.driver_name
+                }
+            )
 
-        try:
-            cmd = ['python3', sms_service_path, 'emergency', request.message]
-            subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except Exception as e:
-            print(f"Failed to send SMS via subprocess: {e}")
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"SMS service returned error: {response.status_code}")
+                return {
+                    "status": "success",
+                    "message": "Emergency alert sent (SMS service unavailable)",
+                    "sms_sent": False
+                }
 
+    except httpx.RequestError as e:
+        print(f"Failed to connect to SMS service: {e}")
         return {
             "status": "success",
-            "message": "Emergency alert sent"
+            "message": "Emergency alert sent (SMS service unavailable)",
+            "sms_sent": False
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -232,25 +297,23 @@ async def get_sms_status():
     Get SMS service status
     """
     try:
-        sms_service_path = os.getenv('SMS_SERVICE_PATH', '/home/chichi/sys-admin/raspberry-pi-server/sms_service.py')
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{SMS_API_URL}/status")
 
-        try:
-            result = subprocess.run(
-                ['python3', sms_service_path, 'status'],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            return {
-                "status": "success",
-                "service_available": True,
-                "output": result.stdout
-            }
-        except Exception as e:
-            return {
-                "status": "error",
-                "service_available": False,
-                "error": str(e)
-            }
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return {
+                    "status": "error",
+                    "service_available": False,
+                    "error": f"SMS service returned {response.status_code}"
+                }
+
+    except httpx.RequestError as e:
+        return {
+            "status": "error",
+            "service_available": False,
+            "error": str(e)
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
