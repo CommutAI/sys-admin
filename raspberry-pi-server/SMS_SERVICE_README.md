@@ -12,6 +12,101 @@ A dedicated, independent SMS service for the Bus Monitoring System that doesn't 
 - **Command Line Interface**: Easy to use CLI for testing and operations
 - **Systemd Service**: Can run as a background service
 
+## SMS Functionalities
+
+The service provides 5 specific SMS functionalities:
+
+### 1. Reservation Confirmation (Public Dashboard)
+Sends confirmation when a passenger successfully makes a pre-reservation.
+
+**Message Template:**
+```
+RESERVATION CONFIRMED
+ID: RES001
+Passenger: Juan Dela Cruz
+Route: Manila to Baguio
+Schedule: 2024-10-25 08:00
+Seats: 2
+Total Fare: ₱500.00
+Time: 2024-10-24 14:30
+```
+
+**SMS Type:** `reservation_confirmation`
+
+### 2. Card Approval/Decline (System Admin)
+Sends notification when an admin approves or declines a QR card application.
+
+**Approved Message:**
+```
+CARD APPROVED
+Card ID: CARD001
+Holder: Juan Dela Cruz
+Your QR card has been approved and is now active.
+You can now use it for fare payment.
+Time: 2024-10-24 14:30
+```
+
+**Declined Message:**
+```
+CARD DECLINED
+Card ID: CARD001
+Holder: Juan Dela Cruz
+Reason: Invalid ID documents
+Please contact customer service for assistance.
+Time: 2024-10-24 14:30
+```
+
+**SMS Type:** `card_approved` or `card_declined`
+
+### 3. Emergency Alert (Driver/Conductor)
+Sends emergency alert from bus driver or conductor to all emergency contacts.
+
+**Message Template:**
+```
+🚨 EMERGENCY ALERT
+Bus: BUS-123
+Driver: Juan Dela Cruz
+Location: 16.4023, 120.5960
+Time: 2024-10-24 14:30
+```
+
+**SMS Type:** `emergency_bus`
+
+### 4. Trip Completion Confirmation (After Alighting)
+Sends confirmation when a passenger completes their trip and alights.
+
+**Message Template:**
+```
+TRIP COMPLETED
+Passenger: Juan Dela Cruz
+Bus: BUS-123
+Route: Manila to Baguio
+Alighting: Baguio Terminal
+Fare: ₱250.00
+Distance: 250.5 km
+Time: 2024-10-24 14:30
+Thank you for riding with us!
+```
+
+**SMS Type:** `trip_completion`
+
+### 5. Top-up Confirmation (Customer Service)
+Sends confirmation when a QR card is topped up at customer service.
+
+**Message Template:**
+```
+TOP-UP SUCCESSFUL
+Card ID: CARD001
+Holder: Juan Dela Cruz
+Amount: ₱500.00
+New Balance: ₱1500.00
+Ref: TXN12345
+Time: 2024-10-24 14:30
+Thank you for reloading!
+```
+
+**SMS Type:** `topup`
+
 ## Installation
 
 ### Prerequisites
@@ -48,14 +143,38 @@ ADMIN_CONTACTS=+639123456789
 python3 sms_service.py test +639123456789 "Test message"
 ```
 
-#### Send emergency alert to all emergency contacts
+#### Send emergency alert from driver/conductor
 ```bash
 python3 sms_service.py emergency "Emergency situation detected"
 ```
 
-#### Send admin alert to all admin contacts
+#### Send admin alert
 ```bash
 python3 sms_service.py admin "System notification"
+```
+
+#### Send reservation confirmation (from public dashboard)
+```bash
+python3 sms_service.py reservation +639123456789 "RES001" "Juan Dela Cruz" "Manila to Baguio" "2024-10-25 08:00" 2 500.00
+```
+
+#### Send card approval/decline notification
+```bash
+# Approved
+python3 sms_service.py card +639123456789 "CARD001" "Juan Dela Cruz" "approved"
+
+# Declined with reason
+python3 sms_service.py card +639123456789 "CARD001" "Juan Dela Cruz" "declined" "Invalid ID documents"
+```
+
+#### Send trip completion confirmation (after alighting)
+```bash
+python3 sms_service.py trip +639123456789 "Juan Dela Cruz" "BUS-123" "Manila to Baguio" 250.00 "Baguio Terminal" 250.5
+```
+
+#### Send top-up confirmation (customer service)
+```bash
+python3 sms_service.py topup +639123456789 "CARD001" "Juan Dela Cruz" 500.00 1500.00 "TXN12345"
 ```
 
 #### Refresh contacts from database
@@ -129,17 +248,45 @@ CREATE TABLE sms_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   phone_number TEXT NOT NULL,
   message TEXT NOT NULL,
-  sms_type TEXT NOT NULL,
-  status TEXT NOT NULL,
+  sms_type TEXT NOT NULL, -- 'reservation_confirmation', 'card_approved', 'card_declined',
+                          -- 'emergency_bus', 'trip_completion', 'topup', 'emergency', 'admin'
+  status TEXT NOT NULL, -- 'sent', 'failed'
   sent_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
+
+**SMS Types:**
+- `reservation_confirmation` - Pre-reservation confirmation from public dashboard
+- `card_approved` - Card approved by admin
+- `card_declined` - Card declined by admin
+- `emergency_bus` - Emergency alert from driver/conductor
+- `trip_completion` - Trip completion after alighting
+- `topup` - QR card top-up confirmation
+- `emergency` - General emergency alert
+- `admin` - Admin notification
 
 ## Integration with Main System
 
 ### Option 1: Use as Standalone Service
 
 Run SMS service independently and call it via subprocess or HTTP API.
+
+```python
+import subprocess
+
+# Send reservation confirmation
+subprocess.run([
+    'python3', 'sms_service.py', 'reservation',
+    '+639123456789', 'RES001', 'Juan Dela Cruz',
+    'Manila to Baguio', '2024-10-25 08:00', '2', '500.00'
+])
+
+# Send emergency alert
+subprocess.run([
+    'python3', 'sms_service.py', 'emergency',
+    'Medical emergency on board'
+])
+```
 
 ### Option 2: Import as Module
 
@@ -149,11 +296,53 @@ from sms_service import SMSService
 # Initialize
 sms = SMSService()
 
-# Send SMS
-result = sms.send_sms('+639123456789', 'Test message')
+# 1. Send reservation confirmation
+result = sms.send_reservation_confirmation(
+    phone_number='+639123456789',
+    reservation_id='RES001',
+    passenger_name='Juan Dela Cruz',
+    route='Manila to Baguio',
+    schedule='2024-10-25 08:00',
+    seats=2,
+    total_fare=500.00
+)
 
-# Send emergency alert
-result = sms.send_emergency_alert('Emergency!')
+# 2. Send card approval notification
+result = sms.send_card_approval_notification(
+    phone_number='+639123456789',
+    card_id='CARD001',
+    card_holder='Juan Dela Cruz',
+    status='approved'
+)
+
+# 3. Send emergency alert from bus
+result = sms.send_emergency_alert_from_bus(
+    message='Medical emergency on board',
+    location={'lat': 16.4023, 'lng': 120.5960},
+    bus_number='BUS-123',
+    driver_name='Juan Dela Cruz'
+)
+
+# 4. Send trip completion confirmation
+result = sms.send_trip_completion_confirmation(
+    phone_number='+639123456789',
+    passenger_name='Juan Dela Cruz',
+    bus_number='BUS-123',
+    route='Manila to Baguio',
+    fare=250.00,
+    alighting_stop='Baguio Terminal',
+    distance=250.5
+)
+
+# 5. Send top-up confirmation
+result = sms.send_topup_confirmation(
+    phone_number='+639123456789',
+    card_id='CARD001',
+    card_holder='Juan Dela Cruz',
+    amount=500.00,
+    new_balance=1500.00,
+    transaction_id='TXN12345'
+)
 
 # Check status
 status = sms.check_status()

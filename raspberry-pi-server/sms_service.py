@@ -236,6 +236,111 @@ class SMSService:
         logger.info(f"Sending admin alert to {len(self.admin_contacts)} contacts")
         return self.send_bulk_sms(self.admin_contacts, message, 'admin')
 
+    # ==================== SPECIFIC SMS FUNCTIONALITIES ====================
+
+    def send_reservation_confirmation(self, phone_number: str, reservation_id: str,
+                                     passenger_name: str, route: str, schedule: str,
+                                     seats: int, total_fare: float) -> Dict:
+        """
+        Send confirmation SMS for successful pre-reservation from public dashboard
+        """
+        message = f"RESERVATION CONFIRMED\n"
+        message += f"ID: {reservation_id}\n"
+        message += f"Passenger: {passenger_name}\n"
+        message += f"Route: {route}\n"
+        message += f"Schedule: {schedule}\n"
+        message += f"Seats: {seats}\n"
+        message += f"Total Fare: ₱{total_fare:.2f}\n"
+        message += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+        logger.info(f"Sending reservation confirmation to {phone_number}")
+        return self.send_sms(phone_number, message, 'reservation_confirmation')
+
+    def send_card_approval_notification(self, phone_number: str, card_id: str,
+                                       card_holder: str, status: str,
+                                       reason: str = None) -> Dict:
+        """
+        Send SMS notification for card approval/decline by system admin
+        """
+        if status.lower() == 'approved':
+            message = f"CARD APPROVED\n"
+            message += f"Card ID: {card_id}\n"
+            message += f"Holder: {card_holder}\n"
+            message += f"Your QR card has been approved and is now active.\n"
+            message += f"You can now use it for fare payment.\n"
+            message += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        else:
+            message = f"CARD DECLINED\n"
+            message += f"Card ID: {card_id}\n"
+            message += f"Holder: {card_holder}\n"
+            if reason:
+                message += f"Reason: {reason}\n"
+            message += f"Please contact customer service for assistance.\n"
+            message += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+        logger.info(f"Sending card {status} notification to {phone_number}")
+        return self.send_sms(phone_number, message, f'card_{status.lower()}')
+
+    def send_emergency_alert_from_bus(self, message: str = None, location: Dict = None,
+                                      bus_number: str = None, driver_name: str = None) -> Dict:
+        """
+        Send emergency SMS from driver and conductor
+        Goes to all emergency contacts
+        """
+        if not message:
+            message = "EMERGENCY ALERT"
+
+        emergency_msg = f"🚨 {message}\n"
+        if bus_number:
+            emergency_msg += f"Bus: {bus_number}\n"
+        if driver_name:
+            emergency_msg += f"Driver: {driver_name}\n"
+        if location:
+            emergency_msg += f"Location: {location.get('lat', 'N/A')}, {location.get('lng', 'N/A')}\n"
+        emergency_msg += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+        logger.warning(f"Sending emergency alert from bus to {len(self.emergency_contacts)} contacts")
+        return self.send_bulk_sms(self.emergency_contacts, emergency_msg, 'emergency_bus')
+
+    def send_trip_completion_confirmation(self, phone_number: str, passenger_name: str,
+                                         bus_number: str, route: str, fare: float,
+                                         alighting_stop: str, distance: float = None) -> Dict:
+        """
+        Send confirmation SMS after successful trip completion (alighting)
+        """
+        message = f"TRIP COMPLETED\n"
+        message += f"Passenger: {passenger_name}\n"
+        message += f"Bus: {bus_number}\n"
+        message += f"Route: {route}\n"
+        message += f"Alighting: {alighting_stop}\n"
+        message += f"Fare: ₱{fare:.2f}\n"
+        if distance:
+            message += f"Distance: {distance:.1f} km\n"
+        message += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        message += f"Thank you for riding with us!"
+
+        logger.info(f"Sending trip completion confirmation to {phone_number}")
+        return self.send_sms(phone_number, message, 'trip_completion')
+
+    def send_topup_confirmation(self, phone_number: str, card_id: str,
+                                 card_holder: str, amount: float,
+                                 new_balance: float, transaction_id: str = None) -> Dict:
+        """
+        Send SMS confirmation for QR card top-up in customer service
+        """
+        message = f"TOP-UP SUCCESSFUL\n"
+        message += f"Card ID: {card_id}\n"
+        message += f"Holder: {card_holder}\n"
+        message += f"Amount: ₱{amount:.2f}\n"
+        message += f"New Balance: ₱{new_balance:.2f}\n"
+        if transaction_id:
+            message += f"Ref: {transaction_id}\n"
+        message += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        message += f"Thank you for reloading!"
+
+        logger.info(f"Sending top-up confirmation to {phone_number}")
+        return self.send_sms(phone_number, message, 'topup')
+
     def _log_sms(self, phone_number: str, message: str, sms_type: str, status: str):
         """Log SMS to database"""
         if not self.supabase:
@@ -330,9 +435,9 @@ def main():
                 print("Usage: python sms_service.py test <phone_number> [message]")
 
         elif command == 'emergency':
-            # Send emergency alert
+            # Send emergency alert from bus
             message = sys.argv[2] if len(sys.argv) > 2 else None
-            result = sms_service.send_emergency_alert(message)
+            result = sms_service.send_emergency_alert_from_bus(message)
             print(f"Emergency alert sent: {result['successful']}/{result['total']} successful")
 
         elif command == 'admin':
@@ -340,6 +445,71 @@ def main():
             message = sys.argv[2] if len(sys.argv) > 2 else None
             result = sms_service.send_admin_alert(message)
             print(f"Admin alert sent: {result['successful']}/{result['total']} successful")
+
+        elif command == 'reservation':
+            # Send reservation confirmation
+            if len(sys.argv) > 7:
+                phone = sys.argv[2]
+                reservation_id = sys.argv[3]
+                passenger_name = sys.argv[4]
+                route = sys.argv[5]
+                schedule = sys.argv[6]
+                seats = int(sys.argv[7])
+                fare = float(sys.argv[8]) if len(sys.argv) > 8 else 0
+                result = sms_service.send_reservation_confirmation(
+                    phone, reservation_id, passenger_name, route, schedule, seats, fare
+                )
+                print(f"Reservation confirmation sent: {result}")
+            else:
+                print("Usage: python sms_service.py reservation <phone> <id> <name> <route> <schedule> <seats> <fare>")
+
+        elif command == 'card':
+            # Send card approval/decline notification
+            if len(sys.argv) > 5:
+                phone = sys.argv[2]
+                card_id = sys.argv[3]
+                card_holder = sys.argv[4]
+                status = sys.argv[5]
+                reason = sys.argv[6] if len(sys.argv) > 6 else None
+                result = sms_service.send_card_approval_notification(
+                    phone, card_id, card_holder, status, reason
+                )
+                print(f"Card {status} notification sent: {result}")
+            else:
+                print("Usage: python sms_service.py card <phone> <card_id> <holder> <approved|declined> [reason]")
+
+        elif command == 'trip':
+            # Send trip completion confirmation
+            if len(sys.argv) > 6:
+                phone = sys.argv[2]
+                passenger_name = sys.argv[3]
+                bus_number = sys.argv[4]
+                route = sys.argv[5]
+                fare = float(sys.argv[6])
+                alighting_stop = sys.argv[7]
+                distance = float(sys.argv[8]) if len(sys.argv) > 8 else None
+                result = sms_service.send_trip_completion_confirmation(
+                    phone, passenger_name, bus_number, route, fare, alighting_stop, distance
+                )
+                print(f"Trip completion confirmation sent: {result}")
+            else:
+                print("Usage: python sms_service.py trip <phone> <name> <bus> <route> <fare> <stop> [distance]")
+
+        elif command == 'topup':
+            # Send top-up confirmation
+            if len(sys.argv) > 5:
+                phone = sys.argv[2]
+                card_id = sys.argv[3]
+                card_holder = sys.argv[4]
+                amount = float(sys.argv[5])
+                new_balance = float(sys.argv[6])
+                transaction_id = sys.argv[7] if len(sys.argv) > 7 else None
+                result = sms_service.send_topup_confirmation(
+                    phone, card_id, card_holder, amount, new_balance, transaction_id
+                )
+                print(f"Top-up confirmation sent: {result}")
+            else:
+                print("Usage: python sms_service.py topup <phone> <card_id> <holder> <amount> <new_balance> [transaction_id]")
 
         elif command == 'refresh':
             # Refresh contacts
@@ -352,14 +522,22 @@ def main():
 
         else:
             print(f"Unknown command: {command}")
-            print("Available commands: test, emergency, admin, refresh, status")
+            print("Available commands: test, emergency, admin, reservation, card, trip, topup, refresh, status")
     else:
         print("Available commands:")
-        print("  python sms_service.py test <phone> [message]  - Send test SMS")
-        print("  python sms_service.py emergency [message]      - Send emergency alert")
-        print("  python sms_service.py admin [message]          - Send admin alert")
-        print("  python sms_service.py refresh                  - Refresh contacts from DB")
-        print("  python sms_service.py status                   - Show service status")
+        print("  python sms_service.py test <phone> [message]                    - Send test SMS")
+        print("  python sms_service.py emergency [message]                        - Send emergency alert")
+        print("  python sms_service.py admin [message]                            - Send admin alert")
+        print("  python sms_service.py reservation <phone> <id> <name> <route> <schedule> <seats> <fare>")
+        print("                                                            - Send reservation confirmation")
+        print("  python sms_service.py card <phone> <card_id> <holder> <approved|declined> [reason]")
+        print("                                                            - Send card approval/decline")
+        print("  python sms_service.py trip <phone> <name> <bus> <route> <fare> <stop> [distance]")
+        print("                                                            - Send trip completion")
+        print("  python sms_service.py topup <phone> <card_id> <holder> <amount> <new_balance> [ref]")
+        print("                                                            - Send top-up confirmation")
+        print("  python sms_service.py refresh                                    - Refresh contacts from DB")
+        print("  python sms_service.py status                                     - Show service status")
 
     sms_service.disconnect()
 
