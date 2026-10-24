@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { CreditCard, Ticket, Plus, Search, Edit, X, MoreHorizontal, TrendingUp, Calendar, ChevronLeft, ChevronRight, Check, AlertCircle, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import AuditService from '../services/auditService';
+import { getSmsApiUrl } from '../services/piAutoDiscovery';
 
 const CardManagement = () => {
   const [activeTab, setActiveTab] = useState('qr-cards');
@@ -286,10 +287,10 @@ const CardManagement = () => {
           details: `Approved card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}`,
         });
 
-        // Send SMS notification
+        // Send SMS notification directly to Raspberry Pi SMS API
         try {
-          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-          await fetch(`${API_URL}/api/sms/card-approval`, {
+          const SMS_API_URL = await getSmsApiUrl();
+          await fetch(`${SMS_API_URL}/card-approval`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -316,10 +317,10 @@ const CardManagement = () => {
           details: `Declined card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}. Reason: ${declineReason || 'No reason'}`,
         });
 
-        // Send SMS notification
+        // Send SMS notification directly to Raspberry Pi SMS API
         try {
-          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-          await fetch(`${API_URL}/api/sms/card-approval`, {
+          const SMS_API_URL = await getSmsApiUrl();
+          await fetch(`${SMS_API_URL}/card-approval`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

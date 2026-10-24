@@ -7,8 +7,8 @@ Wants=network.target
 Type=simple
 User=chichi
 WorkingDirectory=/home/chichi/sys-admin/raspberry-pi-server
-Environment="PATH=/home/chichi/sys-admin/raspberry-pi-server/venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/chichi/sys-admin/raspberry-pi-server/venv/bin/python /home/chichi/sys-admin/raspberry-pi-server/sms_api_server.py
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/bin/python3 /home/chichi/sys-admin/raspberry-pi-server/sms_api_server.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

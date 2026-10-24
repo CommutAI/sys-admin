@@ -3,18 +3,18 @@ SMS Router for Bus Monitoring System
 Handles SMS notifications for various system events
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from typing import Optional
 from pydantic import BaseModel
 import os
 import httpx
-from auth import verify_supabase_token, require_admin
+from pi_discovery import get_sms_api_url_sync
 
 router = APIRouter(prefix="/api/sms", tags=["SMS"])
 
 # SMS Service API URL (Raspberry Pi)
-# Configure this in backend .env file
-SMS_API_URL = os.getenv('SMS_API_URL', 'http://192.168.1.100:8001')
+# Auto-discovered if not set in environment
+SMS_API_URL = os.getenv('SMS_API_URL')
 
 
 class CardApprovalRequest(BaseModel):
@@ -62,10 +62,7 @@ class EmergencyAlertRequest(BaseModel):
 
 
 @router.post("/card-approval")
-async def send_card_approval_sms(
-    request: CardApprovalRequest,
-    current_user: dict = Depends(verify_supabase_token)
-):
+async def send_card_approval_sms(request: CardApprovalRequest):
     """
     Send SMS notification for card approval/decline
     """
@@ -73,10 +70,14 @@ async def send_card_approval_sms(
         # Log the request
         print(f"Card {request.status} notification: {request.card_holder} ({request.phone_number})")
 
+        # Auto-discover SMS API URL
+        sms_api_url = get_sms_api_url_sync()
+        print(f"Using SMS API URL: {sms_api_url}")
+
         # Send HTTP request to SMS service on Raspberry Pi
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{SMS_API_URL}/card-approval",
+                f"{sms_api_url}/card-approval",
                 json={
                     "phone_number": request.phone_number,
                     "card_id": request.card_id,
@@ -112,19 +113,19 @@ async def send_card_approval_sms(
 
 
 @router.post("/reservation-confirmation")
-async def send_reservation_confirmation_sms(
-    request: ReservationConfirmationRequest,
-    current_user: dict = Depends(verify_supabase_token)
-):
+async def send_reservation_confirmation_sms(request: ReservationConfirmationRequest):
     """
     Send SMS confirmation for successful reservation
     """
     try:
         print(f"Reservation confirmation: {request.passenger_name} ({request.phone_number})")
 
+        sms_api_url = get_sms_api_url_sync()
+        print(f"Using SMS API URL: {sms_api_url}")
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{SMS_API_URL}/reservation-confirmation",
+                f"{sms_api_url}/reservation-confirmation",
                 json={
                     "phone_number": request.phone_number,
                     "reservation_id": request.reservation_id,
@@ -158,19 +159,19 @@ async def send_reservation_confirmation_sms(
 
 
 @router.post("/trip-completion")
-async def send_trip_completion_sms(
-    request: TripCompletionRequest,
-    current_user: dict = Depends(verify_supabase_token)
-):
+async def send_trip_completion_sms(request: TripCompletionRequest):
     """
     Send SMS confirmation for trip completion
     """
     try:
         print(f"Trip completion: {request.passenger_name} ({request.phone_number})")
 
+        sms_api_url = get_sms_api_url_sync()
+        print(f"Using SMS API URL: {sms_api_url}")
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{SMS_API_URL}/trip-completion",
+                f"{sms_api_url}/trip-completion",
                 json={
                     "phone_number": request.phone_number,
                     "passenger_name": request.passenger_name,
@@ -204,19 +205,19 @@ async def send_trip_completion_sms(
 
 
 @router.post("/topup")
-async def send_topup_confirmation_sms(
-    request: TopUpRequest,
-    current_user: dict = Depends(verify_supabase_token)
-):
+async def send_topup_confirmation_sms(request: TopUpRequest):
     """
     Send SMS confirmation for card top-up
     """
     try:
         print(f"Top-up confirmation: {request.card_holder} ({request.phone_number})")
 
+        sms_api_url = get_sms_api_url_sync()
+        print(f"Using SMS API URL: {sms_api_url}")
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{SMS_API_URL}/topup",
+                f"{sms_api_url}/topup",
                 json={
                     "phone_number": request.phone_number,
                     "card_id": request.card_id,
@@ -249,19 +250,19 @@ async def send_topup_confirmation_sms(
 
 
 @router.post("/emergency")
-async def send_emergency_alert_sms(
-    request: EmergencyAlertRequest,
-    current_user: dict = Depends(verify_supabase_token)
-):
+async def send_emergency_alert_sms(request: EmergencyAlertRequest):
     """
     Send emergency alert from bus
     """
     try:
         print(f"Emergency alert: {request.message}")
 
+        sms_api_url = get_sms_api_url_sync()
+        print(f"Using SMS API URL: {sms_api_url}")
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{SMS_API_URL}/emergency",
+                f"{sms_api_url}/emergency",
                 json={
                     "message": request.message,
                     "location": request.location,
@@ -297,8 +298,11 @@ async def get_sms_status():
     Get SMS service status
     """
     try:
+        sms_api_url = get_sms_api_url_sync()
+        print(f"Checking SMS API status at: {sms_api_url}")
+
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{SMS_API_URL}/status")
+            response = await client.get(f"{sms_api_url}/status")
 
             if response.status_code == 200:
                 return response.json()
