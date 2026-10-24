@@ -545,22 +545,55 @@ class HardwareManager:
         self.osm_geolocation: Optional[OpenStreetMapGeolocation] = None
         self.nominatim: Optional[NominatimGeocoding] = None
         self.emergency_button: Optional[EmergencyButton] = None
-        
+
         self.current_location: Optional[GPSLocation] = None
+        # Initialize with config values as fallback, will be updated from database
         self.emergency_contacts = config.get('emergency_contacts', [])
         self.admin_contacts = config.get('admin_contacts', [])
         self.current_trip_id: Optional[int] = None
-        
+
         # Hardware availability flags
         self.camera_available = True  # Camera is managed by video processor
         self.gps_available = False
         self.sms_available = False
         self.emergency_button_available = False
         
+    def fetch_contacts_from_db(self):
+        """Fetch emergency and admin contacts from database"""
+        if not self.db_client:
+            logger.warning("No database client available, using config contacts")
+            return
+
+        try:
+            # Fetch emergency contacts
+            emergency_result = self.db_client.table('emergency_contacts').select('phone').execute()
+            if emergency_result.data:
+                self.emergency_contacts = [contact['phone'] for contact in emergency_result.data if contact.get('phone')]
+                logger.info(f"Loaded {len(self.emergency_contacts)} emergency contacts from database")
+            else:
+                logger.warning("No emergency contacts found in database, using config fallback")
+
+            # Fetch admin contacts (could be from a separate table or same table with a flag)
+            # For now, we'll use the same table - you can add an 'is_admin' column later
+            admin_result = self.db_client.table('emergency_contacts').select('phone').execute()
+            if admin_result.data:
+                # You might want to filter by is_admin=true in the future
+                self.admin_contacts = [contact['phone'] for contact in admin_result.data if contact.get('phone')]
+                logger.info(f"Loaded {len(self.admin_contacts)} admin contacts from database")
+            else:
+                logger.warning("No admin contacts found in database, using config fallback")
+
+        except Exception as e:
+            logger.error(f"Failed to fetch contacts from database: {e}")
+            logger.info("Using config contacts as fallback")
+
     def initialize(self) -> bool:
         """Initialize all hardware components"""
         success = True
-        
+
+        # Fetch contacts from database first
+        self.fetch_contacts_from_db()
+
         # Initialize SIM900A (USB-TTL adapter)
         if self.config.get('enable_sms', True):
             self.sim900a = SIM900A(
@@ -747,6 +780,12 @@ class HardwareManager:
         """Clear the current trip ID"""
         self.current_trip_id = None
         logger.info("Current trip ID cleared")
+
+    def refresh_contacts(self):
+        """Refresh contacts from database"""
+        logger.info("Refreshing contacts from database...")
+        self.fetch_contacts_from_db()
+        logger.info(f"Contacts refreshed - Emergency: {len(self.emergency_contacts)}, Admin: {len(self.admin_contacts)}")
     
     def _log_emergency_to_db(self, location: Optional[GPSLocation]) -> Optional[int]:
         """Log emergency to database"""

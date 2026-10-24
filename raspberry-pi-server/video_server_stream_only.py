@@ -163,6 +163,7 @@ HARDWARE_CONFIG = {
     'neo6m_baudrate': int(os.getenv('NEO6M_BAUDRATE', '9600')),
     'emergency_button_pin': int(os.getenv('EMERGENCY_BUTTON_PIN', '18')),
     'osm_user_agent': os.getenv('OSM_USER_AGENT', 'BusMonitoringSystem'),
+    # Contacts are now fetched from database, these are only fallbacks
     'emergency_contacts': os.getenv('EMERGENCY_CONTACTS', '').split(',') if os.getenv('EMERGENCY_CONTACTS') else [],
     'admin_contacts': os.getenv('ADMIN_CONTACTS', '').split(',') if os.getenv('ADMIN_CONTACTS') else []
 }
