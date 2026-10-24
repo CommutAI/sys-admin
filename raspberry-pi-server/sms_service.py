@@ -250,8 +250,7 @@ class SMSService:
         message += f"Route: {route}\n"
         message += f"Schedule: {schedule}\n"
         message += f"Seats: {seats}\n"
-        message += f"Total Fare: ₱{total_fare:.2f}\n"
-        message += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        message += f"Total Fare: ₱{total_fare:.2f}"
 
         logger.info(f"Sending reservation confirmation to {phone_number}")
         return self.send_sms(phone_number, message, 'reservation_confirmation')
@@ -267,16 +266,14 @@ class SMSService:
             message += f"Card ID: {card_id}\n"
             message += f"Holder: {card_holder}\n"
             message += f"Your QR card reservation has been approved.\n"
-            message += f"Please claim your card at the pickup terminal within 7 days.\n"
-            message += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            message += f"Please claim your card at the pickup terminal within 7 days."
         else:
             message = f"CARD DECLINED\n"
             message += f"Card ID: {card_id}\n"
             message += f"Holder: {card_holder}\n"
             if reason:
                 message += f"Reason: {reason}\n"
-            message += f"Please contact customer service for assistance.\n"
-            message += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            message += f"Please contact customer service for assistance."
 
         logger.info(f"Sending card {status} notification to {phone_number}")
         return self.send_sms(phone_number, message, f'card_{status.lower()}')
@@ -296,8 +293,7 @@ class SMSService:
         if driver_name:
             emergency_msg += f"Driver: {driver_name}\n"
         if location:
-            emergency_msg += f"Location: {location.get('lat', 'N/A')}, {location.get('lng', 'N/A')}\n"
-        emergency_msg += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            emergency_msg += f"Location: {location.get('lat', 'N/A')}, {location.get('lng', 'N/A')}"
 
         logger.warning(f"Sending emergency alert from bus to {len(self.emergency_contacts)} contacts")
         return self.send_bulk_sms(self.emergency_contacts, emergency_msg, 'emergency_bus')
@@ -316,7 +312,6 @@ class SMSService:
         message += f"Fare: ₱{fare:.2f}\n"
         if distance:
             message += f"Distance: {distance:.1f} km\n"
-        message += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
         message += f"Thank you for riding with us!"
 
         logger.info(f"Sending trip completion confirmation to {phone_number}")
@@ -335,7 +330,6 @@ class SMSService:
         message += f"New Balance: ₱{new_balance:.2f}\n"
         if transaction_id:
             message += f"Ref: {transaction_id}\n"
-        message += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
         message += f"Thank you for reloading!"
 
         logger.info(f"Sending top-up confirmation to {phone_number}")

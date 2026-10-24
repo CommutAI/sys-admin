@@ -28,7 +28,6 @@ Route: Manila to Baguio
 Schedule: 2024-10-25 08:00
 Seats: 2
 Total Fare: ₱500.00
-Time: 2024-10-24 14:30
 ```
 
 **SMS Type:** `reservation_confirmation`
@@ -43,7 +42,6 @@ Card ID: CARD001
 Holder: Juan Dela Cruz
 Your QR card reservation has been approved.
 Please claim your card at the pickup terminal within 7 days.
-Time: 2024-10-24 14:30
 ```
 
 **Declined Message:**
@@ -53,7 +51,6 @@ Card ID: CARD001
 Holder: Juan Dela Cruz
 Reason: Invalid ID documents
 Please contact customer service for assistance.
-Time: 2024-10-24 14:30
 ```
 
 **SMS Type:** `card_approved` or `card_declined`
@@ -67,7 +64,6 @@ Sends emergency alert from bus driver or conductor to all emergency contacts.
 Bus: BUS-123
 Driver: Juan Dela Cruz
 Location: 16.4023, 120.5960
-Time: 2024-10-24 14:30
 ```
 
 **SMS Type:** `emergency_bus`
@@ -84,7 +80,6 @@ Route: Manila to Baguio
 Alighting: Baguio Terminal
 Fare: ₱250.00
 Distance: 250.5 km
-Time: 2024-10-24 14:30
 Thank you for riding with us!
 ```
 
@@ -101,7 +96,6 @@ Holder: Juan Dela Cruz
 Amount: ₱500.00
 New Balance: ₱1500.00
 Ref: TXN12345
-Time: 2024-10-24 14:30
 Thank you for reloading!
 ```
 
