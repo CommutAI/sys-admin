@@ -864,7 +864,7 @@ CREATE TABLE IF NOT EXISTS card_reservations (
   contact           VARCHAR(20) NOT NULL,
   card_type         VARCHAR(50) NOT NULL,
   pickup_terminal   VARCHAR(100) NOT NULL,
-  status            VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'claimed', 'expired', 'cancelled')),
+  status            VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'declined', 'claimed', 'expired', 'cancelled')),
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   expires_at        TIMESTAMPTZ NOT NULL,
   claimed_at        TIMESTAMPTZ,
