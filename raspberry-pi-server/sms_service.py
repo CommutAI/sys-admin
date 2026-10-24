@@ -146,6 +146,28 @@ class SMSService:
             self.admin_contacts = [p.strip() for p in admin_env.split(',') if p.strip()]
             logger.info(f"Using {len(self.admin_contacts)} admin contacts from ENV")
 
+    def _normalize_phone_number(self, phone_number: str) -> str:
+        """
+        Normalize phone number to international format
+        Converts: 09123456789 -> +639123456789
+                 639123456789 -> +639123456789
+                 +639123456789 -> +639123456789 (no change)
+        """
+        # Remove any spaces, dashes, or parentheses
+        phone_number = phone_number.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+
+        # If starts with 0, replace with +63
+        if phone_number.startswith('0'):
+            phone_number = '+63' + phone_number[1:]
+        # If starts with 63 but not +63, add +
+        elif phone_number.startswith('63') and not phone_number.startswith('+'):
+            phone_number = '+' + phone_number
+        # If doesn't start with +, assume Philippines (+63)
+        elif not phone_number.startswith('+'):
+            phone_number = '+63' + phone_number
+
+        return phone_number
+
     def _send_at_command(self, command: str, timeout: float = 1.0) -> str:
         """Send AT command and return response"""
         if not self.connected or not self.serial_connection:
@@ -168,14 +190,18 @@ class SMSService:
             return {'success': False, 'error': 'Not connected'}
 
         try:
-            logger.info(f"Sending SMS to {phone_number}: {message[:50]}...")
+            # Normalize phone number
+            normalized_phone = self._normalize_phone_number(phone_number)
+            logger.info(f"Normalized phone: {phone_number} -> {normalized_phone}")
+
+            logger.info(f"Sending SMS to {normalized_phone}: {message[:50]}...")
 
             # Set SMS mode to text
             self._send_at_command('AT+CMGF=1')
             time.sleep(0.5)
 
             # Set recipient
-            self._send_at_command(f'AT+CMGS="{phone_number}"')
+            self._send_at_command(f'AT+CMGS="{normalized_phone}"')
             time.sleep(0.5)
 
             # Send message
@@ -185,13 +211,13 @@ class SMSService:
             response = self.serial_connection.read(200).decode('utf-8', errors='ignore').strip()
 
             if 'OK' in response:
-                logger.info(f"SMS sent successfully to {phone_number}")
-                self._log_sms(phone_number, message, sms_type, 'sent')
-                return {'success': True, 'phone': phone_number}
+                logger.info(f"SMS sent successfully to {normalized_phone}")
+                self._log_sms(normalized_phone, message, sms_type, 'sent')
+                return {'success': True, 'phone': normalized_phone}
             else:
-                logger.error(f"Failed to send SMS to {phone_number}: {response}")
-                self._log_sms(phone_number, message, sms_type, 'failed')
-                return {'success': False, 'error': response, 'phone': phone_number}
+                logger.error(f"Failed to send SMS to {normalized_phone}: {response}")
+                self._log_sms(normalized_phone, message, sms_type, 'failed')
+                return {'success': False, 'error': response, 'phone': normalized_phone}
 
         except Exception as e:
             logger.error(f"SMS sending error: {e}")
@@ -202,7 +228,9 @@ class SMSService:
         """Send SMS to multiple recipients"""
         results = []
         for phone_number in phone_numbers:
-            result = self.send_sms(phone_number, message, sms_type)
+            # Normalize each phone number
+            normalized_phone = self._normalize_phone_number(phone_number)
+            result = self.send_sms(normalized_phone, message, sms_type)
             results.append(result)
             time.sleep(2)  # Delay between messages
 
