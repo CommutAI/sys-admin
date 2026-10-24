@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CreditCard, Ticket, Plus, Search, Edit, X, MoreHorizontal, TrendingUp, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CreditCard, Ticket, Plus, Search, Edit, X, MoreHorizontal, TrendingUp, Calendar, ChevronLeft, ChevronRight, Check, AlertCircle, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import AuditService from '../services/auditService';
 
@@ -16,6 +16,18 @@ const CardManagement = () => {
   const [editingItem, setEditingItem] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
+
+  // Approval/Decline Modal State
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [selectedReservation, setSelectedReservation] = useState(null);
+  const [approvalAction, setApprovalAction] = useState(null); // 'approve' or 'decline'
+  const [declineReason, setDeclineReason] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Delete Modal State
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null); // { type: 'qr-card' | 'temp-ticket' | 'reservation', item: object }
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -160,21 +172,77 @@ const CardManagement = () => {
   };
 
   const handleDeleteQrCard = async (card) => {
-    if (!confirm(`Are you sure you want to delete QR card ${card.card_uid}?`)) return;
-    
+    setDeleteTarget({ type: 'qr-card', item: card });
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteTempTicket = async (ticket) => {
+    setDeleteTarget({ type: 'temp-ticket', item: ticket });
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteReservation = async (reservation) => {
+    setDeleteTarget({ type: 'reservation', item: reservation });
+    setShowDeleteModal(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+
+    setIsDeleting(true);
     try {
-      const { error } = await supabase
-        .from('qr_cards')
-        .delete()
-        .eq('id', card.id);
+      if (deleteTarget.type === 'qr-card') {
+        const card = deleteTarget.item;
+        const { error } = await supabase
+          .from('qr_cards')
+          .delete()
+          .eq('id', card.id);
 
-      if (error) throw error;
+        if (error) throw error;
 
-      await AuditService.logQrCardDeleted(card.id, card.card_uid);
-      fetchQrCards();
+        await AuditService.logQrCardDeleted(card.id, card.card_uid);
+        fetchQrCards();
+      } else if (deleteTarget.type === 'temp-ticket') {
+        const ticket = deleteTarget.item;
+        const { error } = await supabase
+          .from('temporary_tickets')
+          .delete()
+          .eq('id', ticket.id);
+
+        if (error) throw error;
+
+        await AuditService.logAuditEvent({
+          action: 'DELETE',
+          module: 'Card Management',
+          details: `Deleted temporary ticket ${ticket.ticket_uid} (${ticket.id})`,
+        });
+
+        fetchTempTickets();
+      } else if (deleteTarget.type === 'reservation') {
+        const reservation = deleteTarget.item;
+        const { error } = await supabase
+          .from('card_reservations')
+          .delete()
+          .eq('id', reservation.id);
+
+        if (error) throw error;
+
+        await AuditService.logAuditEvent({
+          action: 'DELETE',
+          module: 'Card Management',
+          details: `Deleted reservation ${reservation.reservation_id} (${reservation.id})`,
+        });
+
+        fetchCardReservations();
+      }
+
+      setShowDeleteModal(false);
+      setDeleteTarget(null);
     } catch (error) {
-      console.error('Error deleting QR card:', error);
-      alert('Error deleting QR card: ' + error.message);
+      console.error('Error deleting item:', error);
+      alert('Error deleting item: ' + error.message);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -184,153 +252,96 @@ const CardManagement = () => {
     alert('Edit functionality to be implemented');
   };
 
-  const handleDeleteTempTicket = async (ticket) => {
-    if (!confirm(`Are you sure you want to delete temporary ticket ${ticket.ticket_uid}?`)) return;
-
-    try {
-      const { error } = await supabase
-        .from('temporary_tickets')
-        .delete()
-        .eq('id', ticket.id);
-
-      if (error) throw error;
-
-      await AuditService.logAuditEvent({
-        action: 'DELETE',
-        module: 'Card Management',
-        details: `Deleted temporary ticket ${ticket.ticket_uid} (${ticket.id})`,
-      });
-
-      fetchTempTickets();
-    } catch (error) {
-      console.error('Error deleting temporary ticket:', error);
-      alert('Error deleting temporary ticket: ' + error.message);
-    }
-  };
-
   const handleApproveReservation = async (reservation) => {
-    if (!confirm(`Are you sure you want to approve reservation ${reservation.reservation_id}?`)) return;
-
-    try {
-      const { error } = await supabase
-        .from('card_reservations')
-        .update({ status: 'approved' })
-        .eq('id', reservation.id);
-
-      if (error) throw error;
-
-      await AuditService.logAuditEvent({
-        action: 'APPROVE',
-        module: 'Card Management',
-        details: `Approved card reservation ${reservation.reservation_id} for ${reservation.name}`,
-      });
-
-      // Send SMS notification (call backend API)
-      try {
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-        await fetch(`${API_URL}/api/sms/card-approval`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            phone_number: reservation.contact,
-            card_id: reservation.reservation_id,
-            card_holder: reservation.name,
-            status: 'approved'
-          })
-        });
-      } catch (smsError) {
-        console.error('Failed to send SMS notification:', smsError);
-      }
-
-      fetchCardReservations();
-      alert('Reservation approved successfully');
-    } catch (error) {
-      console.error('Error approving reservation:', error);
-      alert('Error approving reservation: ' + error.message);
-    }
+    setSelectedReservation(reservation);
+    setApprovalAction('approve');
+    setDeclineReason('');
+    setShowApprovalModal(true);
   };
 
   const handleDeclineReservation = async (reservation) => {
-    const reason = prompt('Enter reason for declining (optional):');
-    if (reason === null) return; // User cancelled
+    setSelectedReservation(reservation);
+    setApprovalAction('decline');
+    setDeclineReason('');
+    setShowApprovalModal(true);
+  };
 
+  const confirmApproval = async () => {
+    if (!selectedReservation) return;
+
+    setIsProcessing(true);
     try {
-      const { error } = await supabase
-        .from('card_reservations')
-        .update({ status: 'declined', decline_reason: reason || 'No reason provided' })
-        .eq('id', reservation.id);
+      if (approvalAction === 'approve') {
+        const { error } = await supabase
+          .from('card_reservations')
+          .update({ status: 'approved' })
+          .eq('id', selectedReservation.id);
 
-      if (error) throw error;
+        if (error) throw error;
 
-      await AuditService.logAuditEvent({
-        action: 'DECLINE',
-        module: 'Card Management',
-        details: `Declined card reservation ${reservation.reservation_id} for ${reservation.name}. Reason: ${reason || 'No reason'}`,
-      });
-
-      // Send SMS notification (call backend API)
-      try {
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-        await fetch(`${API_URL}/api/sms/card-approval`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            phone_number: reservation.contact,
-            card_id: reservation.reservation_id,
-            card_holder: reservation.name,
-            status: 'declined',
-            reason: reason || 'No reason provided'
-          })
+        await AuditService.logAuditEvent({
+          action: 'APPROVE',
+          module: 'Card Management',
+          details: `Approved card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}`,
         });
-      } catch (smsError) {
-        console.error('Failed to send SMS notification:', smsError);
+
+        // Send SMS notification
+        try {
+          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+          await fetch(`${API_URL}/api/sms/card-approval`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              phone_number: selectedReservation.contact,
+              card_id: selectedReservation.reservation_id,
+              card_holder: selectedReservation.name,
+              status: 'approved'
+            })
+          });
+        } catch (smsError) {
+          console.error('Failed to send SMS notification:', smsError);
+        }
+      } else if (approvalAction === 'decline') {
+        const { error } = await supabase
+          .from('card_reservations')
+          .update({ status: 'declined', decline_reason: declineReason || 'No reason provided' })
+          .eq('id', selectedReservation.id);
+
+        if (error) throw error;
+
+        await AuditService.logAuditEvent({
+          action: 'DECLINE',
+          module: 'Card Management',
+          details: `Declined card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}. Reason: ${declineReason || 'No reason'}`,
+        });
+
+        // Send SMS notification
+        try {
+          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+          await fetch(`${API_URL}/api/sms/card-approval`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              phone_number: selectedReservation.contact,
+              card_id: selectedReservation.reservation_id,
+              card_holder: selectedReservation.name,
+              status: 'declined',
+              reason: declineReason || 'No reason provided'
+            })
+          });
+        } catch (smsError) {
+          console.error('Failed to send SMS notification:', smsError);
+        }
       }
 
       fetchCardReservations();
-      alert('Reservation declined successfully');
+      setShowApprovalModal(false);
+      setSelectedReservation(null);
     } catch (error) {
-      console.error('Error declining reservation:', error);
-      alert('Error declining reservation: ' + error.message);
-    }
-  };
-
-  const handleEditReservation = async (reservation) => {
-    // For pending reservations, show approve/decline options
-    if (reservation.status === 'pending') {
-      const action = prompt('Enter action (approve/decline):');
-      if (action?.toLowerCase() === 'approve') {
-        await handleApproveReservation(reservation);
-      } else if (action?.toLowerCase() === 'decline') {
-        await handleDeclineReservation(reservation);
-      } else {
-        alert('Invalid action. Please enter "approve" or "decline"');
-      }
-    } else {
-      alert('Only pending reservations can be approved or declined');
-    }
-  };
-
-  const handleDeleteReservation = async (reservation) => {
-    if (!confirm(`Are you sure you want to delete reservation ${reservation.reservation_id}?`)) return;
-
-    try {
-      const { error } = await supabase
-        .from('card_reservations')
-        .delete()
-        .eq('id', reservation.id);
-
-      if (error) throw error;
-
-      await AuditService.logAuditEvent({
-        action: 'DELETE',
-        module: 'Card Management',
-        details: `Deleted reservation ${reservation.reservation_id} (${reservation.id})`,
-      });
-
-      fetchCardReservations();
-    } catch (error) {
-      console.error('Error deleting reservation:', error);
-      alert('Error deleting reservation: ' + error.message);
+      console.error('Error processing reservation:', error);
+      alert('Error processing reservation: ' + error.message);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -524,7 +535,7 @@ const CardManagement = () => {
                             onClick={() => handleDeleteQrCard(card)}
                             className="p-2 hover:bg-white/10 rounded-lg transition-colors"
                           >
-                            <X size={16} className="text-red-400" />
+                            <Trash2 size={16} className="text-red-400" />
                           </button>
                         </div>
                       </td>
@@ -629,7 +640,7 @@ const CardManagement = () => {
                             onClick={() => handleDeleteTempTicket(ticket)}
                             className="p-2 hover:bg-white/10 rounded-lg transition-colors"
                           >
-                            <X size={16} className="text-red-400" />
+                            <Trash2 size={16} className="text-red-400" />
                           </button>
                         </div>
                       </td>
@@ -731,19 +742,14 @@ const CardManagement = () => {
                                 className="p-2 hover:bg-green-500/20 rounded-lg transition-colors"
                                 title="Approve"
                               >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-400">
-                                  <polyline points="20 6 9 17 4 12"></polyline>
-                                </svg>
+                                <Check size={16} className="text-green-400" />
                               </button>
                               <button
                                 onClick={() => handleDeclineReservation(reservation)}
                                 className="p-2 hover:bg-red-500/20 rounded-lg transition-colors"
                                 title="Decline"
                               >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-400">
-                                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                                </svg>
+                                <X size={16} className="text-red-400" />
                               </button>
                             </>
                           )}
@@ -752,7 +758,7 @@ const CardManagement = () => {
                             className="p-2 hover:bg-white/10 rounded-lg transition-colors"
                             title="Delete"
                           >
-                            <X size={16} className="text-red-400" />
+                            <Trash2 size={16} className="text-red-400" />
                           </button>
                         </div>
                       </td>
@@ -808,6 +814,149 @@ const CardManagement = () => {
           </div>
         )}
       </div>
+
+      {/* Approval/Decline Modal */}
+      {showApprovalModal && selectedReservation && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="glass-card rounded-2xl p-6 max-w-md w-full mx-4 border border-white/10">
+            <div className="flex items-center gap-3 mb-4">
+              {approvalAction === 'approve' ? (
+                <div className="w-10 h-10 bg-green-500/20 rounded-full flex items-center justify-center">
+                  <Check className="w-5 h-5 text-green-400" />
+                </div>
+              ) : (
+                <div className="w-10 h-10 bg-red-500/20 rounded-full flex items-center justify-center">
+                  <AlertCircle className="w-5 h-5 text-red-400" />
+                </div>
+              )}
+              <h2 className="text-xl font-bold text-white">
+                {approvalAction === 'approve' ? 'Approve Reservation' : 'Decline Reservation'}
+              </h2>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <div className="flex justify-between text-sm">
+                <span className="text-white/60">Reservation ID:</span>
+                <span className="text-white font-medium">{selectedReservation.reservation_id}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-white/60">Name:</span>
+                <span className="text-white font-medium">{selectedReservation.name}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-white/60">Contact:</span>
+                <span className="text-white font-medium">{selectedReservation.contact}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-white/60">Card Type:</span>
+                <span className="text-white font-medium">{selectedReservation.card_type}</span>
+              </div>
+            </div>
+
+            {approvalAction === 'decline' && (
+              <div className="mb-6">
+                <label className="block text-white/60 text-sm mb-2">
+                  Reason for declining (optional):
+                </label>
+                <textarea
+                  value={declineReason}
+                  onChange={(e) => setDeclineReason(e.target.value)}
+                  placeholder="Enter reason for declining this reservation..."
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-white/40 focus:outline-none focus:border-orange-500/50 resize-none"
+                  rows="3"
+                />
+              </div>
+            )}
+
+            <p className="text-white/60 text-sm mb-6">
+              {approvalAction === 'approve'
+                ? 'This will approve the reservation and send an SMS notification to the contact number.'
+                : 'This will decline the reservation and send an SMS notification with the reason.'}
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowApprovalModal(false);
+                  setSelectedReservation(null);
+                  setDeclineReason('');
+                }}
+                disabled={isProcessing}
+                className="flex-1 px-4 py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmApproval}
+                disabled={isProcessing}
+                className={`flex-1 px-4 py-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  approvalAction === 'approve'
+                    ? 'bg-green-500 hover:bg-green-600 text-white'
+                    : 'bg-red-500 hover:bg-red-600 text-white'
+                }`}
+              >
+                {isProcessing ? 'Processing...' : approvalAction === 'approve' ? 'Approve' : 'Decline'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && deleteTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="glass-card rounded-2xl p-6 max-w-md w-full mx-4 border border-white/10">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-500/20 rounded-full flex items-center justify-center">
+                <AlertCircle className="w-5 h-5 text-red-400" />
+              </div>
+              <h2 className="text-xl font-bold text-white">Confirm Delete</h2>
+            </div>
+
+            <div className="mb-6">
+              <p className="text-white/80 mb-2">
+                Are you sure you want to delete this {deleteTarget.type === 'qr-card' ? 'QR card' : deleteTarget.type === 'temp-ticket' ? 'temporary ticket' : 'reservation'}?
+              </p>
+              {deleteTarget.type === 'qr-card' && (
+                <p className="text-white/60 text-sm">
+                  Card ID: <span className="text-white font-medium">{deleteTarget.item.card_uid}</span>
+                </p>
+              )}
+              {deleteTarget.type === 'temp-ticket' && (
+                <p className="text-white/60 text-sm">
+                  Ticket ID: <span className="text-white font-medium">{deleteTarget.item.ticket_uid}</span>
+                </p>
+              )}
+              {deleteTarget.type === 'reservation' && (
+                <p className="text-white/60 text-sm">
+                  Reservation ID: <span className="text-white font-medium">{deleteTarget.item.reservation_id}</span>
+                </p>
+              )}
+              <p className="text-red-400 text-sm mt-2">This action cannot be undone.</p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setDeleteTarget(null);
+                }}
+                disabled={isDeleting}
+                className="flex-1 px-4 py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={isDeleting}
+                className="flex-1 px-4 py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDeleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
