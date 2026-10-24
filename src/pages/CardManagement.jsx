@@ -290,7 +290,10 @@ const CardManagement = () => {
         // Send SMS notification directly to Raspberry Pi SMS API
         try {
           const SMS_API_URL = await getSmsApiUrl();
-          await fetch(`${SMS_API_URL}/card-approval`, {
+          console.log('SMS API URL:', SMS_API_URL);
+          console.log('Sending SMS to:', selectedReservation.contact);
+
+          const response = await fetch(`${SMS_API_URL}/card-approval`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -300,6 +303,13 @@ const CardManagement = () => {
               status: 'approved'
             })
           });
+
+          const data = await response.json();
+          console.log('SMS API response:', data);
+
+          if (!response.ok) {
+            console.error('SMS API error:', response.status, data);
+          }
         } catch (smsError) {
           console.error('Failed to send SMS notification:', smsError);
         }
@@ -320,7 +330,10 @@ const CardManagement = () => {
         // Send SMS notification directly to Raspberry Pi SMS API
         try {
           const SMS_API_URL = await getSmsApiUrl();
-          await fetch(`${SMS_API_URL}/card-approval`, {
+          console.log('SMS API URL:', SMS_API_URL);
+          console.log('Sending SMS to:', selectedReservation.contact);
+
+          const response = await fetch(`${SMS_API_URL}/card-approval`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -331,6 +344,13 @@ const CardManagement = () => {
               reason: declineReason || 'No reason provided'
             })
           });
+
+          const data = await response.json();
+          console.log('SMS API response:', data);
+
+          if (!response.ok) {
+            console.error('SMS API error:', response.status, data);
+          }
         } catch (smsError) {
           console.error('Failed to send SMS notification:', smsError);
         }
