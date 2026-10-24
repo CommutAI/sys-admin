@@ -266,8 +266,8 @@ class SMSService:
             message = f"CARD APPROVED\n"
             message += f"Card ID: {card_id}\n"
             message += f"Holder: {card_holder}\n"
-            message += f"Your QR card has been approved and is now active.\n"
-            message += f"You can now use it for fare payment.\n"
+            message += f"Your QR card reservation has been approved.\n"
+            message += f"Please claim your card at the pickup terminal within 7 days.\n"
             message += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         else:
             message = f"CARD DECLINED\n"

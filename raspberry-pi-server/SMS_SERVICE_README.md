@@ -41,8 +41,8 @@ Sends notification when an admin approves or declines a QR card application.
 CARD APPROVED
 Card ID: CARD001
 Holder: Juan Dela Cruz
-Your QR card has been approved and is now active.
-You can now use it for fare payment.
+Your QR card reservation has been approved.
+Please claim your card at the pickup terminal within 7 days.
 Time: 2024-10-24 14:30
 ```
 
