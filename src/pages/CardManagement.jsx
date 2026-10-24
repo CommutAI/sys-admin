@@ -282,7 +282,7 @@ const CardManagement = () => {
         if (error) throw error;
 
         await AuditService.logAuditEvent({
-          action: 'APPROVE',
+          action: 'UPDATE',
           module: 'Card Management',
           details: `Approved card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}`,
         });
@@ -312,7 +312,7 @@ const CardManagement = () => {
         if (error) throw error;
 
         await AuditService.logAuditEvent({
-          action: 'DECLINE',
+          action: 'UPDATE',
           module: 'Card Management',
           details: `Declined card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}. Reason: ${declineReason || 'No reason'}`,
         });
