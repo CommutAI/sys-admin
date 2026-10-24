@@ -15,7 +15,7 @@ from slowapi.errors import RateLimitExceeded
 
 load_dotenv()
 
-from routers import cards, transactions, analytics, reports, webhooks, staff, anomaly_detection, emergency_alerts, video_processing, trips
+from routers import cards, transactions, analytics, reports, webhooks, staff, anomaly_detection, emergency_alerts, video_processing, trips, sms
 from database import supabase
 from auth import verify_supabase_token, require_admin, require_driver
 from video_processor import video_processor
@@ -75,6 +75,7 @@ app.include_router(anomaly_detection.router, prefix="/api/anomaly-detection", ta
 app.include_router(emergency_alerts.router, prefix="/api/emergency-alerts", tags=["Emergency Alerts"])
 app.include_router(video_processing.router, tags=["Video Processing"])
 app.include_router(trips.router, tags=["Trips"])
+app.include_router(sms.router, tags=["SMS"])
 
 @app.get("/")
 @limiter.limit("100/minute")

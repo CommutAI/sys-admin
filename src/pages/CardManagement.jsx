@@ -103,8 +103,9 @@ const CardManagement = () => {
   const reservationStatusColors = {
     pending: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50',
     approved: 'bg-green-500/20 text-green-400 border-green-500/50',
+    declined: 'bg-red-500/20 text-red-400 border-red-500/50',
     completed: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
-    cancelled: 'bg-red-500/20 text-red-400 border-red-500/50',
+    cancelled: 'bg-gray-500/20 text-gray-400 border-gray-500/50',
   };
 
   const filteredQrCards = qrCards.filter(card => {
@@ -207,14 +208,106 @@ const CardManagement = () => {
     }
   };
 
+  const handleApproveReservation = async (reservation) => {
+    if (!confirm(`Are you sure you want to approve reservation ${reservation.reservation_id}?`)) return;
+
+    try {
+      const { error } = await supabase
+        .from('card_reservations')
+        .update({ status: 'approved' })
+        .eq('id', reservation.id);
+
+      if (error) throw error;
+
+      await AuditService.logAuditEvent({
+        action: 'APPROVE',
+        module: 'Card Management',
+        details: `Approved card reservation ${reservation.reservation_id} for ${reservation.name}`,
+      });
+
+      // Send SMS notification (call backend API)
+      try {
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        await fetch(`${API_URL}/api/sms/card-approval`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            phone_number: reservation.contact,
+            card_id: reservation.reservation_id,
+            card_holder: reservation.name,
+            status: 'approved'
+          })
+        });
+      } catch (smsError) {
+        console.error('Failed to send SMS notification:', smsError);
+      }
+
+      fetchCardReservations();
+      alert('Reservation approved successfully');
+    } catch (error) {
+      console.error('Error approving reservation:', error);
+      alert('Error approving reservation: ' + error.message);
+    }
+  };
+
+  const handleDeclineReservation = async (reservation) => {
+    const reason = prompt('Enter reason for declining (optional):');
+    if (reason === null) return; // User cancelled
+
+    try {
+      const { error } = await supabase
+        .from('card_reservations')
+        .update({ status: 'declined', decline_reason: reason || 'No reason provided' })
+        .eq('id', reservation.id);
+
+      if (error) throw error;
+
+      await AuditService.logAuditEvent({
+        action: 'DECLINE',
+        module: 'Card Management',
+        details: `Declined card reservation ${reservation.reservation_id} for ${reservation.name}. Reason: ${reason || 'No reason'}`,
+      });
+
+      // Send SMS notification (call backend API)
+      try {
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        await fetch(`${API_URL}/api/sms/card-approval`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            phone_number: reservation.contact,
+            card_id: reservation.reservation_id,
+            card_holder: reservation.name,
+            status: 'declined',
+            reason: reason || 'No reason provided'
+          })
+        });
+      } catch (smsError) {
+        console.error('Failed to send SMS notification:', smsError);
+      }
+
+      fetchCardReservations();
+      alert('Reservation declined successfully');
+    } catch (error) {
+      console.error('Error declining reservation:', error);
+      alert('Error declining reservation: ' + error.message);
+    }
+  };
+
   const handleEditReservation = async (reservation) => {
-    // Placeholder for edit functionality
-    await AuditService.logAuditEvent({
-      action: 'UPDATE',
-      module: 'Card Management',
-      details: `Edit initiated for reservation ${reservation.reservation_id}`,
-    });
-    alert('Edit functionality to be implemented');
+    // For pending reservations, show approve/decline options
+    if (reservation.status === 'pending') {
+      const action = prompt('Enter action (approve/decline):');
+      if (action?.toLowerCase() === 'approve') {
+        await handleApproveReservation(reservation);
+      } else if (action?.toLowerCase() === 'decline') {
+        await handleDeclineReservation(reservation);
+      } else {
+        alert('Invalid action. Please enter "approve" or "decline"');
+      }
+    } else {
+      alert('Only pending reservations can be approved or declined');
+    }
   };
 
   const handleDeleteReservation = async (reservation) => {
@@ -604,6 +697,7 @@ const CardManagement = () => {
                   <th className="pb-3 font-medium">Card Type</th>
                   <th className="pb-3 font-medium">Pickup Terminal</th>
                   <th className="pb-3 font-medium">Status</th>
+                  <th className="pb-3 font-medium">Reason</th>
                   <th className="pb-3 font-medium">Created</th>
                   <th className="pb-3 font-medium">Actions</th>
                 </tr>
@@ -623,19 +717,40 @@ const CardManagement = () => {
                         </span>
                       </td>
                       <td className="py-4 text-white/70 text-sm">
+                        {reservation.decline_reason || '-'}
+                      </td>
+                      <td className="py-4 text-white/70 text-sm">
                         {new Date(reservation.created_at).toLocaleDateString()}
                       </td>
                       <td className="py-4">
                         <div className="flex gap-2">
-                          <button
-                            onClick={() => handleEditReservation(reservation)}
-                            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                          >
-                            <Edit size={16} className="text-white/70" />
-                          </button>
+                          {reservation.status === 'pending' && (
+                            <>
+                              <button
+                                onClick={() => handleApproveReservation(reservation)}
+                                className="p-2 hover:bg-green-500/20 rounded-lg transition-colors"
+                                title="Approve"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-400">
+                                  <polyline points="20 6 9 17 4 12"></polyline>
+                                </svg>
+                              </button>
+                              <button
+                                onClick={() => handleDeclineReservation(reservation)}
+                                className="p-2 hover:bg-red-500/20 rounded-lg transition-colors"
+                                title="Decline"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-400">
+                                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                                </svg>
+                              </button>
+                            </>
+                          )}
                           <button
                             onClick={() => handleDeleteReservation(reservation)}
                             className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                            title="Delete"
                           >
                             <X size={16} className="text-red-400" />
                           </button>
@@ -645,7 +760,7 @@ const CardManagement = () => {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="8" className="py-8 text-center text-white/60">
+                    <td colSpan="9" className="py-8 text-center text-white/60">
                       No card reservations found
                     </td>
                   </tr>
