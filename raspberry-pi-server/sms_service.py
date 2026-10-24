@@ -196,19 +196,35 @@ class SMSService:
 
             logger.info(f"Sending SMS to {normalized_phone}: {message[:50]}...")
 
+            # Check SIM registration
+            reg_check = self._send_at_command('AT+CREG?')
+            logger.info(f"SIM Registration: {reg_check}")
+
+            # Check signal strength
+            csq_check = self._send_at_command('AT+CSQ')
+            logger.info(f"Signal Strength: {csq_check}")
+
             # Set SMS mode to text
             self._send_at_command('AT+CMGF=1')
             time.sleep(0.5)
 
             # Set recipient
-            self._send_at_command(f'AT+CMGS="{normalized_phone}"')
+            cmgs_response = self._send_at_command(f'AT+CMGS="{normalized_phone}"')
+            logger.info(f"CMGS response: {cmgs_response}")
             time.sleep(0.5)
 
             # Send message
             self.serial_connection.write(f'{message}\x1A\r'.encode())
             time.sleep(3)
 
-            response = self.serial_connection.read(200).decode('utf-8', errors='ignore').strip()
+            # Read response in chunks to get full response
+            response = ""
+            while self.serial_connection.in_waiting > 0:
+                response += self.serial_connection.read(self.serial_connection.in_waiting).decode('utf-8', errors='ignore')
+                time.sleep(0.1)
+
+            response = response.strip()
+            logger.info(f"SIM900A response: {response}")
 
             if 'OK' in response:
                 logger.info(f"SMS sent successfully to {normalized_phone}")
