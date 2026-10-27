@@ -83,13 +83,20 @@ const CardManagement = () => {
   const fetchCardSalesStats = async () => {
     try {
       // Fetch stats from Supabase directly instead of backend
-      const { data: qrCards } = await supabase
+      const { data: qrCards, error } = await supabase
         .from('qr_cards')
-        .select('initial_balance')
-        .gt('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()); // Last 30 days
+        .select('initial_balance, created_at');
 
-      const totalCardsSold = qrCards?.length || 0;
-      const totalRevenue = qrCards?.reduce((sum, card) => sum + (parseFloat(card.initial_balance) || 0), 0) || 0;
+      if (error) throw error;
+
+      // Filter to last 30 days locally
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const recentCards = qrCards?.filter(card =>
+        new Date(card.created_at) > thirtyDaysAgo
+      ) || [];
+
+      const totalCardsSold = recentCards.length;
+      const totalRevenue = recentCards.reduce((sum, card) => sum + (parseFloat(card.initial_balance) || 0), 0);
 
       setCardSalesStats({
         total_cards_sold: totalCardsSold,
@@ -294,30 +301,29 @@ const CardManagement = () => {
           details: `Approved card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}`,
         });
 
-        // Send SMS notification via backend API (queues to database)
+        // Queue SMS notification directly to Supabase
         try {
-          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-          console.log('Sending SMS via backend API to:', selectedReservation.contact);
+          const message = `CARD APPROVED. Card ID: ${selectedReservation.reservation_id}. Holder: ${selectedReservation.name}. Your QR card reservation has been approved. Please claim your card at the pickup terminal within 7 days.`;
 
-          const response = await fetch(`${API_URL}/api/sms/card-approval`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          const { error: smsError } = await supabase
+            .from('sms_queue')
+            .insert({
               phone_number: selectedReservation.contact,
-              card_id: selectedReservation.reservation_id,
-              card_holder: selectedReservation.name,
-              status: 'approved'
-            })
-          });
+              message: message,
+              type: 'card_approved',
+              priority: 5,
+              status: 'pending',
+              retry_count: 0,
+              max_retries: 3
+            });
 
-          const data = await response.json();
-          console.log('SMS API response:', data);
-
-          if (!response.ok) {
-            console.error('SMS API error:', response.status, data);
+          if (smsError) {
+            console.error('Failed to queue SMS:', smsError);
+          } else {
+            console.log('SMS queued successfully');
           }
         } catch (smsError) {
-          console.error('Failed to send SMS notification:', smsError);
+          console.error('Failed to queue SMS notification:', smsError);
         }
       } else if (approvalAction === 'decline') {
         const { error } = await supabase
@@ -333,31 +339,33 @@ const CardManagement = () => {
           details: `Declined card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}. Reason: ${declineReason || 'No reason'}`,
         });
 
-        // Send SMS notification via backend API (queues to database)
+        // Queue SMS notification directly to Supabase
         try {
-          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-          console.log('Sending SMS via backend API to:', selectedReservation.contact);
+          let message = `CARD DECLINED. Card ID: ${selectedReservation.reservation_id}. Holder: ${selectedReservation.name}.`;
+          if (declineReason) {
+            message += ` Reason: ${declineReason}.`;
+          }
+          message += ' Please contact customer service for assistance.';
 
-          const response = await fetch(`${API_URL}/api/sms/card-approval`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          const { error: smsError } = await supabase
+            .from('sms_queue')
+            .insert({
               phone_number: selectedReservation.contact,
-              card_id: selectedReservation.reservation_id,
-              card_holder: selectedReservation.name,
-              status: 'declined',
-              reason: declineReason || 'No reason provided'
-            })
-          });
+              message: message,
+              type: 'card_declined',
+              priority: 5,
+              status: 'pending',
+              retry_count: 0,
+              max_retries: 3
+            });
 
-          const data = await response.json();
-          console.log('SMS API response:', data);
-
-          if (!response.ok) {
-            console.error('SMS API error:', response.status, data);
+          if (smsError) {
+            console.error('Failed to queue SMS:', smsError);
+          } else {
+            console.log('SMS queued successfully');
           }
         } catch (smsError) {
-          console.error('Failed to send SMS notification:', smsError);
+          console.error('Failed to queue SMS notification:', smsError);
         }
       }
 
