@@ -284,22 +284,47 @@ const CardManagement = () => {
     setIsProcessing(true);
     try {
       if (approvalAction === 'approve') {
-        const { error } = await supabase
+        // Generate a unique card UID
+        const cardUid = `QR-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+
+        // Insert new QR card
+        const { data: newCard, error: cardError } = await supabase
+          .from('qr_cards')
+          .insert({
+            card_uid: cardUid,
+            owner_name: selectedReservation.name,
+            contact_number: selectedReservation.contact,
+            card_type: selectedReservation.card_type || 'regular',
+            purchase_price: 100.00, // Default price
+            balance: 0,
+            status: 'active',
+            issued_at: new Date().toISOString()
+          })
+          .select()
+          .single();
+
+        if (cardError) throw cardError;
+
+        // Update reservation with card_id and status
+        const { error: updateError } = await supabase
           .from('card_reservations')
-          .update({ status: 'approved' })
+          .update({
+            status: 'approved',
+            card_id: newCard.id
+          })
           .eq('id', selectedReservation.id);
 
-        if (error) throw error;
+        if (updateError) throw updateError;
 
         await AuditService.logAuditEvent({
           action: 'UPDATE',
           module: 'Card Management',
-          details: `Approved card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}`,
+          details: `Approved card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}. Created QR card: ${cardUid}`,
         });
 
         // Queue SMS notification directly to Supabase
         try {
-          const message = `CARD APPROVED. Card ID: ${selectedReservation.reservation_id}. Holder: ${selectedReservation.name}. Your QR card reservation has been approved. Please claim your card at the pickup terminal within 7 days.`;
+          const message = `CARD APPROVED. Card ID: ${cardUid}. Holder: ${selectedReservation.name}. Your QR card reservation has been approved. Please claim your card at ${selectedReservation.pickup_terminal} within 7 days.`;
 
           const { error: smsError } = await supabase
             .from('sms_queue')
@@ -321,6 +346,10 @@ const CardManagement = () => {
         } catch (smsError) {
           console.error('Failed to queue SMS notification:', smsError);
         }
+
+        // Refresh both reservations and QR cards to show the new card
+        fetchCardReservations();
+        fetchQrCards();
       } else if (approvalAction === 'decline') {
         const { error } = await supabase
           .from('card_reservations')
@@ -363,9 +392,11 @@ const CardManagement = () => {
         } catch (smsError) {
           console.error('Failed to queue SMS notification:', smsError);
         }
+
+        // Refresh reservations to show updated status
+        fetchCardReservations();
       }
 
-      fetchCardReservations();
       setShowApprovalModal(false);
       setSelectedReservation(null);
     } catch (error) {
