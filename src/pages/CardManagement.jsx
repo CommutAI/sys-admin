@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CreditCard, Ticket, Plus, Search, Edit, X, MoreHorizontal, TrendingUp, Calendar, ChevronLeft, ChevronRight, Check, AlertCircle, Trash2 } from 'lucide-react';
+import { CreditCard, Ticket, Plus, Search, Edit, MoreHorizontal, TrendingUp, Calendar, ChevronLeft, ChevronRight, AlertCircle, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import AuditService from '../services/auditService';
 
@@ -17,10 +17,6 @@ const CardManagement = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
 
-  // Approval/Decline Modal State
-  const [showApprovalModal, setShowApprovalModal] = useState(false);
-  const [selectedReservation, setSelectedReservation] = useState(null);
-  const [approvalAction, setApprovalAction] = useState(null); // 'approve' or 'decline'
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Delete Modal State
@@ -269,163 +265,6 @@ const CardManagement = () => {
     // Placeholder for edit functionality
     await AuditService.logTempTicketValidated(ticket.id, ticket.ticket_uid);
     alert('Edit functionality to be implemented');
-  };
-
-  const handleApproveReservation = async (reservation) => {
-    setSelectedReservation(reservation);
-    setApprovalAction('approve');
-    setShowApprovalModal(true);
-  };
-
-  const handleDeclineReservation = async (reservation) => {
-    setSelectedReservation(reservation);
-    setApprovalAction('decline');
-    setShowApprovalModal(true);
-  };
-
-  const confirmApproval = async () => {
-    if (!selectedReservation) return;
-
-    setIsProcessing(true);
-    try {
-      if (approvalAction === 'approve') {
-        // Generate card type prefix
-        const cardType = (selectedReservation.card_type || 'regular').toLowerCase();
-        const prefixMap = {
-          'regular': 'RC',
-          'student': 'SC',
-          'senior_citizen': 'SCC',
-          'pwd': 'PC'
-        };
-        const prefix = prefixMap[cardType] || 'RC';
-
-        // Generate a unique card UID with prefix
-        const random1 = Math.floor(Math.random() * 999);
-        const random2 = Math.floor(Math.random() * 999);
-        const random3 = Math.floor(Math.random() * 999);
-        const cardUid = `${prefix}-${random1}-${random2}-${random3}`;
-
-        // Format allowed_routes array
-        const typeLabel = cardType.charAt(0).toUpperCase() + cardType.slice(1).replace('_', ' ');
-        const allowedRoutes = [`type:${typeLabel}`];
-
-        // Insert new QR card
-        const { data: newCard, error: cardError } = await supabase
-          .from('qr_cards')
-          .insert({
-            card_uid: cardUid,
-            owner_name: selectedReservation.name,
-            contact_number: selectedReservation.contact,
-            card_type: cardType,
-            purchase_price: 100.00, // Default price
-            balance: 0,
-            status: 'active',
-            allowed_routes: allowedRoutes
-          })
-          .select()
-          .single();
-
-        if (cardError) {
-          console.error('Error creating QR card:', cardError);
-          throw cardError;
-        }
-
-        // Update reservation with card_id and status
-        const { error: updateError } = await supabase
-          .from('card_reservations')
-          .update({
-            status: 'approved',
-            card_id: newCard.id
-          })
-          .eq('id', selectedReservation.id);
-
-        if (updateError) throw updateError;
-
-        await AuditService.logAuditEvent({
-          action: 'UPDATE',
-          module: 'Card Management',
-          details: `Approved card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}. Created QR card: ${cardUid}`,
-        });
-
-        // Queue SMS notification directly to Supabase
-        try {
-          const message = `CARD APPROVED. Card ID: ${cardUid}. Holder: ${selectedReservation.name}. Your QR card reservation has been approved. Please claim your card at ${selectedReservation.pickup_terminal} within 7 days.`;
-
-          const { error: smsError } = await supabase
-            .from('sms_queue')
-            .insert({
-              phone_number: selectedReservation.contact,
-              message: message,
-              type: 'other', // Use 'other' type to avoid constraint error until DB is updated
-              priority: 5,
-              status: 'pending',
-              retry_count: 0,
-              max_retries: 3
-            });
-
-          if (smsError) {
-            console.error('Failed to queue SMS:', smsError);
-          } else {
-            console.log('SMS queued successfully');
-          }
-        } catch (smsError) {
-          console.error('Failed to queue SMS notification:', smsError);
-        }
-
-        // Refresh both reservations and QR cards to show the new card
-        fetchCardReservations();
-        fetchQrCards();
-      } else if (approvalAction === 'decline') {
-        const { error } = await supabase
-          .from('card_reservations')
-          .update({ status: 'declined' })
-          .eq('id', selectedReservation.id);
-
-        if (error) throw error;
-
-        await AuditService.logAuditEvent({
-          action: 'UPDATE',
-          module: 'Card Management',
-          details: `Declined card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}`,
-        });
-
-        // Queue SMS notification directly to Supabase
-        try {
-          const message = `CARD DECLINED. Card ID: ${selectedReservation.reservation_id}. Holder: ${selectedReservation.name}. Please contact customer service for assistance.`;
-
-          const { error: smsError } = await supabase
-            .from('sms_queue')
-            .insert({
-              phone_number: selectedReservation.contact,
-              message: message,
-              type: 'other', // Use 'other' type to avoid constraint error until DB is updated
-              priority: 5,
-              status: 'pending',
-              retry_count: 0,
-              max_retries: 3
-            });
-
-          if (smsError) {
-            console.error('Failed to queue SMS:', smsError);
-          } else {
-            console.log('SMS queued successfully');
-          }
-        } catch (smsError) {
-          console.error('Failed to queue SMS notification:', smsError);
-        }
-
-        // Refresh reservations to show updated status
-        fetchCardReservations();
-      }
-
-      setShowApprovalModal(false);
-      setSelectedReservation(null);
-    } catch (error) {
-      console.error('Error processing reservation:', error);
-      alert('Error processing reservation: ' + error.message);
-    } finally {
-      setIsProcessing(false);
-    }
   };
 
   if (loading) {
@@ -813,24 +652,6 @@ const CardManagement = () => {
                       </td>
                       <td className="py-4">
                         <div className="flex gap-2">
-                          {reservation.status === 'pending' && (
-                            <>
-                              <button
-                                onClick={() => handleApproveReservation(reservation)}
-                                className="p-2 hover:bg-green-500/20 rounded-lg transition-colors"
-                                title="Approve"
-                              >
-                                <Check size={16} className="text-green-400" />
-                              </button>
-                              <button
-                                onClick={() => handleDeclineReservation(reservation)}
-                                className="p-2 hover:bg-red-500/20 rounded-lg transition-colors"
-                                title="Decline"
-                              >
-                                <X size={16} className="text-red-400" />
-                              </button>
-                            </>
-                          )}
                           <button
                             onClick={() => handleDeleteReservation(reservation)}
                             className="p-2 hover:bg-white/10 rounded-lg transition-colors"
@@ -892,77 +713,6 @@ const CardManagement = () => {
           </div>
         )}
       </div>
-
-      {/* Approval/Decline Modal */}
-      {showApprovalModal && selectedReservation && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass-card rounded-2xl p-6 max-w-md w-full mx-4 border border-white/10">
-            <div className="flex items-center gap-3 mb-4">
-              {approvalAction === 'approve' ? (
-                <div className="w-10 h-10 bg-green-500/20 rounded-full flex items-center justify-center">
-                  <Check className="w-5 h-5 text-green-400" />
-                </div>
-              ) : (
-                <div className="w-10 h-10 bg-red-500/20 rounded-full flex items-center justify-center">
-                  <AlertCircle className="w-5 h-5 text-red-400" />
-                </div>
-              )}
-              <h2 className="text-xl font-bold text-white">
-                {approvalAction === 'approve' ? 'Approve Reservation' : 'Decline Reservation'}
-              </h2>
-            </div>
-
-            <div className="space-y-3 mb-6">
-              <div className="flex justify-between text-sm">
-                <span className="text-white/60">Reservation ID:</span>
-                <span className="text-white font-medium">{selectedReservation.reservation_id}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-white/60">Name:</span>
-                <span className="text-white font-medium">{selectedReservation.name}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-white/60">Contact:</span>
-                <span className="text-white font-medium">{selectedReservation.contact}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-white/60">Card Type:</span>
-                <span className="text-white font-medium">{selectedReservation.card_type}</span>
-              </div>
-            </div>
-
-            <p className="text-white/60 text-sm mb-6">
-              {approvalAction === 'approve'
-                ? 'This will approve the reservation and send an SMS notification to the contact number.'
-                : 'This will decline the reservation and send an SMS notification.'}
-            </p>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowApprovalModal(false);
-                  setSelectedReservation(null);
-                }}
-                disabled={isProcessing}
-                className="flex-1 px-4 py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmApproval}
-                disabled={isProcessing}
-                className={`flex-1 px-4 py-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                  approvalAction === 'approve'
-                    ? 'bg-green-500 hover:bg-green-600 text-white'
-                    : 'bg-red-500 hover:bg-red-600 text-white'
-                }`}
-              >
-                {isProcessing ? 'Processing...' : approvalAction === 'approve' ? 'Approve' : 'Decline'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && deleteTarget && (
