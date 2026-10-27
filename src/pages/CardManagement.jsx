@@ -82,15 +82,21 @@ const CardManagement = () => {
 
   const fetchCardSalesStats = async () => {
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-      const response = await fetch(`${API_URL}/api/cards/sales-stats`);
-      if (response.ok) {
-        const stats = await response.json();
-        setCardSalesStats(stats);
-      }
+      // Fetch stats from Supabase directly instead of backend
+      const { data: qrCards } = await supabase
+        .from('qr_cards')
+        .select('initial_balance')
+        .gt('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()); // Last 30 days
+
+      const totalCardsSold = qrCards?.length || 0;
+      const totalRevenue = qrCards?.reduce((sum, card) => sum + (parseFloat(card.initial_balance) || 0), 0) || 0;
+
+      setCardSalesStats({
+        total_cards_sold: totalCardsSold,
+        total_revenue: totalRevenue
+      });
     } catch (error) {
-      console.error('Error fetching card sales stats:', error);
-      // Set default values if backend is not available
+      // Silently set default values
       setCardSalesStats({ total_cards_sold: 0, total_revenue: 0 });
     }
   };
