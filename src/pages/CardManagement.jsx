@@ -55,19 +55,27 @@ const CardManagement = () => {
   const fetchQrCards = async () => {
     const { data, error } = await supabase
       .from('qr_cards')
-      .select('*, issuer:staff_users!issued_by(*)')
+      .select('*')
       .order('created_at', { ascending: false });
-    if (error) throw error;
-    setQrCards(data || []);
+    if (error) {
+      console.error('Error fetching QR cards:', error);
+      setQrCards([]);
+    } else {
+      setQrCards(data || []);
+    }
   };
 
   const fetchTempTickets = async () => {
     const { data, error } = await supabase
       .from('temporary_tickets')
-      .select('*, issuer:staff_users!issued_by(*), trips(*, buses(*))')
+      .select('*, trips(*, buses(*))')
       .order('issued_at', { ascending: false });
-    if (error) throw error;
-    setTempTickets(data || []);
+    if (error) {
+      console.error('Error fetching temp tickets:', error);
+      setTempTickets([]);
+    } else {
+      setTempTickets(data || []);
+    }
   };
 
   const fetchCardReservations = async () => {
@@ -294,13 +302,15 @@ const CardManagement = () => {
             card_type: (selectedReservation.card_type || 'regular').toLowerCase(),
             purchase_price: 100.00, // Default price
             balance: 0,
-            status: 'active',
-            issued_at: new Date().toISOString()
+            status: 'active'
           })
           .select()
           .single();
 
-        if (cardError) throw cardError;
+        if (cardError) {
+          console.error('Error creating QR card:', cardError);
+          throw cardError;
+        }
 
         // Update reservation with card_id and status
         const { error: updateError } = await supabase
@@ -558,7 +568,6 @@ const CardManagement = () => {
                   <th className="pb-3 font-medium">Contact</th>
                   <th className="pb-3 font-medium">Balance</th>
                   <th className="pb-3 font-medium">Status</th>
-                  <th className="pb-3 font-medium">Issued By</th>
                   <th className="pb-3 font-medium">Created</th>
                   <th className="pb-3 font-medium">Actions</th>
                 </tr>
@@ -576,7 +585,7 @@ const CardManagement = () => {
                           {card.status}
                         </span>
                       </td>
-                      <td className="py-4 text-white/70">{card.issuer?.full_name || 'N/A'}</td>
+                      <td className="py-4 text-white/70">-</td>
                       <td className="py-4 text-white/70 text-sm">
                         {new Date(card.created_at).toLocaleDateString()}
                       </td>
@@ -600,7 +609,7 @@ const CardManagement = () => {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="8" className="py-8 text-center text-white/60">
+                    <td colSpan="7" className="py-8 text-center text-white/60">
                       No QR cards found
                     </td>
                   </tr>
@@ -658,7 +667,6 @@ const CardManagement = () => {
                   <th className="pb-3 font-medium">Fare Amount</th>
                   <th className="pb-3 font-medium">Status</th>
                   <th className="pb-3 font-medium">Trip/Bus</th>
-                  <th className="pb-3 font-medium">Issued By</th>
                   <th className="pb-3 font-medium">Issued At</th>
                   <th className="pb-3 font-medium">Validated At</th>
                   <th className="pb-3 font-medium">Actions</th>
@@ -678,7 +686,6 @@ const CardManagement = () => {
                       <td className="py-4 text-white/70">
                         {ticket.trips?.buses?.plate_number || 'N/A'}
                       </td>
-                      <td className="py-4 text-white/70">{ticket.issuer?.full_name || 'N/A'}</td>
                       <td className="py-4 text-white/70 text-sm">
                         {new Date(ticket.issued_at).toLocaleString()}
                       </td>
@@ -705,7 +712,7 @@ const CardManagement = () => {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="8" className="py-8 text-center text-white/60">
+                    <td colSpan="7" className="py-8 text-center text-white/60">
                       No temporary tickets found
                     </td>
                   </tr>
