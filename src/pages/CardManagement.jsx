@@ -289,8 +289,25 @@ const CardManagement = () => {
     setIsProcessing(true);
     try {
       if (approvalAction === 'approve') {
-        // Generate a unique card UID
-        const cardUid = `QR-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+        // Generate card type prefix
+        const cardType = (selectedReservation.card_type || 'regular').toLowerCase();
+        const prefixMap = {
+          'regular': 'RC',
+          'student': 'SC',
+          'senior_citizen': 'SCC',
+          'pwd': 'PC'
+        };
+        const prefix = prefixMap[cardType] || 'RC';
+
+        // Generate a unique card UID with prefix
+        const random1 = Math.floor(Math.random() * 999);
+        const random2 = Math.floor(Math.random() * 999);
+        const random3 = Math.floor(Math.random() * 999);
+        const cardUid = `${prefix}-${random1}-${random2}-${random3}`;
+
+        // Format allowed_routes array
+        const typeLabel = cardType.charAt(0).toUpperCase() + cardType.slice(1).replace('_', ' ');
+        const allowedRoutes = [`type:${typeLabel}`];
 
         // Insert new QR card
         const { data: newCard, error: cardError } = await supabase
@@ -299,10 +316,11 @@ const CardManagement = () => {
             card_uid: cardUid,
             owner_name: selectedReservation.name,
             contact_number: selectedReservation.contact,
-            card_type: (selectedReservation.card_type || 'regular').toLowerCase(),
+            card_type: cardType,
             purchase_price: 100.00, // Default price
             balance: 0,
-            status: 'active'
+            status: 'active',
+            allowed_routes: allowedRoutes
           })
           .select()
           .single();
