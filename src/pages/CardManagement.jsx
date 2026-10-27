@@ -21,7 +21,6 @@ const CardManagement = () => {
   const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [selectedReservation, setSelectedReservation] = useState(null);
   const [approvalAction, setApprovalAction] = useState(null); // 'approve' or 'decline'
-  const [declineReason, setDeclineReason] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Delete Modal State
@@ -267,14 +266,12 @@ const CardManagement = () => {
   const handleApproveReservation = async (reservation) => {
     setSelectedReservation(reservation);
     setApprovalAction('approve');
-    setDeclineReason('');
     setShowApprovalModal(true);
   };
 
   const handleDeclineReservation = async (reservation) => {
     setSelectedReservation(reservation);
     setApprovalAction('decline');
-    setDeclineReason('');
     setShowApprovalModal(true);
   };
 
@@ -294,7 +291,7 @@ const CardManagement = () => {
             card_uid: cardUid,
             owner_name: selectedReservation.name,
             contact_number: selectedReservation.contact,
-            card_type: selectedReservation.card_type || 'regular',
+            card_type: (selectedReservation.card_type || 'regular').toLowerCase(),
             purchase_price: 100.00, // Default price
             balance: 0,
             status: 'active',
@@ -353,7 +350,7 @@ const CardManagement = () => {
       } else if (approvalAction === 'decline') {
         const { error } = await supabase
           .from('card_reservations')
-          .update({ status: 'declined', decline_reason: declineReason || 'No reason provided' })
+          .update({ status: 'declined' })
           .eq('id', selectedReservation.id);
 
         if (error) throw error;
@@ -361,16 +358,12 @@ const CardManagement = () => {
         await AuditService.logAuditEvent({
           action: 'UPDATE',
           module: 'Card Management',
-          details: `Declined card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}. Reason: ${declineReason || 'No reason'}`,
+          details: `Declined card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}`,
         });
 
         // Queue SMS notification directly to Supabase
         try {
-          let message = `CARD DECLINED. Card ID: ${selectedReservation.reservation_id}. Holder: ${selectedReservation.name}.`;
-          if (declineReason) {
-            message += ` Reason: ${declineReason}.`;
-          }
-          message += ' Please contact customer service for assistance.';
+          const message = `CARD DECLINED. Card ID: ${selectedReservation.reservation_id}. Holder: ${selectedReservation.name}. Please contact customer service for assistance.`;
 
           const { error: smsError } = await supabase
             .from('sms_queue')
@@ -545,7 +538,9 @@ const CardManagement = () => {
               <>
                 <option value="pending">Pending</option>
                 <option value="approved">Approved</option>
-                <option value="completed">Completed</option>
+                <option value="declined">Declined</option>
+                <option value="claimed">Claimed</option>
+                <option value="expired">Expired</option>
                 <option value="cancelled">Cancelled</option>
               </>
             )}
@@ -770,7 +765,6 @@ const CardManagement = () => {
                   <th className="pb-3 font-medium">Card Type</th>
                   <th className="pb-3 font-medium">Pickup Terminal</th>
                   <th className="pb-3 font-medium">Status</th>
-                  <th className="pb-3 font-medium">Reason</th>
                   <th className="pb-3 font-medium">Created</th>
                   <th className="pb-3 font-medium">Actions</th>
                 </tr>
@@ -788,9 +782,6 @@ const CardManagement = () => {
                         <span className={`px-3 py-1 rounded-full text-xs border ${reservationStatusColors[reservation.status] || 'bg-gray-500/20 text-gray-400 border-gray-500/50'}`}>
                           {reservation.status}
                         </span>
-                      </td>
-                      <td className="py-4 text-white/70 text-sm">
-                        {reservation.decline_reason || '-'}
                       </td>
                       <td className="py-4 text-white/70 text-sm">
                         {new Date(reservation.created_at).toLocaleDateString()}
@@ -828,7 +819,7 @@ const CardManagement = () => {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="9" className="py-8 text-center text-white/60">
+                    <td colSpan="8" className="py-8 text-center text-white/60">
                       No card reservations found
                     </td>
                   </tr>
@@ -915,25 +906,10 @@ const CardManagement = () => {
               </div>
             </div>
 
-            {approvalAction === 'decline' && (
-              <div className="mb-6">
-                <label className="block text-white/60 text-sm mb-2">
-                  Reason for declining (optional):
-                </label>
-                <textarea
-                  value={declineReason}
-                  onChange={(e) => setDeclineReason(e.target.value)}
-                  placeholder="Enter reason for declining this reservation..."
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-white/40 focus:outline-none focus:border-orange-500/50 resize-none"
-                  rows="3"
-                />
-              </div>
-            )}
-
             <p className="text-white/60 text-sm mb-6">
               {approvalAction === 'approve'
                 ? 'This will approve the reservation and send an SMS notification to the contact number.'
-                : 'This will decline the reservation and send an SMS notification with the reason.'}
+                : 'This will decline the reservation and send an SMS notification.'}
             </p>
 
             <div className="flex gap-3">
@@ -941,7 +917,6 @@ const CardManagement = () => {
                 onClick={() => {
                   setShowApprovalModal(false);
                   setSelectedReservation(null);
-                  setDeclineReason('');
                 }}
                 disabled={isProcessing}
                 className="flex-1 px-4 py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
