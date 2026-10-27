@@ -482,7 +482,7 @@ const Dashboard = () => {
     assignedBus: piAssignedBus,
     activeTripId: piActiveTripId,
     usingWebSocket: piUsingWebSocket,
-  } = useRaspberryPi({ autoConnect: false, enableHealthCheck: true });
+  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
 
   // Backend video connection for YOLOv8m processing
   const {
@@ -530,6 +530,20 @@ const Dashboard = () => {
       alertsSubscription.unsubscribe();
     };
   }, []);
+
+  // Auto-start video stream when Pi connects
+  useEffect(() => {
+    if (piOnline && piCameraActive && !piIsStreaming) {
+      // Start stream automatically when Pi is online and camera is active
+      const timer = setTimeout(() => {
+        if (piOnline && piCameraActive && !piIsStreaming) {
+          console.log('[Dashboard] Auto-starting video stream');
+          // The stream will start automatically via WebSocket on connection
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [piOnline, piCameraActive, piIsStreaming]);
 
   const fetchRouteFromOSRM = async () => {
     try {

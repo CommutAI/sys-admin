@@ -37,7 +37,11 @@ DISABLE_AI=true
 COUNT_METHOD=none
 
 # Backend URL (Windows system IP)
-BACKEND_URL=http://192.168.1.XX:8000
+# Option 1: Let the system auto-discover (recommended)
+# BACKEND_URL=auto  # The system will try to discover the backend IP
+
+# Option 2: Manual configuration (if auto-discovery fails)
+BACKEND_URL=http://YOUR_WINDOWS_IP:8000
 
 # Camera settings (lower for faster streaming)
 CAMERA_WIDTH=640
@@ -53,7 +57,7 @@ SUPABASE_URL=your_supabase_url
 SUPABASE_KEY=your_supabase_key
 ```
 
-**Important**: Replace `192.168.1.XX` with your Windows system's actual IP address.
+**Note**: The system can auto-discover the backend IP if it's on the same network. If auto-discovery fails, manually set `BACKEND_URL` to your Windows system's IP address.
 
 ### Step 2: Install WebSocket Dependencies on Pi
 
@@ -77,11 +81,11 @@ You should see output like:
 ```
 Supabase client initialized
 [Bus] Assigned to bus_number=1 | id=xxx | plate=xxx
-[Device] Registered: bus=1 ip=192.168.1.45:5000
-[Stream Mode] Backend URL: http://192.168.1.XX:8000
+[Device] Registered: bus=1 ip=<auto-detected-ip>:5000
+[Stream Mode] Backend URL: http://<auto-discovered-backend-ip>:8000
 [Stream Mode] Camera: 640x480 @ 10fps
 Camera initialized: 640x480 @ 10fps
-Connecting to backend: ws://192.168.1.XX:8000/ws/video-stream/pi-1
+Connecting to backend: ws://<auto-discovered-backend-ip>:8000/ws/video-stream/pi-1
 Connected to backend successfully
 Starting video stream...
 [Detection] Passengers: 3
@@ -189,17 +193,19 @@ IOU_THRESHOLD=0.45
    ```bash
    # On Windows
    ipconfig
-   # Look for IPv4 Address (e.g., 192.168.1.100)
+   # Look for IPv4 Address
    ```
 
 2. Test connectivity from Pi:
    ```bash
-   # On Pi
-   ping 192.168.1.100
-   curl http://192.168.1.100:8000/health
+   # On Pi - replace with actual Windows IP
+   ping <windows-ip>
+   curl http://<windows-ip>:8000/health
    ```
 
 3. Check Windows Firewall is allowing port 8000
+
+4. If auto-discovery fails, manually set `BACKEND_URL` in Pi `.env` to the Windows IP
 
 ### Backend cannot load model
 
