@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { CreditCard, Ticket, Plus, Search, Edit, X, MoreHorizontal, TrendingUp, Calendar, ChevronLeft, ChevronRight, Check, AlertCircle, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import AuditService from '../services/auditService';
-import { getSmsApiUrl } from '../services/piAutoDiscovery';
 
 const CardManagement = () => {
   const [activeTab, setActiveTab] = useState('qr-cards');
@@ -91,6 +90,8 @@ const CardManagement = () => {
       }
     } catch (error) {
       console.error('Error fetching card sales stats:', error);
+      // Set default values if backend is not available
+      setCardSalesStats({ total_cards_sold: 0, total_revenue: 0 });
     }
   };
 
@@ -287,13 +288,12 @@ const CardManagement = () => {
           details: `Approved card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}`,
         });
 
-        // Send SMS notification directly to Raspberry Pi SMS API
+        // Send SMS notification via backend API (queues to database)
         try {
-          const SMS_API_URL = await getSmsApiUrl();
-          console.log('SMS API URL:', SMS_API_URL);
-          console.log('Sending SMS to:', selectedReservation.contact);
+          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+          console.log('Sending SMS via backend API to:', selectedReservation.contact);
 
-          const response = await fetch(`${SMS_API_URL}/card-approval`, {
+          const response = await fetch(`${API_URL}/api/sms/card-approval`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -327,13 +327,12 @@ const CardManagement = () => {
           details: `Declined card reservation ${selectedReservation.reservation_id} for ${selectedReservation.name}. Reason: ${declineReason || 'No reason'}`,
         });
 
-        // Send SMS notification directly to Raspberry Pi SMS API
+        // Send SMS notification via backend API (queues to database)
         try {
-          const SMS_API_URL = await getSmsApiUrl();
-          console.log('SMS API URL:', SMS_API_URL);
-          console.log('Sending SMS to:', selectedReservation.contact);
+          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+          console.log('Sending SMS via backend API to:', selectedReservation.contact);
 
-          const response = await fetch(`${SMS_API_URL}/card-approval`, {
+          const response = await fetch(`${API_URL}/api/sms/card-approval`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
