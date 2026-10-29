@@ -548,7 +548,7 @@ const ManageUsers = () => {
                       type="date"
                       value={newUser.license_expiry}
                       onChange={(e) => setNewUser({ ...newUser, license_expiry: e.target.value })}
-                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-gray-900 focus:outline-none focus:border-orange-500"
                     />
                   </div>
                 </>
@@ -570,12 +570,12 @@ const ManageUsers = () => {
                     required
                     value={newUser.password}
                     onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500 pr-10"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-gray-900 focus:outline-none focus:border-orange-500 pr-10"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-white/40 hover:text-white"
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-900 hover:text-gray-700"
                   >
                     {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
