@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { UserPlus, Search, Edit, Trash2, Shield, UserCheck, ChevronLeft, ChevronRight } from 'lucide-react';
+import { UserPlus, Search, Edit, Trash2, Shield, UserCheck, ChevronLeft, ChevronRight, AlertCircle, CheckCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import AuditService from '../services/auditService';
 
@@ -10,6 +10,8 @@ const ManageUsers = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
   const [selectedUser, setSelectedUser] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
@@ -73,59 +75,32 @@ const ManageUsers = () => {
       });
 
       if (rpcError) {
-        if (rpcError.code === '23505' && rpcError.message.includes('email')) {
-          throw new Error(`User with email ${newUser.email} already exists`);
-        }
-
         console.error('RPC Error:', rpcError);
-        // RPC not available, trying standard auth signup
+        // RPC not available, create user directly in database
+        console.log('Creating user directly in database');
 
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-          email: newUser.email,
-          password: newUser.password,
-          options: {
-            data: {
-              full_name: newUser.full_name,
-              role: newUser.role
-            }
-          }
-        });
+        const { error: insertError } = await supabase
+          .from('staff_users')
+          .insert({
+            id: userId,
+            email: newUser.email,
+            full_name: newUser.full_name,
+            role: newUser.role,
+            is_active: true
+          });
 
-        if (authError) {
-          throw new Error(`Email validation failed: ${authError.message}. Try using a valid email format like user@gmail.com`);
+        if (insertError) {
+          console.error('Direct insert error:', insertError);
+          throw new Error(`Failed to create user: ${insertError.message}`);
         }
 
-        if (authData?.user?.id) {
-          const { error: staffError } = await supabase
-            .from('staff_users')
-            .insert({
-              id: authData.user.id,
-              full_name: newUser.full_name,
-              email: newUser.email,
-              role: newUser.role,
-              is_active: true
-            });
-
-          if (staffError) {
-            const { error: updateError } = await supabase
-              .from('staff_users')
-              .update({
-                full_name: newUser.full_name,
-                role: newUser.role,
-                is_active: true
-              })
-              .eq('id', authData.user.id);
-
-            if (updateError) {
-              throw new Error('Failed to update staff_users record');
-            }
-          }
-        }
+        console.log('User created successfully in database');
       }
 
       await AuditService.logUserCreated(newUser.email, newUser.role, newUser.full_name);
 
-      alert('User created successfully!');
+      setSuccessMessage('User created successfully!');
+      setShowSuccessModal(true);
       setShowAddModal(false);
       setNewUser({ email: '', full_name: '', role: 'conductor', password: '' });
       setTimeout(() => fetchUsers(), 1000);
@@ -184,7 +159,8 @@ const ManageUsers = () => {
 
       if (error) throw error;
 
-      alert('User updated successfully!');
+      setSuccessMessage('User updated successfully!');
+      setShowSuccessModal(true);
       setShowEditModal(false);
       setSelectedUser(null);
       fetchUsers();
@@ -214,7 +190,8 @@ const ManageUsers = () => {
 
       if (error) throw error;
 
-      alert('User deleted successfully!');
+      setSuccessMessage('User deleted successfully!');
+      setShowSuccessModal(true);
       setShowDeleteModal(false);
       setSelectedUser(null);
       fetchUsers();
@@ -527,7 +504,7 @@ const ManageUsers = () => {
                 </button>
                 <button
                   type="submit"
-                  className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl transition-colors"
+                  className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white transition-colors"
                 >
                   Add User
                 </button>
@@ -568,7 +545,7 @@ const ManageUsers = () => {
                 <select
                   value={editUser.role}
                   onChange={(e) => setEditUser({ ...editUser, role: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
                   <option value="admin">System Admin</option>
                   <option value="operator">Operator</option>
@@ -577,16 +554,15 @@ const ManageUsers = () => {
                   <option value="cs_desk">Customer Service Staff</option>
                 </select>
               </div>
-              <div>
-                <label className="text-white/60 text-sm mb-1 block">Status</label>
-                <select
-                  value={editUser.is_active ? 'true' : 'false'}
-                  onChange={(e) => setEditUser({ ...editUser, is_active: e.target.value === 'true' })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                >
-                  <option value="true">Active</option>
-                  <option value="false">Inactive</option>
-                </select>
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  id="isActive"
+                  checked={editUser.is_active}
+                  onChange={(e) => setEditUser({ ...editUser, is_active: e.target.checked })}
+                  className="w-4 h-4"
+                />
+                <label htmlFor="isActive" className="text-white/60 text-sm">Active</label>
               </div>
               <div className="flex gap-3 justify-end">
                 <button
@@ -601,7 +577,7 @@ const ManageUsers = () => {
                 </button>
                 <button
                   type="submit"
-                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-xl transition-colors"
+                  className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white transition-colors"
                 >
                   Update User
                 </button>
@@ -616,29 +592,66 @@ const ManageUsers = () => {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="glass-card p-6 rounded-2xl w-full max-w-md">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-red-500/20 rounded-xl flex items-center justify-center">
-                <Trash2 className="w-6 h-6 text-red-400" />
+              <div className="w-10 h-10 bg-red-500/20 rounded-full flex items-center justify-center">
+                <AlertCircle className="w-5 h-5 text-red-400" />
               </div>
-              <h2 className="text-white text-xl font-bold">Delete User</h2>
+              <h2 className="text-xl font-bold text-white">Confirm Delete</h2>
             </div>
-            <p className="text-white/60 mb-6">
-              Are you sure you want to delete <span className="text-white font-medium">{selectedUser.full_name}</span>? This action cannot be undone.
-            </p>
-            <div className="flex gap-3 justify-end">
+
+            <div className="mb-6">
+              <p className="text-white/80 mb-2">
+                Are you sure you want to delete this user?
+              </p>
+              <p className="text-white/60 text-sm">
+                {selectedUser.full_name} ({selectedUser.email})
+              </p>
+              <p className="text-red-400 text-sm mt-2">This action cannot be undone.</p>
+            </div>
+
+            <div className="flex gap-3">
               <button
                 onClick={() => {
                   setShowDeleteModal(false);
                   setSelectedUser(null);
                 }}
-                className="px-4 py-2 rounded-xl text-white/60 hover:text-white transition-colors"
+                className="flex-1 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmDelete}
-                className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl transition-colors"
+                className="flex-1 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-xl transition-colors"
               >
-                Delete User
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-md">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-green-500/20 rounded-full flex items-center justify-center">
+                <CheckCircle className="w-5 h-5 text-green-400" />
+              </div>
+              <h2 className="text-xl font-bold text-white">Success</h2>
+            </div>
+
+            <div className="mb-6">
+              <p className="text-white/80">
+                {successMessage}
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowSuccessModal(false)}
+                className="flex-1 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors"
+              >
+                OK
               </button>
             </div>
           </div>
