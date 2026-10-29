@@ -21,19 +21,49 @@ const Login = () => {
     setError('');
 
     try {
+      console.log('Attempting login for:', email);
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Login error:', error);
+        throw error;
+      }
+
+      console.log('Login successful, user data:', data.user);
 
       if (data.user) {
+        // Check if user exists in staff_users table
+        const { data: staffUser, error: staffError } = await supabase
+          .from('staff_users')
+          .select('*')
+          .eq('id', data.user.id)
+          .single();
+
+        if (staffError || !staffUser) {
+          console.error('User not found in staff_users:', staffError);
+          setError('User account not found in staff records. Please contact administrator.');
+          setLoading(false);
+          return;
+        }
+
+        if (!staffUser.is_active) {
+          console.error('User account is inactive');
+          setError('Your account has been deactivated. Please contact administrator.');
+          setLoading(false);
+          return;
+        }
+
+        console.log('User found in staff_users, is_active:', staffUser.is_active);
+
         // Log login event to audit logs
         await AuditService.logLogin(email);
         navigate('/');
       }
     } catch (error) {
+      console.error('Login error:', error);
       setError(error.message);
     } finally {
       setLoading(false);
