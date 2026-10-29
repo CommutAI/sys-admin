@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { UserPlus, Search, Edit, Trash2, Shield, UserCheck, ChevronLeft, ChevronRight, AlertCircle, CheckCircle } from 'lucide-react';
+import { UserPlus, Search, Edit, Trash2, Shield, UserCheck, ChevronLeft, ChevronRight, AlertCircle, CheckCircle, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import AuditService from '../services/auditService';
 
@@ -12,6 +12,7 @@ const ManageUsers = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
@@ -20,7 +21,13 @@ const ManageUsers = () => {
     full_name: '',
     role: 'conductor',
     password: '',
-    branch: ''
+    branch: '',
+    phone: '',
+    employee_id: '',
+    license_number: '',
+    license_expiry: '',
+    emergency_contact: '',
+    emergency_phone: ''
   });
   const [editUser, setEditUser] = useState({
     id: '',
@@ -28,7 +35,13 @@ const ManageUsers = () => {
     email: '',
     role: 'conductor',
     is_active: true,
-    branch: ''
+    branch: '',
+    phone: '',
+    employee_id: '',
+    license_number: '',
+    license_expiry: '',
+    emergency_contact: '',
+    emergency_phone: ''
   });
 
   useEffect(() => {
@@ -89,7 +102,13 @@ const ManageUsers = () => {
             full_name: newUser.full_name,
             role: newUser.role,
             is_active: true,
-            branch: newUser.role === 'cs_desk' ? newUser.branch : null
+            branch: newUser.role === 'cs_desk' ? newUser.branch : null,
+            phone: newUser.phone || null,
+            employee_id: newUser.employee_id || null,
+            license_number: newUser.role === 'driver' ? newUser.license_number : null,
+            license_expiry: newUser.role === 'driver' ? newUser.license_expiry : null,
+            emergency_contact: newUser.emergency_contact || null,
+            emergency_phone: newUser.emergency_phone || null
           });
 
         if (insertError) {
@@ -105,7 +124,7 @@ const ManageUsers = () => {
       setSuccessMessage('User created successfully!');
       setShowSuccessModal(true);
       setShowAddModal(false);
-      setNewUser({ email: '', full_name: '', role: 'conductor', password: '', branch: '' });
+      setNewUser({ email: '', full_name: '', role: 'conductor', password: '', branch: '', phone: '', employee_id: '', license_number: '', license_expiry: '', emergency_contact: '', emergency_phone: '' });
       setTimeout(() => fetchUsers(), 1000);
     } catch (error) {
       console.error('Error creating user:', error);
@@ -143,7 +162,13 @@ const ManageUsers = () => {
       email: user.email,
       role: user.role,
       is_active: user.is_active,
-      branch: user.branch || ''
+      branch: user.branch || '',
+      phone: user.phone || '',
+      employee_id: user.employee_id || '',
+      license_number: user.license_number || '',
+      license_expiry: user.license_expiry || '',
+      emergency_contact: user.emergency_contact || '',
+      emergency_phone: user.emergency_phone || ''
     });
     setShowEditModal(true);
   };
@@ -158,7 +183,13 @@ const ManageUsers = () => {
           email: editUser.email,
           role: editUser.role,
           is_active: editUser.is_active,
-          branch: editUser.role === 'cs_desk' ? editUser.branch : null
+          branch: editUser.role === 'cs_desk' ? editUser.branch : null,
+          phone: editUser.phone || null,
+          employee_id: editUser.employee_id || null,
+          license_number: editUser.role === 'driver' ? editUser.license_number : null,
+          license_expiry: editUser.role === 'driver' ? editUser.license_expiry : null,
+          emergency_contact: editUser.emergency_contact || null,
+          emergency_phone: editUser.emergency_phone || null
         })
         .eq('id', editUser.id);
 
@@ -456,7 +487,7 @@ const ManageUsers = () => {
       {/* Add User Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-md">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <h2 className="text-white text-xl font-bold mb-4">Add New User</h2>
             <form onSubmit={handleAddUser} className="space-y-4">
               <div>
@@ -508,21 +539,88 @@ const ManageUsers = () => {
                 </div>
               )}
               <div>
-                <label className="text-white/60 text-sm mb-1 block">Password</label>
+                <label className="text-white/60 text-sm mb-1 block">Phone</label>
                 <input
-                  type="password"
-                  required
-                  value={newUser.password}
-                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                  type="text"
+                  value={newUser.phone}
+                  onChange={(e) => setNewUser({ ...newUser, phone: e.target.value })}
                   className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 />
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Employee ID</label>
+                <input
+                  type="text"
+                  value={newUser.employee_id}
+                  onChange={(e) => setNewUser({ ...newUser, employee_id: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              {newUser.role === 'driver' && (
+                <>
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">License Number</label>
+                    <input
+                      type="text"
+                      value={newUser.license_number}
+                      onChange={(e) => setNewUser({ ...newUser, license_number: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">License Expiry</label>
+                    <input
+                      type="date"
+                      value={newUser.license_expiry}
+                      onChange={(e) => setNewUser({ ...newUser, license_expiry: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                </>
+              )}
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Emergency Contact</label>
+                <input
+                  type="text"
+                  value={newUser.emergency_contact}
+                  onChange={(e) => setNewUser({ ...newUser, emergency_contact: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Emergency Phone</label>
+                <input
+                  type="text"
+                  value={newUser.emergency_phone}
+                  onChange={(e) => setNewUser({ ...newUser, emergency_phone: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Password</label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    value={newUser.password}
+                    onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500 pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-white/40 hover:text-white"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
               <div className="flex gap-3 justify-end">
                 <button
                   type="button"
                   onClick={() => {
                     setShowAddModal(false);
-                    setNewUser({ email: '', full_name: '', role: 'conductor', password: '', branch: '' });
+                    setNewUser({ email: '', full_name: '', role: 'conductor', password: '', branch: '', phone: '', employee_id: '', license_number: '', license_expiry: '', emergency_contact: '', emergency_phone: '' });
                   }}
                   className="px-4 py-2 rounded-xl text-white/60 hover:text-white transition-colors"
                 >
@@ -543,7 +641,7 @@ const ManageUsers = () => {
       {/* Edit User Modal */}
       {showEditModal && selectedUser && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-md">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <h2 className="text-white text-xl font-bold mb-4">Edit User</h2>
             <form onSubmit={handleUpdateUser} className="space-y-4">
               <div>
@@ -594,6 +692,64 @@ const ManageUsers = () => {
                   </select>
                 </div>
               )}
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Phone</label>
+                <input
+                  type="text"
+                  value={editUser.phone}
+                  onChange={(e) => setEditUser({ ...editUser, phone: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Employee ID</label>
+                <input
+                  type="text"
+                  value={editUser.employee_id}
+                  onChange={(e) => setEditUser({ ...editUser, employee_id: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              {editUser.role === 'driver' && (
+                <>
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">License Number</label>
+                    <input
+                      type="text"
+                      value={editUser.license_number}
+                      onChange={(e) => setEditUser({ ...editUser, license_number: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">License Expiry</label>
+                    <input
+                      type="date"
+                      value={editUser.license_expiry}
+                      onChange={(e) => setEditUser({ ...editUser, license_expiry: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                </>
+              )}
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Emergency Contact</label>
+                <input
+                  type="text"
+                  value={editUser.emergency_contact}
+                  onChange={(e) => setEditUser({ ...editUser, emergency_contact: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Emergency Phone</label>
+                <input
+                  type="text"
+                  value={editUser.emergency_phone}
+                  onChange={(e) => setEditUser({ ...editUser, emergency_phone: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
               <div className="flex items-center gap-3">
                 <input
                   type="checkbox"
