@@ -75,17 +75,39 @@ const ManageUsers = () => {
         throw new Error(`User with email ${newUser.email} already exists`);
       }
 
-      const userId = crypto.randomUUID();
+      // Create user in auth.users first
+      console.log('Creating auth user for:', newUser.email);
+      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+        email: newUser.email,
+        password: newUser.password,
+        email_confirm: true,
+        user_metadata: {
+          full_name: newUser.full_name,
+          role: newUser.role
+        }
+      });
 
-      // Create user directly in staff_users table only (no auth.users dependency)
-      // This avoids Supabase Auth email domain restrictions
-      // Users are managed entirely through the admin panel
-      console.log('Creating user in staff_users table (no auth.users dependency)');
+      if (authError) {
+        console.error('Auth user creation error:', authError);
+        console.error('Error details:', JSON.stringify(authError, null, 2));
 
+        // Check for email domain restriction
+        if (authError.message.includes('User not allowed') || authError.message.includes('Email not allowed')) {
+          const domain = newUser.email.split('@')[1];
+          throw new Error(`Email domain "${domain}" is not allowed in Supabase. Please add it to allowed domains in Supabase Dashboard → Authentication → Email Settings.`);
+        }
+
+        throw new Error(`Failed to create auth user: ${authError.message}`);
+      }
+
+      const authUserId = authData.user.id;
+      console.log('Auth user created successfully, ID:', authUserId);
+
+      // Then create user in staff_users table
       const { error: insertError } = await supabase
         .from('staff_users')
         .insert({
-          id: userId,
+          id: authUserId,
           email: newUser.email,
           full_name: newUser.full_name,
           role: newUser.role,
@@ -99,10 +121,12 @@ const ManageUsers = () => {
 
       if (insertError) {
         console.error('Staff users insert error:', insertError);
-        throw new Error(`Failed to create user: ${insertError.message}`);
+        // Rollback: delete from auth.users if staff_users insert fails
+        await supabase.auth.admin.deleteUser(authUserId);
+        throw new Error(`Failed to create staff user: ${insertError.message}`);
       }
 
-      console.log('User created successfully in staff_users table');
+      console.log('User created successfully in both auth.users and staff_users');
 
       await AuditService.logUserCreated(newUser.email, newUser.role, newUser.full_name);
 
@@ -159,7 +183,24 @@ const ManageUsers = () => {
   const handleUpdateUser = async (e) => {
     e.preventDefault();
     try {
-      // Update only in staff_users table (no auth.users dependency)
+      // Update auth.users metadata
+      const { error: authError } = await supabase.auth.admin.updateUserById(
+        editUser.id,
+        {
+          email: editUser.email,
+          user_metadata: {
+            full_name: editUser.full_name,
+            role: editUser.role
+          }
+        }
+      );
+
+      if (authError) {
+        console.warn('Auth user update failed:', authError);
+        // Continue with staff_users update even if auth update fails
+      }
+
+      // Update staff_users table
       const { error } = await supabase
         .from('staff_users')
         .update({
@@ -197,7 +238,21 @@ const ManageUsers = () => {
     try {
       console.log('Attempting to delete user:', selectedUser.id, selectedUser.email);
 
-      // Delete only from staff_users table (no auth.users dependency)
+      // Delete from auth.users first
+      try {
+        const { error: authError } = await supabase.auth.admin.deleteUser(selectedUser.id);
+        if (authError) {
+          console.warn('Auth user deletion failed:', authError);
+          // Continue with staff_users deletion even if auth deletion fails
+        } else {
+          console.log('Auth user deleted successfully');
+        }
+      } catch (authErr) {
+        console.warn('Auth deletion threw exception:', authErr);
+        // Continue with staff_users deletion
+      }
+
+      // Delete from staff_users table
       const { error: staffError } = await supabase
         .from('staff_users')
         .delete()
