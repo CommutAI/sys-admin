@@ -23,11 +23,9 @@ const ManageUsers = () => {
     password: '',
     branch: '',
     phone: '',
-    employee_id: '',
     license_number: '',
     license_expiry: '',
-    emergency_contact: '',
-    emergency_phone: ''
+    emergency_contact: ''
   });
   const [editUser, setEditUser] = useState({
     id: '',
@@ -37,11 +35,9 @@ const ManageUsers = () => {
     is_active: true,
     branch: '',
     phone: '',
-    employee_id: '',
     license_number: '',
     license_expiry: '',
-    emergency_contact: '',
-    emergency_phone: ''
+    emergency_contact: ''
   });
 
   useEffect(() => {
@@ -104,11 +100,9 @@ const ManageUsers = () => {
             is_active: true,
             branch: newUser.role === 'cs_desk' ? newUser.branch : null,
             phone: newUser.phone || null,
-            employee_id: newUser.employee_id || null,
             license_number: newUser.role === 'driver' ? newUser.license_number : null,
             license_expiry: newUser.role === 'driver' ? newUser.license_expiry : null,
-            emergency_contact: newUser.emergency_contact || null,
-            emergency_phone: newUser.emergency_phone || null
+            emergency_contact: newUser.emergency_contact || null
           });
 
         if (insertError) {
@@ -124,7 +118,7 @@ const ManageUsers = () => {
       setSuccessMessage('User created successfully!');
       setShowSuccessModal(true);
       setShowAddModal(false);
-      setNewUser({ email: '', full_name: '', role: 'conductor', password: '', branch: '', phone: '', employee_id: '', license_number: '', license_expiry: '', emergency_contact: '', emergency_phone: '' });
+      setNewUser({ email: '', full_name: '', role: 'conductor', password: '', branch: '', phone: '', license_number: '', license_expiry: '', emergency_contact: '' });
       setTimeout(() => fetchUsers(), 1000);
     } catch (error) {
       console.error('Error creating user:', error);
@@ -164,11 +158,9 @@ const ManageUsers = () => {
       is_active: user.is_active,
       branch: user.branch || '',
       phone: user.phone || '',
-      employee_id: user.employee_id || '',
       license_number: user.license_number || '',
       license_expiry: user.license_expiry || '',
-      emergency_contact: user.emergency_contact || '',
-      emergency_phone: user.emergency_phone || ''
+      emergency_contact: user.emergency_contact || ''
     });
     setShowEditModal(true);
   };
@@ -185,11 +177,9 @@ const ManageUsers = () => {
           is_active: editUser.is_active,
           branch: editUser.role === 'cs_desk' ? editUser.branch : null,
           phone: editUser.phone || null,
-          employee_id: editUser.employee_id || null,
           license_number: editUser.role === 'driver' ? editUser.license_number : null,
           license_expiry: editUser.role === 'driver' ? editUser.license_expiry : null,
-          emergency_contact: editUser.emergency_contact || null,
-          emergency_phone: editUser.emergency_phone || null
+          emergency_contact: editUser.emergency_contact || null
         })
         .eq('id', editUser.id);
 
@@ -547,15 +537,6 @@ const ManageUsers = () => {
                   className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 />
               </div>
-              <div>
-                <label className="text-white/60 text-sm mb-1 block">Employee ID</label>
-                <input
-                  type="text"
-                  value={newUser.employee_id}
-                  onChange={(e) => setNewUser({ ...newUser, employee_id: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                />
-              </div>
               {newUser.role === 'driver' && (
                 <>
                   <div>
@@ -588,15 +569,6 @@ const ManageUsers = () => {
                 />
               </div>
               <div>
-                <label className="text-white/60 text-sm mb-1 block">Emergency Phone</label>
-                <input
-                  type="text"
-                  value={newUser.emergency_phone}
-                  onChange={(e) => setNewUser({ ...newUser, emergency_phone: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                />
-              </div>
-              <div>
                 <label className="text-white/60 text-sm mb-1 block">Password</label>
                 <div className="relative">
                   <input
@@ -620,7 +592,7 @@ const ManageUsers = () => {
                   type="button"
                   onClick={() => {
                     setShowAddModal(false);
-                    setNewUser({ email: '', full_name: '', role: 'conductor', password: '', branch: '', phone: '', employee_id: '', license_number: '', license_expiry: '', emergency_contact: '', emergency_phone: '' });
+                    setNewUser({ email: '', full_name: '', role: 'conductor', password: '', branch: '', phone: '', license_number: '', license_expiry: '', emergency_contact: '' });
                   }}
                   className="px-4 py-2 rounded-xl text-white/60 hover:text-white transition-colors"
                 >
@@ -701,15 +673,6 @@ const ManageUsers = () => {
                   className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 />
               </div>
-              <div>
-                <label className="text-white/60 text-sm mb-1 block">Employee ID</label>
-                <input
-                  type="text"
-                  value={editUser.employee_id}
-                  onChange={(e) => setEditUser({ ...editUser, employee_id: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                />
-              </div>
               {editUser.role === 'driver' && (
                 <>
                   <div>
@@ -738,15 +701,6 @@ const ManageUsers = () => {
                   type="text"
                   value={editUser.emergency_contact}
                   onChange={(e) => setEditUser({ ...editUser, emergency_contact: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                />
-              </div>
-              <div>
-                <label className="text-white/60 text-sm mb-1 block">Emergency Phone</label>
-                <input
-                  type="text"
-                  value={editUser.emergency_phone}
-                  onChange={(e) => setEditUser({ ...editUser, emergency_phone: e.target.value })}
                   className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 />
               </div>
