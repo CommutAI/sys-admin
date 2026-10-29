@@ -228,21 +228,34 @@ const ManageUsers = () => {
 
   const handleConfirmDelete = async () => {
     try {
-      // Delete from auth.users first
-      const { error: authError } = await supabase.auth.admin.deleteUser(selectedUser.id);
+      console.log('Attempting to delete user:', selectedUser.id, selectedUser.email);
 
-      if (authError) {
-        console.warn('Auth user deletion failed:', authError);
-        // Continue with staff_users deletion even if auth deletion fails
+      // Try to delete from auth.users first
+      try {
+        const { error: authError } = await supabase.auth.admin.deleteUser(selectedUser.id);
+        if (authError) {
+          console.warn('Auth user deletion failed (user may not exist in auth.users):', authError);
+          // This is expected for orphaned records - continue with staff_users deletion
+        } else {
+          console.log('Auth user deleted successfully');
+        }
+      } catch (authErr) {
+        console.warn('Auth deletion threw exception:', authErr);
+        // Continue with staff_users deletion
       }
 
-      // Then delete from staff_users table
-      const { error } = await supabase
+      // Delete from staff_users table
+      const { error: staffError } = await supabase
         .from('staff_users')
         .delete()
         .eq('id', selectedUser.id);
 
-      if (error) throw error;
+      if (staffError) {
+        console.error('Staff users deletion failed:', staffError);
+        throw new Error(`Failed to delete staff user: ${staffError.message}`);
+      }
+
+      console.log('Staff user deleted successfully');
 
       setSuccessMessage('User deleted successfully!');
       setShowSuccessModal(true);
