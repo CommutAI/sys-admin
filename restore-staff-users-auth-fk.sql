@@ -7,6 +7,7 @@
 DO $$
 DECLARE
   staff_record RECORD;
+  temp_password TEXT;
 BEGIN
   -- Enable pgcrypto extension if not already enabled
   CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -14,7 +15,6 @@ BEGIN
   FOR staff_record IN SELECT id, email, full_name, role FROM staff_users WHERE id NOT IN (SELECT id FROM auth.users)
   LOOP
     -- Generate a temporary password (users should reset this)
-    DECLARE temp_password TEXT;
     temp_password := encode(gen_random_bytes(16), 'hex');
 
     INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, raw_user_meta_data, created_at, updated_at)
