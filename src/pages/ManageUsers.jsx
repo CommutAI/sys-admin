@@ -19,14 +19,16 @@ const ManageUsers = () => {
     email: '',
     full_name: '',
     role: 'conductor',
-    password: ''
+    password: '',
+    branch: ''
   });
   const [editUser, setEditUser] = useState({
     id: '',
     full_name: '',
     email: '',
     role: 'conductor',
-    is_active: true
+    is_active: true,
+    branch: ''
   });
 
   useEffect(() => {
@@ -86,7 +88,8 @@ const ManageUsers = () => {
             email: newUser.email,
             full_name: newUser.full_name,
             role: newUser.role,
-            is_active: true
+            is_active: true,
+            branch: newUser.role === 'cs_desk' ? newUser.branch : null
           });
 
         if (insertError) {
@@ -102,7 +105,7 @@ const ManageUsers = () => {
       setSuccessMessage('User created successfully!');
       setShowSuccessModal(true);
       setShowAddModal(false);
-      setNewUser({ email: '', full_name: '', role: 'conductor', password: '' });
+      setNewUser({ email: '', full_name: '', role: 'conductor', password: '', branch: '' });
       setTimeout(() => fetchUsers(), 1000);
     } catch (error) {
       console.error('Error creating user:', error);
@@ -139,7 +142,8 @@ const ManageUsers = () => {
       full_name: user.full_name,
       email: user.email,
       role: user.role,
-      is_active: user.is_active
+      is_active: user.is_active,
+      branch: user.branch || ''
     });
     setShowEditModal(true);
   };
@@ -153,7 +157,8 @@ const ManageUsers = () => {
           full_name: editUser.full_name,
           email: editUser.email,
           role: editUser.role,
-          is_active: editUser.is_active
+          is_active: editUser.is_active,
+          branch: editUser.role === 'cs_desk' ? editUser.branch : null
         })
         .eq('id', editUser.id);
 
@@ -355,6 +360,7 @@ const ManageUsers = () => {
                 <th className="text-left text-white/60 text-sm py-3 px-4">Name</th>
                 <th className="text-left text-white/60 text-sm py-3 px-4">Email</th>
                 <th className="text-left text-white/60 text-sm py-3 px-4">Role</th>
+                <th className="text-left text-white/60 text-sm py-3 px-4">Branch</th>
                 <th className="text-left text-white/60 text-sm py-3 px-4">Status</th>
                 <th className="text-left text-white/60 text-sm py-3 px-4">Created</th>
                 <th className="text-left text-white/60 text-sm py-3 px-4">Actions</th>
@@ -369,6 +375,12 @@ const ManageUsers = () => {
                     <span className={`px-2 py-1 rounded-full text-xs border ${roleColors[user.role] || 'bg-gray-500/20 text-gray-400 border-gray-500/50'}`}>
                       {roleLabels[user.role] || user.role}
                     </span>
+                  </td>
+                  <td className="text-white/70 py-3 px-4">
+                    {user.role === 'cs_desk' ? (
+                      user.branch === 'manolo_fortich_terminal' ? 'Manolo Fortich' :
+                      user.branch === 'agora_terminal' ? 'Agora' : '-'
+                    ) : '-'}
                   </td>
                   <td className="py-3 px-4">
                     <span className={`px-2 py-1 rounded text-xs ${user.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
@@ -481,6 +493,20 @@ const ManageUsers = () => {
                   <option value="cs_desk">Customer Service Staff</option>
                 </select>
               </div>
+              {newUser.role === 'cs_desk' && (
+                <div>
+                  <label className="text-white/60 text-sm mb-1 block">Branch</label>
+                  <select
+                    value={newUser.branch}
+                    onChange={(e) => setNewUser({ ...newUser, branch: e.target.value })}
+                    className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="">Select Branch</option>
+                    <option value="manolo_fortich_terminal">Manolo Fortich Terminal</option>
+                    <option value="agora_terminal">Agora Terminal</option>
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="text-white/60 text-sm mb-1 block">Password</label>
                 <input
@@ -496,7 +522,7 @@ const ManageUsers = () => {
                   type="button"
                   onClick={() => {
                     setShowAddModal(false);
-                    setNewUser({ email: '', full_name: '', role: 'conductor', password: '' });
+                    setNewUser({ email: '', full_name: '', role: 'conductor', password: '', branch: '' });
                   }}
                   className="px-4 py-2 rounded-xl text-white/60 hover:text-white transition-colors"
                 >
@@ -554,6 +580,20 @@ const ManageUsers = () => {
                   <option value="cs_desk">Customer Service Staff</option>
                 </select>
               </div>
+              {editUser.role === 'cs_desk' && (
+                <div>
+                  <label className="text-white/60 text-sm mb-1 block">Branch</label>
+                  <select
+                    value={editUser.branch}
+                    onChange={(e) => setEditUser({ ...editUser, branch: e.target.value })}
+                    className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="">Select Branch</option>
+                    <option value="manolo_fortich_terminal">Manolo Fortich Terminal</option>
+                    <option value="agora_terminal">Agora Terminal</option>
+                  </select>
+                </div>
+              )}
               <div className="flex items-center gap-3">
                 <input
                   type="checkbox"
