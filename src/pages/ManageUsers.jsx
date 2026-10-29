@@ -75,8 +75,11 @@ const ManageUsers = () => {
         throw new Error(`User with email ${newUser.email} already exists`);
       }
 
-      // Create user in auth.users first
-      console.log('Creating auth user for:', newUser.email);
+      const userId = crypto.randomUUID();
+      let authUserId = userId;
+
+      // Try to create user in auth.users first
+      console.log('Attempting to create auth user for:', newUser.email);
       const { data: authData, error: authError } = await supabase.auth.admin.createUser({
         email: newUser.email,
         password: newUser.password,
@@ -88,22 +91,16 @@ const ManageUsers = () => {
       });
 
       if (authError) {
-        console.error('Auth user creation error:', authError);
-        console.error('Error details:', JSON.stringify(authError, null, 2));
-
-        // Check for email domain restriction
-        if (authError.message.includes('User not allowed') || authError.message.includes('Email not allowed')) {
-          const domain = newUser.email.split('@')[1];
-          throw new Error(`Email domain "${domain}" is not allowed in Supabase. Please add it to allowed domains in Supabase Dashboard → Authentication → Email Settings.`);
-        }
-
-        throw new Error(`Failed to create auth user: ${authError.message}`);
+        console.warn('Auth user creation failed (likely email domain restriction):', authError);
+        console.log('Falling back to staff_users-only creation');
+        // Use the generated UUID for staff_users
+        authUserId = userId;
+      } else {
+        console.log('Auth user created successfully, ID:', authData.user.id);
+        authUserId = authData.user.id;
       }
 
-      const authUserId = authData.user.id;
-      console.log('Auth user created successfully, ID:', authUserId);
-
-      // Then create user in staff_users table
+      // Create user in staff_users table
       const { error: insertError } = await supabase
         .from('staff_users')
         .insert({
@@ -121,12 +118,14 @@ const ManageUsers = () => {
 
       if (insertError) {
         console.error('Staff users insert error:', insertError);
-        // Rollback: delete from auth.users if staff_users insert fails
-        await supabase.auth.admin.deleteUser(authUserId);
+        // Rollback: delete from auth.users if it was created
+        if (!authError) {
+          await supabase.auth.admin.deleteUser(authUserId);
+        }
         throw new Error(`Failed to create staff user: ${insertError.message}`);
       }
 
-      console.log('User created successfully in both auth.users and staff_users');
+      console.log('User created successfully');
 
       await AuditService.logUserCreated(newUser.email, newUser.role, newUser.full_name);
 

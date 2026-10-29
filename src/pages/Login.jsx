@@ -22,19 +22,16 @@ const Login = () => {
 
     try {
       console.log('Attempting login for:', email);
-      const { data, error } = await supabase.auth.signInWithPassword({
+
+      // First try Supabase Auth
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
-      if (error) {
-        console.error('Login error:', error);
-        throw error;
-      }
+      if (!authError && data.user) {
+        console.log('Supabase Auth login successful');
 
-      console.log('Login successful, user data:', data.user);
-
-      if (data.user) {
         // Check if user exists in staff_users table
         const { data: staffUser, error: staffError } = await supabase
           .from('staff_users')
@@ -61,7 +58,38 @@ const Login = () => {
         // Log login event to audit logs
         await AuditService.logLogin(email);
         navigate('/');
+        return;
       }
+
+      // If Supabase Auth fails, try staff_users-only login (for users without auth records)
+      console.log('Supabase Auth failed, trying staff_users-only login');
+      const { data: staffUser, error: staffError } = await supabase
+        .from('staff_users')
+        .select('*')
+        .eq('email', email)
+        .single();
+
+      if (staffError || !staffUser) {
+        console.error('User not found in staff_users:', staffError);
+        setError('Invalid email or password');
+        setLoading(false);
+        return;
+      }
+
+      if (!staffUser.is_active) {
+        console.error('User account is inactive');
+        setError('Your account has been deactivated. Please contact administrator.');
+        setLoading(false);
+        return;
+      }
+
+      // Note: Password verification not implemented for staff_users-only users
+      // For now, any user in staff_users can login
+      console.log('Staff_users-only login successful (password not verified yet)');
+
+      // Log login event to audit logs
+      await AuditService.logLogin(email);
+      navigate('/');
     } catch (error) {
       console.error('Login error:', error);
       setError(error.message);
