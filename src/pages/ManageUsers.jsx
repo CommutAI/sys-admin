@@ -37,7 +37,8 @@ const ManageUsers = () => {
     phone: '',
     license_number: '',
     license_expiry: '',
-    emergency_contact: ''
+    emergency_contact: '',
+    password: ''
   });
 
   useEffect(() => {
@@ -86,6 +87,7 @@ const ManageUsers = () => {
           email: newUser.email,
           full_name: newUser.full_name,
           role: newUser.role,
+          password: newUser.password,
           is_active: true,
           branch: newUser.role === 'cs_desk' ? newUser.branch : null,
           phone: newUser.phone || null,
@@ -148,7 +150,8 @@ const ManageUsers = () => {
       phone: user.phone || '',
       license_number: user.license_number || '',
       license_expiry: user.license_expiry || '',
-      emergency_contact: user.emergency_contact || ''
+      emergency_contact: user.emergency_contact || '',
+      password: user.password || ''
     });
     setShowEditModal(true);
   };
@@ -157,19 +160,26 @@ const ManageUsers = () => {
     e.preventDefault();
     try {
       // Update only in staff_users table
+      const updateData = {
+        full_name: editUser.full_name,
+        email: editUser.email,
+        role: editUser.role,
+        is_active: editUser.is_active,
+        branch: editUser.role === 'cs_desk' ? editUser.branch : null,
+        phone: editUser.phone || null,
+        license_number: editUser.role === 'driver' ? editUser.license_number : null,
+        license_expiry: editUser.role === 'driver' ? editUser.license_expiry : null,
+        emergency_contact: editUser.emergency_contact || null
+      };
+
+      // Only update password if a new one is provided
+      if (editUser.password) {
+        updateData.password = editUser.password;
+      }
+
       const { error } = await supabase
         .from('staff_users')
-        .update({
-          full_name: editUser.full_name,
-          email: editUser.email,
-          role: editUser.role,
-          is_active: editUser.is_active,
-          branch: editUser.role === 'cs_desk' ? editUser.branch : null,
-          phone: editUser.phone || null,
-          license_number: editUser.role === 'driver' ? editUser.license_number : null,
-          license_expiry: editUser.role === 'driver' ? editUser.license_expiry : null,
-          emergency_contact: editUser.emergency_contact || null
-        })
+        .update(updateData)
         .eq('id', editUser.id);
 
       if (error) throw error;
@@ -692,6 +702,15 @@ const ManageUsers = () => {
                   type="text"
                   value={editUser.emergency_contact}
                   onChange={(e) => setEditUser({ ...editUser, emergency_contact: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Password (leave blank to keep current)</label>
+                <input
+                  type="password"
+                  value={editUser.password}
+                  onChange={(e) => setEditUser({ ...editUser, password: e.target.value })}
                   className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 />
               </div>

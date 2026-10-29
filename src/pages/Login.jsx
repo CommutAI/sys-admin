@@ -30,8 +30,18 @@ const Login = () => {
         .eq('email', email)
         .single();
 
-      if (staffError || !staffUser) {
+      console.log('Staff user query result:', staffUser);
+      console.log('Staff user query error:', staffError);
+
+      if (staffError) {
         console.error('User not found in staff_users:', staffError);
+        setError('Invalid email or password');
+        setLoading(false);
+        return;
+      }
+
+      if (!staffUser) {
+        console.error('No user data returned');
         setError('Invalid email or password');
         setLoading(false);
         return;
@@ -44,8 +54,14 @@ const Login = () => {
         return;
       }
 
-      // TODO: Implement password verification
-      // For now, any user in staff_users can login with any password
+      // Verify password
+      if (staffUser.password !== password) {
+        console.error('Password mismatch');
+        setError('Invalid email or password');
+        setLoading(false);
+        return;
+      }
+
       console.log('User found in staff_users, is_active:', staffUser.is_active);
 
       // Log login event to audit logs
