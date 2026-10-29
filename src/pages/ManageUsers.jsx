@@ -77,6 +77,7 @@ const ManageUsers = () => {
 
       const userId = crypto.randomUUID();
 
+      // Try RPC first (creates both auth.user and staff_users record)
       const { data: rpcData, error: rpcError } = await supabase.rpc('create_user_direct', {
         user_id: userId,
         user_email: newUser.email,
@@ -87,8 +88,11 @@ const ManageUsers = () => {
 
       if (rpcError) {
         console.error('RPC Error:', rpcError);
-        // RPC not available, create user directly in database
-        console.log('Creating user directly in database');
+        // RPC not available or failed, create user directly in staff_users table only
+        // This creates a local user record without an auth.users entry
+        // Users created this way cannot authenticate via Supabase Auth
+        // They are managed entirely through the admin panel
+        console.log('Creating user directly in staff_users table (no auth.users entry)');
 
         const { error: insertError } = await supabase
           .from('staff_users')
@@ -110,7 +114,7 @@ const ManageUsers = () => {
           throw new Error(`Failed to create user: ${insertError.message}`);
         }
 
-        console.log('User created successfully in database');
+        console.log('User created successfully in staff_users table');
       }
 
       await AuditService.logUserCreated(newUser.email, newUser.role, newUser.full_name);
