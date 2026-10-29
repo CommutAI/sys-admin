@@ -23,46 +23,7 @@ const Login = () => {
     try {
       console.log('Attempting login for:', email);
 
-      // First try Supabase Auth
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (!authError && data.user) {
-        console.log('Supabase Auth login successful');
-
-        // Check if user exists in staff_users table
-        const { data: staffUser, error: staffError } = await supabase
-          .from('staff_users')
-          .select('*')
-          .eq('id', data.user.id)
-          .single();
-
-        if (staffError || !staffUser) {
-          console.error('User not found in staff_users:', staffError);
-          setError('User account not found in staff records. Please contact administrator.');
-          setLoading(false);
-          return;
-        }
-
-        if (!staffUser.is_active) {
-          console.error('User account is inactive');
-          setError('Your account has been deactivated. Please contact administrator.');
-          setLoading(false);
-          return;
-        }
-
-        console.log('User found in staff_users, is_active:', staffUser.is_active);
-
-        // Log login event to audit logs
-        await AuditService.logLogin(email);
-        navigate('/');
-        return;
-      }
-
-      // If Supabase Auth fails, try staff_users-only login (for users without auth records)
-      console.log('Supabase Auth failed, trying staff_users-only login');
+      // Check if user exists in staff_users table
       const { data: staffUser, error: staffError } = await supabase
         .from('staff_users')
         .select('*')
@@ -83,9 +44,9 @@ const Login = () => {
         return;
       }
 
-      // Note: Password verification not implemented for staff_users-only users
-      // For now, any user in staff_users can login
-      console.log('Staff_users-only login successful (password not verified yet)');
+      // TODO: Implement password verification
+      // For now, any user in staff_users can login with any password
+      console.log('User found in staff_users, is_active:', staffUser.is_active);
 
       // Log login event to audit logs
       await AuditService.logLogin(email);
