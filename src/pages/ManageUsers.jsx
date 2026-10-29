@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { UserPlus, Search, Edit, Trash2, Shield, UserCheck, ChevronLeft, ChevronRight } from 'lucide-react';
+import { UserPlus, Search, Edit, Trash2, Shield, UserCheck, ChevronLeft, ChevronRight, AlertCircle, CheckCircle, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import AuditService from '../services/auditService';
 
@@ -10,6 +10,9 @@ const ManageUsers = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
@@ -17,14 +20,25 @@ const ManageUsers = () => {
     email: '',
     full_name: '',
     role: 'conductor',
-    password: ''
+    password: '',
+    branch: '',
+    phone: '',
+    license_number: '',
+    license_expiry: '',
+    emergency_contact: ''
   });
   const [editUser, setEditUser] = useState({
     id: '',
     full_name: '',
     email: '',
     role: 'conductor',
-    is_active: true
+    is_active: true,
+    branch: '',
+    phone: '',
+    license_number: '',
+    license_expiry: '',
+    emergency_contact: '',
+    password: ''
   });
 
   useEffect(() => {
@@ -64,70 +78,37 @@ const ManageUsers = () => {
 
       const userId = crypto.randomUUID();
 
-      const { data: rpcData, error: rpcError } = await supabase.rpc('create_user_direct', {
-        user_id: userId,
-        user_email: newUser.email,
-        user_password: newUser.password,
-        user_full_name: newUser.full_name,
-        user_role: newUser.role
-      });
-
-      if (rpcError) {
-        if (rpcError.code === '23505' && rpcError.message.includes('email')) {
-          throw new Error(`User with email ${newUser.email} already exists`);
-        }
-
-        console.error('RPC Error:', rpcError);
-        // RPC not available, trying standard auth signup
-
-        const { data: authData, error: authError } = await supabase.auth.signUp({
+      // Create user in staff_users table only
+      // Password is stored (TODO: implement hashing)
+      const { error: insertError } = await supabase
+        .from('staff_users')
+        .insert({
+          id: userId,
           email: newUser.email,
+          full_name: newUser.full_name,
+          role: newUser.role,
           password: newUser.password,
-          options: {
-            data: {
-              full_name: newUser.full_name,
-              role: newUser.role
-            }
-          }
+          is_active: true,
+          branch: newUser.role === 'cs_desk' ? newUser.branch : null,
+          phone: newUser.phone || null,
+          license_number: newUser.role === 'driver' ? newUser.license_number : null,
+          license_expiry: newUser.role === 'driver' ? newUser.license_expiry : null,
+          emergency_contact: newUser.emergency_contact || null
         });
 
-        if (authError) {
-          throw new Error(`Email validation failed: ${authError.message}. Try using a valid email format like user@gmail.com`);
-        }
-
-        if (authData?.user?.id) {
-          const { error: staffError } = await supabase
-            .from('staff_users')
-            .insert({
-              id: authData.user.id,
-              full_name: newUser.full_name,
-              email: newUser.email,
-              role: newUser.role,
-              is_active: true
-            });
-
-          if (staffError) {
-            const { error: updateError } = await supabase
-              .from('staff_users')
-              .update({
-                full_name: newUser.full_name,
-                role: newUser.role,
-                is_active: true
-              })
-              .eq('id', authData.user.id);
-
-            if (updateError) {
-              throw new Error('Failed to update staff_users record');
-            }
-          }
-        }
+      if (insertError) {
+        console.error('Staff users insert error:', insertError);
+        throw new Error(`Failed to create user: ${insertError.message}`);
       }
+
+      console.log('User created successfully in staff_users');
 
       await AuditService.logUserCreated(newUser.email, newUser.role, newUser.full_name);
 
-      alert('User created successfully!');
+      setSuccessMessage('User created successfully!');
+      setShowSuccessModal(true);
       setShowAddModal(false);
-      setNewUser({ email: '', full_name: '', role: 'conductor', password: '' });
+      setNewUser({ email: '', full_name: '', role: 'conductor', password: '', branch: '', phone: '', license_number: '', license_expiry: '', emergency_contact: '' });
       setTimeout(() => fetchUsers(), 1000);
     } catch (error) {
       console.error('Error creating user:', error);
@@ -164,7 +145,13 @@ const ManageUsers = () => {
       full_name: user.full_name,
       email: user.email,
       role: user.role,
-      is_active: user.is_active
+      is_active: user.is_active,
+      branch: user.branch || '',
+      phone: user.phone || '',
+      license_number: user.license_number || '',
+      license_expiry: user.license_expiry || '',
+      emergency_contact: user.emergency_contact || '',
+      password: user.password || ''
     });
     setShowEditModal(true);
   };
@@ -172,19 +159,33 @@ const ManageUsers = () => {
   const handleUpdateUser = async (e) => {
     e.preventDefault();
     try {
+      // Update only in staff_users table
+      const updateData = {
+        full_name: editUser.full_name,
+        email: editUser.email,
+        role: editUser.role,
+        is_active: editUser.is_active,
+        branch: editUser.role === 'cs_desk' ? editUser.branch : null,
+        phone: editUser.phone || null,
+        license_number: editUser.role === 'driver' ? editUser.license_number : null,
+        license_expiry: editUser.role === 'driver' ? editUser.license_expiry : null,
+        emergency_contact: editUser.emergency_contact || null
+      };
+
+      // Only update password if a new one is provided
+      if (editUser.password) {
+        updateData.password = editUser.password;
+      }
+
       const { error } = await supabase
         .from('staff_users')
-        .update({
-          full_name: editUser.full_name,
-          email: editUser.email,
-          role: editUser.role,
-          is_active: editUser.is_active
-        })
+        .update(updateData)
         .eq('id', editUser.id);
 
       if (error) throw error;
 
-      alert('User updated successfully!');
+      setSuccessMessage('User updated successfully!');
+      setShowSuccessModal(true);
       setShowEditModal(false);
       setSelectedUser(null);
       fetchUsers();
@@ -201,20 +202,23 @@ const ManageUsers = () => {
 
   const handleConfirmDelete = async () => {
     try {
-      const { error: authError } = await supabase.auth.admin.deleteUser(selectedUser.id);
+      console.log('Attempting to delete user:', selectedUser.id, selectedUser.email);
 
-      if (authError) {
-        console.warn('Auth user deletion failed, attempting staff_users deletion:', authError);
-      }
-
-      const { error } = await supabase
+      // Delete only from staff_users table
+      const { error: staffError } = await supabase
         .from('staff_users')
         .delete()
         .eq('id', selectedUser.id);
 
-      if (error) throw error;
+      if (staffError) {
+        console.error('Staff users deletion failed:', staffError);
+        throw new Error(`Failed to delete staff user: ${staffError.message}`);
+      }
 
-      alert('User deleted successfully!');
+      console.log('Staff user deleted successfully');
+
+      setSuccessMessage('User deleted successfully!');
+      setShowSuccessModal(true);
       setShowDeleteModal(false);
       setSelectedUser(null);
       fetchUsers();
@@ -378,6 +382,7 @@ const ManageUsers = () => {
                 <th className="text-left text-white/60 text-sm py-3 px-4">Name</th>
                 <th className="text-left text-white/60 text-sm py-3 px-4">Email</th>
                 <th className="text-left text-white/60 text-sm py-3 px-4">Role</th>
+                <th className="text-left text-white/60 text-sm py-3 px-4">Branch</th>
                 <th className="text-left text-white/60 text-sm py-3 px-4">Status</th>
                 <th className="text-left text-white/60 text-sm py-3 px-4">Created</th>
                 <th className="text-left text-white/60 text-sm py-3 px-4">Actions</th>
@@ -392,6 +397,12 @@ const ManageUsers = () => {
                     <span className={`px-2 py-1 rounded-full text-xs border ${roleColors[user.role] || 'bg-gray-500/20 text-gray-400 border-gray-500/50'}`}>
                       {roleLabels[user.role] || user.role}
                     </span>
+                  </td>
+                  <td className="text-white/70 py-3 px-4">
+                    {user.role === 'cs_desk' ? (
+                      user.branch === 'manolo_fortich_terminal' ? 'Manolo Fortich' :
+                      user.branch === 'agora_terminal' ? 'Agora' : '-'
+                    ) : '-'}
                   </td>
                   <td className="py-3 px-4">
                     <span className={`px-2 py-1 rounded text-xs ${user.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
@@ -467,7 +478,7 @@ const ManageUsers = () => {
       {/* Add User Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-md">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <h2 className="text-white text-xl font-bold mb-4">Add New User</h2>
             <form onSubmit={handleAddUser} className="space-y-4">
               <div>
@@ -504,22 +515,85 @@ const ManageUsers = () => {
                   <option value="cs_desk">Customer Service Staff</option>
                 </select>
               </div>
+              {newUser.role === 'cs_desk' && (
+                <div>
+                  <label className="text-white/60 text-sm mb-1 block">Branch</label>
+                  <select
+                    value={newUser.branch}
+                    onChange={(e) => setNewUser({ ...newUser, branch: e.target.value })}
+                    className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="">Select Branch</option>
+                    <option value="manolo_fortich_terminal">Manolo Fortich Terminal</option>
+                    <option value="agora_terminal">Agora Terminal</option>
+                  </select>
+                </div>
+              )}
               <div>
-                <label className="text-white/60 text-sm mb-1 block">Password</label>
+                <label className="text-white/60 text-sm mb-1 block">Phone</label>
                 <input
-                  type="password"
-                  required
-                  value={newUser.password}
-                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                  type="text"
+                  value={newUser.phone}
+                  onChange={(e) => setNewUser({ ...newUser, phone: e.target.value })}
                   className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 />
+              </div>
+              {newUser.role === 'driver' && (
+                <>
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">License Number</label>
+                    <input
+                      type="text"
+                      value={newUser.license_number}
+                      onChange={(e) => setNewUser({ ...newUser, license_number: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">License Expiry</label>
+                    <input
+                      type="date"
+                      value={newUser.license_expiry}
+                      onChange={(e) => setNewUser({ ...newUser, license_expiry: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-gray-900 focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                </>
+              )}
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Emergency Contact</label>
+                <input
+                  type="text"
+                  value={newUser.emergency_contact}
+                  onChange={(e) => setNewUser({ ...newUser, emergency_contact: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Password</label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    value={newUser.password}
+                    onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-gray-900 focus:outline-none focus:border-orange-500 pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-900 hover:text-gray-700"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
               <div className="flex gap-3 justify-end">
                 <button
                   type="button"
                   onClick={() => {
                     setShowAddModal(false);
-                    setNewUser({ email: '', full_name: '', role: 'conductor', password: '' });
+                    setNewUser({ email: '', full_name: '', role: 'conductor', password: '', branch: '', phone: '', license_number: '', license_expiry: '', emergency_contact: '' });
                   }}
                   className="px-4 py-2 rounded-xl text-white/60 hover:text-white transition-colors"
                 >
@@ -527,7 +601,7 @@ const ManageUsers = () => {
                 </button>
                 <button
                   type="submit"
-                  className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl transition-colors"
+                  className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white transition-colors"
                 >
                   Add User
                 </button>
@@ -540,7 +614,7 @@ const ManageUsers = () => {
       {/* Edit User Modal */}
       {showEditModal && selectedUser && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-md">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <h2 className="text-white text-xl font-bold mb-4">Edit User</h2>
             <form onSubmit={handleUpdateUser} className="space-y-4">
               <div>
@@ -568,7 +642,7 @@ const ManageUsers = () => {
                 <select
                   value={editUser.role}
                   onChange={(e) => setEditUser({ ...editUser, role: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
                   <option value="admin">System Admin</option>
                   <option value="operator">Operator</option>
@@ -577,16 +651,78 @@ const ManageUsers = () => {
                   <option value="cs_desk">Customer Service Staff</option>
                 </select>
               </div>
+              {editUser.role === 'cs_desk' && (
+                <div>
+                  <label className="text-white/60 text-sm mb-1 block">Branch</label>
+                  <select
+                    value={editUser.branch}
+                    onChange={(e) => setEditUser({ ...editUser, branch: e.target.value })}
+                    className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="">Select Branch</option>
+                    <option value="manolo_fortich_terminal">Manolo Fortich Terminal</option>
+                    <option value="agora_terminal">Agora Terminal</option>
+                  </select>
+                </div>
+              )}
               <div>
-                <label className="text-white/60 text-sm mb-1 block">Status</label>
-                <select
-                  value={editUser.is_active ? 'true' : 'false'}
-                  onChange={(e) => setEditUser({ ...editUser, is_active: e.target.value === 'true' })}
+                <label className="text-white/60 text-sm mb-1 block">Phone</label>
+                <input
+                  type="text"
+                  value={editUser.phone}
+                  onChange={(e) => setEditUser({ ...editUser, phone: e.target.value })}
                   className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                >
-                  <option value="true">Active</option>
-                  <option value="false">Inactive</option>
-                </select>
+                />
+              </div>
+              {editUser.role === 'driver' && (
+                <>
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">License Number</label>
+                    <input
+                      type="text"
+                      value={editUser.license_number}
+                      onChange={(e) => setEditUser({ ...editUser, license_number: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">License Expiry</label>
+                    <input
+                      type="date"
+                      value={editUser.license_expiry}
+                      onChange={(e) => setEditUser({ ...editUser, license_expiry: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                </>
+              )}
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Emergency Contact</label>
+                <input
+                  type="text"
+                  value={editUser.emergency_contact}
+                  onChange={(e) => setEditUser({ ...editUser, emergency_contact: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-1 block">Password (leave blank to keep current)</label>
+                <input
+                  type="password"
+                  value={editUser.password}
+                  onChange={(e) => setEditUser({ ...editUser, password: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  id="isActive"
+                  checked={editUser.is_active}
+                  onChange={(e) => setEditUser({ ...editUser, is_active: e.target.checked })}
+                  className="w-4 h-4"
+                />
+                <label htmlFor="isActive" className="text-white/60 text-sm">Active</label>
               </div>
               <div className="flex gap-3 justify-end">
                 <button
@@ -601,7 +737,7 @@ const ManageUsers = () => {
                 </button>
                 <button
                   type="submit"
-                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-xl transition-colors"
+                  className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white transition-colors"
                 >
                   Update User
                 </button>
@@ -616,29 +752,66 @@ const ManageUsers = () => {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="glass-card p-6 rounded-2xl w-full max-w-md">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-red-500/20 rounded-xl flex items-center justify-center">
-                <Trash2 className="w-6 h-6 text-red-400" />
+              <div className="w-10 h-10 bg-red-500/20 rounded-full flex items-center justify-center">
+                <AlertCircle className="w-5 h-5 text-red-400" />
               </div>
-              <h2 className="text-white text-xl font-bold">Delete User</h2>
+              <h2 className="text-xl font-bold text-white">Confirm Delete</h2>
             </div>
-            <p className="text-white/60 mb-6">
-              Are you sure you want to delete <span className="text-white font-medium">{selectedUser.full_name}</span>? This action cannot be undone.
-            </p>
-            <div className="flex gap-3 justify-end">
+
+            <div className="mb-6">
+              <p className="text-white/80 mb-2">
+                Are you sure you want to delete this user?
+              </p>
+              <p className="text-white/60 text-sm">
+                {selectedUser.full_name} ({selectedUser.email})
+              </p>
+              <p className="text-red-400 text-sm mt-2">This action cannot be undone.</p>
+            </div>
+
+            <div className="flex gap-3">
               <button
                 onClick={() => {
                   setShowDeleteModal(false);
                   setSelectedUser(null);
                 }}
-                className="px-4 py-2 rounded-xl text-white/60 hover:text-white transition-colors"
+                className="flex-1 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmDelete}
-                className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl transition-colors"
+                className="flex-1 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-xl transition-colors"
               >
-                Delete User
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-md">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-green-500/20 rounded-full flex items-center justify-center">
+                <CheckCircle className="w-5 h-5 text-green-400" />
+              </div>
+              <h2 className="text-xl font-bold text-white">Success</h2>
+            </div>
+
+            <div className="mb-6">
+              <p className="text-white/80">
+                {successMessage}
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowSuccessModal(false)}
+                className="flex-1 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors"
+              >
+                OK
               </button>
             </div>
           </div>

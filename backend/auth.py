@@ -38,11 +38,25 @@ async def require_admin(user = Depends(verify_supabase_token)):
     """Require admin role"""
     # Fetch user role from staff_users
     staff_response = supabase.table('staff_users').select('role').eq('id', user.id).single().execute()
-    
+
     if not staff_response.data or staff_response.data.get('role') != 'admin':
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required"
         )
-    
+
+    return user
+
+
+async def require_driver(user = Depends(verify_supabase_token)):
+    """Require driver role"""
+    # Fetch user role from staff_users
+    staff_response = supabase.table('staff_users').select('role').eq('id', user.id).single().execute()
+
+    if not staff_response.data or staff_response.data.get('role') != 'driver':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Driver privileges required"
+        )
+
     return user

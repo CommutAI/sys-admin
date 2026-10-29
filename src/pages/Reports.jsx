@@ -8,6 +8,7 @@ import AuditService from '../services/auditService';
 
 const Reports = () => {
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('trips');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [reportType, setReportType] = useState('trips');
   const [stats, setStats] = useState({
@@ -689,6 +690,13 @@ const Reports = () => {
     { id: 'irregularities', label: 'Fare Irregularities', icon: Activity, description: 'Fare compliance issues' },
   ];
 
+  const tabs = [
+    { id: 'trips', label: 'Trips', icon: Bus },
+    { id: 'transactions', label: 'Transactions', icon: ArrowLeftRight },
+    { id: 'gcash', label: 'GCash', icon: DollarSign },
+    { id: 'reports', label: 'Reports', icon: FileText },
+  ];
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -696,35 +704,57 @@ const Reports = () => {
           <h1 className="text-white text-3xl font-bold mb-2">Reports Dashboard</h1>
           <p className="text-white/60">System analytics and report generation</p>
         </div>
-        <div className="flex gap-3">
-          <button
-            onClick={() => setShowExportColumns(!showExportColumns)}
-            className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
-          >
-            <Settings size={18} />
-            Columns
-          </button>
-          <button
-            onClick={handleExportExcel}
-            disabled={loading}
-            className="bg-green-500 hover:bg-green-600 disabled:bg-green-500/50 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
-          >
-            <Download size={18} />
-            Excel
-          </button>
-          <button
-            onClick={handleExportPDF}
-            disabled={loading}
-            className="bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
-          >
-            <FileText size={18} />
-            PDF
-          </button>
+        {activeTab === 'reports' && (
+          <div className="flex gap-3">
+            <button
+              onClick={() => setShowExportColumns(!showExportColumns)}
+              className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+            >
+              <Settings size={18} />
+              Columns
+            </button>
+            <button
+              onClick={handleExportExcel}
+              disabled={loading}
+              className="bg-green-500 hover:bg-green-600 disabled:bg-green-500/50 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+            >
+              <Download size={18} />
+              Excel
+            </button>
+            <button
+              onClick={handleExportPDF}
+              disabled={loading}
+              className="bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+            >
+              <FileText size={18} />
+              PDF
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="glass-card p-2">
+        <div className="flex gap-2">
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-3 rounded-xl transition-colors ${
+                activeTab === tab.id
+                  ? 'bg-orange-500 text-white'
+                  : 'text-white/60 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              <tab.icon size={18} />
+              <span className="font-medium">{tab.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
       {/* Export Column Selector */}
-      {showExportColumns && (
+      {showExportColumns && activeTab === 'reports' && (
         <div className="glass-card p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-white text-lg font-bold">Select Export Columns</h3>
@@ -771,370 +801,146 @@ const Reports = () => {
         </div>
       )}
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+      {/* Trips Tab */}
+      {activeTab === 'trips' && (
         <div className="glass-card p-6">
           <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center">
-              <DollarSign className="w-6 h-6 text-green-400" />
-            </div>
-            <div className={`flex items-center gap-1 text-sm ${stats.revenueGrowth >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {stats.revenueGrowth >= 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
-              {Math.abs(stats.revenueGrowth)}%
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Total Revenue</p>
-          <p className="text-white text-2xl font-bold">₱{stats.totalRevenue.toLocaleString()}</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center">
-              <Bus className="w-6 h-6 text-blue-400" />
-            </div>
-            <div className={`flex items-center gap-1 text-sm ${stats.tripGrowth >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {stats.tripGrowth >= 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
-              {Math.abs(stats.tripGrowth)}%
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Total Trips</p>
-          <p className="text-white text-2xl font-bold">{stats.totalTrips.toLocaleString()}</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center">
-              <Users className="w-6 h-6 text-purple-400" />
-            </div>
-            <div className="flex items-center gap-1 text-sm text-green-400">
-              <ArrowUp size={14} />
-              5.2%
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Total Passengers</p>
-          <p className="text-white text-2xl font-bold">{stats.totalPassengers.toLocaleString()}</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-orange-500/20 rounded-xl flex items-center justify-center">
-              <Activity className="w-6 h-6 text-orange-400" />
-            </div>
-            <div className="flex items-center gap-1 text-sm text-green-400">
-              <ArrowUp size={14} />
-              2.1%
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Active Buses</p>
-          <p className="text-white text-2xl font-bold">{stats.activeBuses}</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-indigo-500/20 rounded-xl flex items-center justify-center">
-              <Clock className="w-6 h-6 text-indigo-400" />
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Avg Trip Duration</p>
-          <p className="text-white text-2xl font-bold">{stats.avgTripDuration.toFixed(1)} min</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-teal-500/20 rounded-xl flex items-center justify-center">
-              <BarChart3 className="w-6 h-6 text-teal-400" />
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Avg Revenue/Trip</p>
-          <p className="text-white text-2xl font-bold">₱{stats.avgRevenuePerTrip.toFixed(2)}</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-pink-500/20 rounded-xl flex items-center justify-center">
-              <Users className="w-6 h-6 text-pink-400" />
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Avg Passengers/Trip</p>
-          <p className="text-white text-2xl font-bold">{stats.avgPassengersPerTrip.toFixed(1)}</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-cyan-500/20 rounded-xl flex items-center justify-center">
-              <Activity className="w-6 h-6 text-cyan-400" />
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Total Staff</p>
-          <p className="text-white text-2xl font-bold">{stats.totalStaff}</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center">
-              <CheckCircle className="w-6 h-6 text-green-400" />
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Completed Trips</p>
-          <p className="text-white text-2xl font-bold">{stats.completedTrips}</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-red-500/20 rounded-xl flex items-center justify-center">
-              <AlertCircle className="w-6 h-6 text-red-400" />
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Cancelled Trips</p>
-          <p className="text-white text-2xl font-bold">{stats.cancelledTrips}</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center">
-              <Activity className="w-6 h-6 text-blue-400" />
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Active Trips</p>
-          <p className="text-white text-2xl font-bold">{stats.activeTrips}</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center">
-              <DollarSign className="w-6 h-6 text-purple-400" />
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">GCash Transactions</p>
-          <p className="text-white text-2xl font-bold">{stats.gcashTransactions}</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-yellow-500/20 rounded-xl flex items-center justify-center">
-              <Activity className="w-6 h-6 text-yellow-400" />
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Card Transactions</p>
-          <p className="text-white text-2xl font-bold">{stats.cardTransactions}</p>
-        </div>
-
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-emerald-500/20 rounded-xl flex items-center justify-center">
-              <DollarSign className="w-6 h-6 text-emerald-400" />
-            </div>
-          </div>
-          <p className="text-white/60 text-sm mb-1">Cash Transactions</p>
-          <p className="text-white text-2xl font-bold">{stats.cashTransactions}</p>
-        </div>
-      </div>
-
-      {/* Report Configuration */}
-      <div className="glass-card p-6">
-        <h2 className="text-white text-xl font-bold mb-4">Generate Report</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="text-white/60 text-sm mb-2 block">Report Type</label>
-            <select
-              value={reportType}
-              onChange={(e) => setReportType(e.target.value)}
-              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500 appearance-none cursor-pointer"
+            <h2 className="text-white text-xl font-bold flex items-center gap-2">
+              <Activity className="text-blue-400" />
+              Recent Trips
+            </h2>
+            <button
+              onClick={() => setVisibleTripsColumns(
+                visibleTripsColumns.length === 5 ? ['plate_number', 'status', 'started_at'] : ['plate_number', 'route', 'conductor', 'status', 'started_at']
+              )}
+              className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors"
+              title="Toggle column visibility"
             >
-              {reportTypes.map(type => (
-                <option key={type.id} value={type.id} className="bg-gray-800 text-white">{type.label}</option>
-              ))}
+              {visibleTripsColumns.length === 5 ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <select
+              value={tripsFilterStatus}
+              onChange={(e) => setTripsFilterStatus(e.target.value)}
+              className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="all">All Status</option>
+              <option value="active">Active</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
             </select>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
+              <input
+                type="text"
+                placeholder="Search by route..."
+                value={tripsFilterRoute}
+                onChange={(e) => setTripsFilterRoute(e.target.value)}
+                className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-blue-500"
+              />
+            </div>
           </div>
-          <div>
-            <label className="text-white/60 text-sm mb-2 block">Start Date</label>
-            <input
-              type="date"
-              value={dateRange.start}
-              onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
-              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
-            />
-          </div>
-          <div>
-            <label className="text-white/60 text-sm mb-2 block">End Date</label>
-            <input
-              type="date"
-              value={dateRange.end}
-              onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
-              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
-            />
-          </div>
-        </div>
-        <div className="mt-4 p-4 bg-white/5 rounded-lg">
-          <p className="text-white/60 text-sm">
-            <strong className="text-white">Report Description:</strong> {reportTypes.find(t => t.id === reportType)?.description}
-          </p>
-          <p className="text-white/60 text-sm mt-2">
-            <strong className="text-white">Columns Available:</strong> {availableColumns[reportType]?.length || 0}
-          </p>
-        </div>
-      </div>
-
-      {/* Revenue Chart */}
-      <div className="glass-card p-6">
-        <h2 className="text-white text-xl font-bold mb-4 flex items-center gap-2">
-          <TrendingUp className="text-green-400" />
-          Revenue Overview
-        </h2>
-        <div className="h-64 flex items-end gap-4">
-          {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'].map((month, i) => {
-            const heights = [65, 80, 45, 90, 70, 85, 95];
-            return (
-              <div key={month} className="flex-1 flex flex-col items-center gap-2">
-                <div 
-                  className="w-full bg-gradient-to-t from-green-500 to-emerald-400 rounded-t-lg transition-all duration-300 hover:from-green-400 hover:to-emerald-300"
-                  style={{ height: `${heights[i]}%` }}
-                />
-                <span className="text-white/60 text-xs">{month}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Recent Activity Table */}
-      <div className="glass-card p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-white text-xl font-bold flex items-center gap-2">
-            <Activity className="text-blue-400" />
-            Recent Trips
-          </h2>
-          <button
-            onClick={() => setVisibleTripsColumns(
-              visibleTripsColumns.length === 5 ? ['plate_number', 'status', 'started_at'] : ['plate_number', 'route', 'conductor', 'status', 'started_at']
-            )}
-            className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors"
-            title="Toggle column visibility"
-          >
-            {visibleTripsColumns.length === 5 ? <EyeOff size={18} /> : <Eye size={18} />}
-          </button>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <select
-            value={tripsFilterStatus}
-            onChange={(e) => setTripsFilterStatus(e.target.value)}
-            className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-          >
-            <option value="all">All Status</option>
-            <option value="active">Active</option>
-            <option value="completed">Completed</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
-            <input
-              type="text"
-              placeholder="Search by route..."
-              value={tripsFilterRoute}
-              onChange={(e) => setTripsFilterRoute(e.target.value)}
-              className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="text-left text-white/60 border-b border-white/10">
-                {visibleTripsColumns.includes('plate_number') && (
-                  <th
-                    className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                    onClick={() => handleSort('buses', tripsSort, setTripsSort)}
-                  >
-                    <div className="flex items-center gap-1">
-                      Bus {renderSortIcon('buses', tripsSort)}
-                    </div>
-                  </th>
-                )}
-                {visibleTripsColumns.includes('route') && (
-                  <th
-                    className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                    onClick={() => handleSort('buses', tripsSort, setTripsSort)}
-                  >
-                    <div className="flex items-center gap-1">
-                      Route {renderSortIcon('buses', tripsSort)}
-                    </div>
-                  </th>
-                )}
-                {visibleTripsColumns.includes('conductor') && (
-                  <th
-                    className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                    onClick={() => handleSort('conductor_staff', tripsSort, setTripsSort)}
-                  >
-                    <div className="flex items-center gap-1">
-                      Conductor {renderSortIcon('conductor_staff', tripsSort)}
-                    </div>
-                  </th>
-                )}
-                {visibleTripsColumns.includes('status') && (
-                  <th
-                    className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                    onClick={() => handleSort('status', tripsSort, setTripsSort)}
-                  >
-                    <div className="flex items-center gap-1">
-                      Status {renderSortIcon('status', tripsSort)}
-                    </div>
-                  </th>
-                )}
-                {visibleTripsColumns.includes('started_at') && (
-                  <th
-                    className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                    onClick={() => handleSort('started_at', tripsSort, setTripsSort)}
-                  >
-                    <div className="flex items-center gap-1">
-                      Started {renderSortIcon('started_at', tripsSort)}
-                    </div>
-                  </th>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRecentActivity.slice(0, 10).map((trip) => (
-                <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="text-left text-white/60 border-b border-white/10">
                   {visibleTripsColumns.includes('plate_number') && (
-                    <td className="py-4 text-white">{trip.buses?.plate_number || 'N/A'}</td>
+                    <th
+                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                      onClick={() => handleSort('buses', tripsSort, setTripsSort)}
+                    >
+                      <div className="flex items-center gap-1">
+                        Bus {renderSortIcon('buses', tripsSort)}
+                      </div>
+                    </th>
                   )}
                   {visibleTripsColumns.includes('route') && (
-                    <td className="py-4 text-white/70">{trip.buses?.route || 'N/A'}</td>
+                    <th
+                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                      onClick={() => handleSort('buses', tripsSort, setTripsSort)}
+                    >
+                      <div className="flex items-center gap-1">
+                        Route {renderSortIcon('buses', tripsSort)}
+                      </div>
+                    </th>
                   )}
                   {visibleTripsColumns.includes('conductor') && (
-                    <td className="py-4 text-white/70">{trip.conductor_staff?.full_name || 'N/A'}</td>
+                    <th
+                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                      onClick={() => handleSort('conductor_staff', tripsSort, setTripsSort)}
+                    >
+                      <div className="flex items-center gap-1">
+                        Conductor {renderSortIcon('conductor_staff', tripsSort)}
+                      </div>
+                    </th>
                   )}
                   {visibleTripsColumns.includes('status') && (
-                    <td className="py-4">
-                      <span className={`px-3 py-1 rounded-full text-xs ${
-                        trip.status === 'completed' ? 'bg-green-500/20 text-green-400' :
-                        trip.status === 'active' ? 'bg-blue-500/20 text-blue-400' :
-                        'bg-yellow-500/20 text-yellow-400'
-                      }`}>
-                        {trip.status}
-                      </span>
-                    </td>
+                    <th
+                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                      onClick={() => handleSort('status', tripsSort, setTripsSort)}
+                    >
+                      <div className="flex items-center gap-1">
+                        Status {renderSortIcon('status', tripsSort)}
+                      </div>
+                    </th>
                   )}
                   {visibleTripsColumns.includes('started_at') && (
-                    <td className="py-4 text-white/60 text-sm">
-                      {new Date(trip.started_at).toLocaleString()}
-                    </td>
+                    <th
+                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                      onClick={() => handleSort('started_at', tripsSort, setTripsSort)}
+                    >
+                      <div className="flex items-center gap-1">
+                        Started {renderSortIcon('started_at', tripsSort)}
+                      </div>
+                    </th>
                   )}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filteredRecentActivity.slice(0, 10).map((trip) => (
+                  <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
+                    {visibleTripsColumns.includes('plate_number') && (
+                      <td className="py-4 text-white">{trip.buses?.plate_number || 'N/A'}</td>
+                    )}
+                    {visibleTripsColumns.includes('route') && (
+                      <td className="py-4 text-white/70">{trip.buses?.route || 'N/A'}</td>
+                    )}
+                    {visibleTripsColumns.includes('conductor') && (
+                      <td className="py-4 text-white/70">{trip.conductor_staff?.full_name || 'N/A'}</td>
+                    )}
+                    {visibleTripsColumns.includes('status') && (
+                      <td className="py-4">
+                        <span className={`px-3 py-1 rounded-full text-xs ${
+                          trip.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                          trip.status === 'active' ? 'bg-blue-500/20 text-blue-400' :
+                          'bg-yellow-500/20 text-yellow-400'
+                        }`}>
+                          {trip.status}
+                        </span>
+                      </td>
+                    )}
+                    {visibleTripsColumns.includes('started_at') && (
+                      <td className="py-4 text-white/60 text-sm">
+                        {new Date(trip.started_at).toLocaleString()}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Transactions Section */}
-      <div className="glass-card p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-white text-xl font-bold flex items-center gap-2">
-            <ArrowLeftRight className="text-orange-400" />
-            Transactions
-          </h2>
-          <div className="flex gap-2">
+      {/* Transactions Tab */}
+      {activeTab === 'transactions' && (
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-white text-xl font-bold flex items-center gap-2">
+              <ArrowLeftRight className="text-orange-400" />
+              Transactions
+            </h2>
             <button
               onClick={() => {
                 setShowTransactions(!showTransactions);
@@ -1144,249 +950,238 @@ const Reports = () => {
             >
               {showTransactions ? 'Hide' : 'Show Transactions'}
             </button>
-            {showTransactions && (
-              <button
-                onClick={() => setVisibleTransactionColumns(
-                  visibleTransactionColumns.length === 7 ? ['type', 'amount', 'created_at'] : ['type', 'fare', 'baggage', 'amount', 'channel', 'staff', 'created_at']
-                )}
-                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors"
-                title="Toggle column visibility"
-              >
-                {visibleTransactionColumns.length === 7 ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
-            )}
           </div>
-        </div>
 
-        {showTransactions && (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
+          {showTransactions && (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
+                  <input
+                    type="text"
+                    placeholder="Search..."
+                    value={transactionSearchTerm}
+                    onChange={(e) => setTransactionSearchTerm(e.target.value)}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500"
+                  />
+                </div>
+                <select
+                  value={transactionFilterType}
+                  onChange={(e) => setTransactionFilterType(e.target.value)}
+                  className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                >
+                  <option value="all">All Types</option>
+                  <option value="fare_validation">Fare Validation</option>
+                  <option value="balance_topup">Balance Top-up</option>
+                  <option value="card_issuance">Card Issuance</option>
+                </select>
+                <select
+                  value={transactionFilterStatus}
+                  onChange={(e) => setTransactionFilterStatus(e.target.value)}
+                  className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                >
+                  <option value="all">All Status</option>
+                  <option value="completed">Completed</option>
+                  <option value="pending">Pending</option>
+                  <option value="failed">Failed</option>
+                </select>
                 <input
-                  type="text"
-                  placeholder="Search..."
-                  value={transactionSearchTerm}
-                  onChange={(e) => setTransactionSearchTerm(e.target.value)}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500"
+                  type="date"
+                  value={transactionDateRange.start}
+                  onChange={(e) => setTransactionDateRange({ ...transactionDateRange, start: e.target.value })}
+                  className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  placeholder="Start Date"
                 />
               </div>
-              <select
-                value={transactionFilterType}
-                onChange={(e) => setTransactionFilterType(e.target.value)}
-                className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-              >
-                <option value="all">All Types</option>
-                <option value="fare_validation">Fare Validation</option>
-                <option value="balance_topup">Balance Top-up</option>
-                <option value="card_issuance">Card Issuance</option>
-              </select>
-              <select
-                value={transactionFilterStatus}
-                onChange={(e) => setTransactionFilterStatus(e.target.value)}
-                className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-              >
-                <option value="all">All Status</option>
-                <option value="completed">Completed</option>
-                <option value="pending">Pending</option>
-                <option value="failed">Failed</option>
-              </select>
-              <input
-                type="date"
-                value={transactionDateRange.start}
-                onChange={(e) => setTransactionDateRange({ ...transactionDateRange, start: e.target.value })}
-                className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
-                placeholder="Start Date"
-              />
-            </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="text-left text-white/60 border-b border-white/10">
-                    {visibleTransactionColumns.includes('type') && (
-                      <th
-                        className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                        onClick={() => handleSort('type', transactionSort, setTransactionSort)}
-                      >
-                        <div className="flex items-center gap-1">
-                          Type {renderSortIcon('type', transactionSort)}
-                        </div>
-                      </th>
-                    )}
-                    {visibleTransactionColumns.includes('fare') && (
-                      <th
-                        className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                        onClick={() => handleSort('fare', transactionSort, setTransactionSort)}
-                      >
-                        <div className="flex items-center gap-1">
-                          Fare {renderSortIcon('fare', transactionSort)}
-                        </div>
-                      </th>
-                    )}
-                    {visibleTransactionColumns.includes('baggage') && (
-                      <th
-                        className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                        onClick={() => handleSort('baggage', transactionSort, setTransactionSort)}
-                      >
-                        <div className="flex items-center gap-1">
-                          Baggage {renderSortIcon('baggage', transactionSort)}
-                        </div>
-                      </th>
-                    )}
-                    {visibleTransactionColumns.includes('amount') && (
-                      <th
-                        className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                        onClick={() => handleSort('amount', transactionSort, setTransactionSort)}
-                      >
-                        <div className="flex items-center gap-1">
-                          Total Amount {renderSortIcon('amount', transactionSort)}
-                        </div>
-                      </th>
-                    )}
-                    {visibleTransactionColumns.includes('channel') && (
-                      <th
-                        className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                        onClick={() => handleSort('channel', transactionSort, setTransactionSort)}
-                      >
-                        <div className="flex items-center gap-1">
-                          Channel {renderSortIcon('channel', transactionSort)}
-                        </div>
-                      </th>
-                    )}
-                    {visibleTransactionColumns.includes('staff') && (
-                      <th
-                        className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                        onClick={() => handleSort('staff', transactionSort, setTransactionSort)}
-                      >
-                        <div className="flex items-center gap-1">
-                          Staff {renderSortIcon('staff', transactionSort)}
-                        </div>
-                      </th>
-                    )}
-                    {visibleTransactionColumns.includes('created_at') && (
-                      <th
-                        className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                        onClick={() => handleSort('created_at', transactionSort, setTransactionSort)}
-                      >
-                        <div className="flex items-center gap-1">
-                          Created At {renderSortIcon('created_at', transactionSort)}
-                        </div>
-                      </th>
-                    )}
-                    <th className="pb-3 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginatedTransactions.length > 0 ? (
-                    paginatedTransactions.map((transaction) => (
-                      <tr key={transaction.id} className="border-b border-white/5 hover:bg-white/5">
-                        {visibleTransactionColumns.includes('type') && (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-left text-white/60 border-b border-white/10">
+                      {visibleTransactionColumns.includes('type') && (
+                        <th
+                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('type', transactionSort, setTransactionSort)}
+                        >
+                          <div className="flex items-center gap-1">
+                            Type {renderSortIcon('type', transactionSort)}
+                          </div>
+                        </th>
+                      )}
+                      {visibleTransactionColumns.includes('fare') && (
+                        <th
+                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('fare', transactionSort, setTransactionSort)}
+                        >
+                          <div className="flex items-center gap-1">
+                            Fare {renderSortIcon('fare', transactionSort)}
+                          </div>
+                        </th>
+                      )}
+                      {visibleTransactionColumns.includes('baggage') && (
+                        <th
+                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('baggage', transactionSort, setTransactionSort)}
+                        >
+                          <div className="flex items-center gap-1">
+                            Baggage {renderSortIcon('baggage', transactionSort)}
+                          </div>
+                        </th>
+                      )}
+                      {visibleTransactionColumns.includes('amount') && (
+                        <th
+                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('amount', transactionSort, setTransactionSort)}
+                        >
+                          <div className="flex items-center gap-1">
+                            Total Amount {renderSortIcon('amount', transactionSort)}
+                          </div>
+                        </th>
+                      )}
+                      {visibleTransactionColumns.includes('channel') && (
+                        <th
+                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('channel', transactionSort, setTransactionSort)}
+                        >
+                          <div className="flex items-center gap-1">
+                            Channel {renderSortIcon('channel', transactionSort)}
+                          </div>
+                        </th>
+                      )}
+                      {visibleTransactionColumns.includes('staff') && (
+                        <th
+                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('staff', transactionSort, setTransactionSort)}
+                        >
+                          <div className="flex items-center gap-1">
+                            Staff {renderSortIcon('staff', transactionSort)}
+                          </div>
+                        </th>
+                      )}
+                      {visibleTransactionColumns.includes('created_at') && (
+                        <th
+                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('created_at', transactionSort, setTransactionSort)}
+                        >
+                          <div className="flex items-center gap-1">
+                            Created At {renderSortIcon('created_at', transactionSort)}
+                          </div>
+                        </th>
+                      )}
+                      <th className="pb-3 font-medium">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedTransactions.length > 0 ? (
+                      paginatedTransactions.map((transaction) => (
+                        <tr key={transaction.id} className="border-b border-white/5 hover:bg-white/5">
+                          {visibleTransactionColumns.includes('type') && (
+                            <td className="py-4">
+                              <span className={`px-3 py-1 rounded-full text-xs border ${transactionTypeColors[transaction.type]}`}>
+                                {transaction.type.replace('_', ' ')}
+                              </span>
+                            </td>
+                          )}
+                          {visibleTransactionColumns.includes('fare') && (
+                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.fare || 0).toFixed(2)}</td>
+                          )}
+                          {visibleTransactionColumns.includes('baggage') && (
+                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.baggage || 0).toFixed(2)}</td>
+                          )}
+                          {visibleTransactionColumns.includes('amount') && (
+                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.amount).toFixed(2)}</td>
+                          )}
+                          {visibleTransactionColumns.includes('channel') && (
+                            <td className="py-4 text-white/70">{transaction.channel}</td>
+                          )}
+                          {visibleTransactionColumns.includes('staff') && (
+                            <td className="py-4 text-white/70">{transaction.staff?.full_name || 'N/A'}</td>
+                          )}
+                          {visibleTransactionColumns.includes('created_at') && (
+                            <td className="py-4 text-white/70 text-sm">
+                              {new Date(transaction.created_at).toLocaleString()}
+                            </td>
+                          )}
                           <td className="py-4">
-                            <span className={`px-3 py-1 rounded-full text-xs border ${transactionTypeColors[transaction.type]}`}>
-                              {transaction.type.replace('_', ' ')}
-                            </span>
+                            <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                              <MoreHorizontal size={16} className="text-white/70" />
+                            </button>
                           </td>
-                        )}
-                        {visibleTransactionColumns.includes('fare') && (
-                          <td className="py-4 text-white font-medium">₱{parseFloat(transaction.fare || 0).toFixed(2)}</td>
-                        )}
-                        {visibleTransactionColumns.includes('baggage') && (
-                          <td className="py-4 text-white font-medium">₱{parseFloat(transaction.baggage || 0).toFixed(2)}</td>
-                        )}
-                        {visibleTransactionColumns.includes('amount') && (
-                          <td className="py-4 text-white font-medium">₱{parseFloat(transaction.amount).toFixed(2)}</td>
-                        )}
-                        {visibleTransactionColumns.includes('channel') && (
-                          <td className="py-4 text-white/70">{transaction.channel}</td>
-                        )}
-                        {visibleTransactionColumns.includes('staff') && (
-                          <td className="py-4 text-white/70">{transaction.staff?.full_name || 'N/A'}</td>
-                        )}
-                        {visibleTransactionColumns.includes('created_at') && (
-                          <td className="py-4 text-white/70 text-sm">
-                            {new Date(transaction.created_at).toLocaleString()}
-                          </td>
-                        )}
-                        <td className="py-4">
-                          <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-                            <MoreHorizontal size={16} className="text-white/70" />
-                          </button>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={visibleTransactionColumns.length + 1} className="py-8 text-center text-white/60">
+                          No transactions found
                         </td>
                       </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={visibleTransactionColumns.length + 1} className="py-8 text-center text-white/60">
-                        No transactions found
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-              {transactionsTotalPages > 1 && (
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
-                  <p className="text-white/60 text-sm">
-                    Showing {((transactionsCurrentPage - 1) * itemsPerPage) + 1} to {Math.min(transactionsCurrentPage * itemsPerPage, filteredTransactions.length)} of {filteredTransactions.length} transactions
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setTransactionsCurrentPage(prev => Math.max(prev - 1, 1))}
-                      disabled={transactionsCurrentPage === 1}
-                      className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                    <div className="flex items-center gap-1">
-                      {Array.from({ length: Math.min(transactionsTotalPages, 5) }, (_, i) => {
-                        let pageNum;
-                        if (transactionsTotalPages <= 5) {
-                          pageNum = i + 1;
-                        } else if (transactionsCurrentPage <= 3) {
-                          pageNum = i + 1;
-                        } else if (transactionsCurrentPage >= transactionsTotalPages - 2) {
-                          pageNum = transactionsTotalPages - 4 + i;
-                        } else {
-                          pageNum = transactionsCurrentPage - 2 + i;
-                        }
-                        return (
-                          <button
-                            key={pageNum}
-                            onClick={() => setTransactionsCurrentPage(pageNum)}
-                            className={`w-8 h-8 rounded-lg text-sm transition-colors ${
-                              transactionsCurrentPage === pageNum
-                                ? 'bg-orange-500 text-white'
-                                : 'bg-white/10 hover:bg-white/20 text-white/70'
-                            }`}
-                          >
-                            {pageNum}
-                          </button>
-                        );
-                      })}
+                    )}
+                  </tbody>
+                </table>
+                {transactionsTotalPages > 1 && (
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
+                    <p className="text-white/60 text-sm">
+                      Showing {((transactionsCurrentPage - 1) * itemsPerPage) + 1} to {Math.min(transactionsCurrentPage * itemsPerPage, filteredTransactions.length)} of {filteredTransactions.length} transactions
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setTransactionsCurrentPage(prev => Math.max(prev - 1, 1))}
+                        disabled={transactionsCurrentPage === 1}
+                        className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: Math.min(transactionsTotalPages, 5) }, (_, i) => {
+                          let pageNum;
+                          if (transactionsTotalPages <= 5) {
+                            pageNum = i + 1;
+                          } else if (transactionsCurrentPage <= 3) {
+                            pageNum = i + 1;
+                          } else if (transactionsCurrentPage >= transactionsTotalPages - 2) {
+                            pageNum = transactionsTotalPages - 4 + i;
+                          } else {
+                            pageNum = transactionsCurrentPage - 2 + i;
+                          }
+                          return (
+                            <button
+                              key={pageNum}
+                              onClick={() => setTransactionsCurrentPage(pageNum)}
+                              className={`w-8 h-8 rounded-lg text-sm transition-colors ${
+                                transactionsCurrentPage === pageNum
+                                  ? 'bg-orange-500 text-white'
+                                  : 'bg-white/10 hover:bg-white/20 text-white/70'
+                              }`}
+                            >
+                              {pageNum}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <button
+                        onClick={() => setTransactionsCurrentPage(prev => Math.min(prev + 1, transactionsTotalPages))}
+                        disabled={transactionsCurrentPage === transactionsTotalPages}
+                        className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <ChevronRight size={16} />
+                      </button>
                     </div>
-                    <button
-                      onClick={() => setTransactionsCurrentPage(prev => Math.min(prev + 1, transactionsTotalPages))}
-                      disabled={transactionsCurrentPage === transactionsTotalPages}
-                      className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
                   </div>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-      </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
-      {/* GCash Transactions Section */}
-      <div className="glass-card p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-white text-xl font-bold flex items-center gap-2">
-            <DollarSign className="text-green-400" />
-            GCash Transactions
-          </h2>
-          <div className="flex gap-2">
+      {/* GCash Tab */}
+      {activeTab === 'gcash' && (
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-white text-xl font-bold flex items-center gap-2">
+              <DollarSign className="text-green-400" />
+              GCash Transactions
+            </h2>
             <button
               onClick={() => {
                 setShowGcashTransactions(!showGcashTransactions);
@@ -1396,204 +1191,243 @@ const Reports = () => {
             >
               {showGcashTransactions ? 'Hide' : 'Show GCash Transactions'}
             </button>
-            {showGcashTransactions && (
-              <button
-                onClick={() => setVisibleGcashColumns(
-                  visibleGcashColumns.length === 5 ? ['phone_number', 'amount', 'status'] : ['created_at', 'phone_number', 'amount', 'status', 'stripe_payment_id']
-                )}
-                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors"
-                title="Toggle column visibility"
-              >
-                {visibleGcashColumns.length === 5 ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
-            )}
           </div>
-        </div>
 
-        {showGcashTransactions && (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
+          {showGcashTransactions && (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
+                  <input
+                    type="text"
+                    placeholder="Search..."
+                    value={gcashSearchTerm}
+                    onChange={(e) => setGcashSearchTerm(e.target.value)}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-green-500"
+                  />
+                </div>
+                <select
+                  value={gcashFilterStatus}
+                  onChange={(e) => setGcashFilterStatus(e.target.value)}
+                  className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-green-500"
+                >
+                  <option value="all">All Status</option>
+                  <option value="completed">Completed</option>
+                  <option value="failed">Failed</option>
+                  <option value="pending">Pending</option>
+                </select>
                 <input
-                  type="text"
-                  placeholder="Search..."
-                  value={gcashSearchTerm}
-                  onChange={(e) => setGcashSearchTerm(e.target.value)}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-green-500"
+                  type="date"
+                  value={gcashDateRange.start}
+                  onChange={(e) => setGcashDateRange({ ...gcashDateRange, start: e.target.value })}
+                  className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-green-500"
+                  placeholder="Start Date"
                 />
               </div>
-              <select
-                value={gcashFilterStatus}
-                onChange={(e) => setGcashFilterStatus(e.target.value)}
-                className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-green-500"
-              >
-                <option value="all">All Status</option>
-                <option value="completed">Completed</option>
-                <option value="failed">Failed</option>
-                <option value="pending">Pending</option>
-              </select>
-              <input
-                type="date"
-                value={gcashDateRange.start}
-                onChange={(e) => setGcashDateRange({ ...gcashDateRange, start: e.target.value })}
-                className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-green-500"
-                placeholder="Start Date"
-              />
-            </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="text-left text-white/60 border-b border-white/10">
-                    {visibleGcashColumns.includes('created_at') && (
-                      <th
-                        className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                        onClick={() => handleSort('created_at', gcashSort, setGcashSort)}
-                      >
-                        <div className="flex items-center gap-1">
-                          Date {renderSortIcon('created_at', gcashSort)}
-                        </div>
-                      </th>
-                    )}
-                    {visibleGcashColumns.includes('phone_number') && (
-                      <th
-                        className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                        onClick={() => handleSort('phone_number', gcashSort, setGcashSort)}
-                      >
-                        <div className="flex items-center gap-1">
-                          Phone Number {renderSortIcon('phone_number', gcashSort)}
-                        </div>
-                      </th>
-                    )}
-                    {visibleGcashColumns.includes('amount') && (
-                      <th
-                        className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                        onClick={() => handleSort('amount', gcashSort, setGcashSort)}
-                      >
-                        <div className="flex items-center gap-1">
-                          Amount {renderSortIcon('amount', gcashSort)}
-                        </div>
-                      </th>
-                    )}
-                    {visibleGcashColumns.includes('status') && (
-                      <th
-                        className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                        onClick={() => handleSort('status', gcashSort, setGcashSort)}
-                      >
-                        <div className="flex items-center gap-1">
-                          Status {renderSortIcon('status', gcashSort)}
-                        </div>
-                      </th>
-                    )}
-                    {visibleGcashColumns.includes('stripe_payment_id') && (
-                      <th
-                        className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                        onClick={() => handleSort('stripe_payment_id', gcashSort, setGcashSort)}
-                      >
-                        <div className="flex items-center gap-1">
-                          Payment ID {renderSortIcon('stripe_payment_id', gcashSort)}
-                        </div>
-                      </th>
-                    )}
-                    <th className="pb-3 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginatedGcashTransactions.length > 0 ? (
-                    paginatedGcashTransactions.map((transaction) => (
-                      <tr key={transaction.id} className="border-b border-white/5 hover:bg-white/5">
-                        {visibleGcashColumns.includes('created_at') && (
-                          <td className="py-4 text-white/70 text-sm">
-                            {new Date(transaction.created_at).toLocaleString()}
-                          </td>
-                        )}
-                        {visibleGcashColumns.includes('phone_number') && (
-                          <td className="py-4 text-white font-medium">{transaction.phone_number}</td>
-                        )}
-                        {visibleGcashColumns.includes('amount') && (
-                          <td className="py-4 text-white font-medium">₱{parseFloat(transaction.amount).toFixed(2)}</td>
-                        )}
-                        {visibleGcashColumns.includes('status') && (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-left text-white/60 border-b border-white/10">
+                      {visibleGcashColumns.includes('created_at') && (
+                        <th
+                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('created_at', gcashSort, setGcashSort)}
+                        >
+                          <div className="flex items-center gap-1">
+                            Date {renderSortIcon('created_at', gcashSort)}
+                          </div>
+                        </th>
+                      )}
+                      {visibleGcashColumns.includes('phone_number') && (
+                        <th
+                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('phone_number', gcashSort, setGcashSort)}
+                        >
+                          <div className="flex items-center gap-1">
+                            Phone Number {renderSortIcon('phone_number', gcashSort)}
+                          </div>
+                        </th>
+                      )}
+                      {visibleGcashColumns.includes('amount') && (
+                        <th
+                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('amount', gcashSort, setGcashSort)}
+                        >
+                          <div className="flex items-center gap-1">
+                            Amount {renderSortIcon('amount', gcashSort)}
+                          </div>
+                        </th>
+                      )}
+                      {visibleGcashColumns.includes('status') && (
+                        <th
+                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('status', gcashSort, setGcashSort)}
+                        >
+                          <div className="flex items-center gap-1">
+                            Status {renderSortIcon('status', gcashSort)}
+                          </div>
+                        </th>
+                      )}
+                      {visibleGcashColumns.includes('stripe_payment_id') && (
+                        <th
+                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
+                          onClick={() => handleSort('stripe_payment_id', gcashSort, setGcashSort)}
+                        >
+                          <div className="flex items-center gap-1">
+                            Payment ID {renderSortIcon('stripe_payment_id', gcashSort)}
+                          </div>
+                        </th>
+                      )}
+                      <th className="pb-3 font-medium">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedGcashTransactions.length > 0 ? (
+                      paginatedGcashTransactions.map((transaction) => (
+                        <tr key={transaction.id} className="border-b border-white/5 hover:bg-white/5">
+                          {visibleGcashColumns.includes('created_at') && (
+                            <td className="py-4 text-white/70 text-sm">
+                              {new Date(transaction.created_at).toLocaleString()}
+                            </td>
+                          )}
+                          {visibleGcashColumns.includes('phone_number') && (
+                            <td className="py-4 text-white font-medium">{transaction.phone_number}</td>
+                          )}
+                          {visibleGcashColumns.includes('amount') && (
+                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.amount).toFixed(2)}</td>
+                          )}
+                          {visibleGcashColumns.includes('status') && (
+                            <td className="py-4">
+                              <span className={`px-3 py-1 rounded-full text-xs border ${gcashStatusColors[transaction.status]}`}>
+                                {transaction.status}
+                              </span>
+                            </td>
+                          )}
+                          {visibleGcashColumns.includes('stripe_payment_id') && (
+                            <td className="py-4 text-white/70 text-sm">{transaction.stripe_payment_id || 'N/A'}</td>
+                          )}
                           <td className="py-4">
-                            <span className={`px-3 py-1 rounded-full text-xs border ${gcashStatusColors[transaction.status]}`}>
-                              {transaction.status}
-                            </span>
+                            <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                              <MoreHorizontal size={16} className="text-white/70" />
+                            </button>
                           </td>
-                        )}
-                        {visibleGcashColumns.includes('stripe_payment_id') && (
-                          <td className="py-4 text-white/70 text-sm">{transaction.stripe_payment_id || 'N/A'}</td>
-                        )}
-                        <td className="py-4">
-                          <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-                            <MoreHorizontal size={16} className="text-white/70" />
-                          </button>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={visibleGcashColumns.length + 1} className="py-8 text-center text-white/60">
+                          No GCash transactions found
                         </td>
                       </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={visibleGcashColumns.length + 1} className="py-8 text-center text-white/60">
-                        No GCash transactions found
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-              {gcashTotalPages > 1 && (
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
-                  <p className="text-white/60 text-sm">
-                    Showing {((gcashCurrentPage - 1) * itemsPerPage) + 1} to {Math.min(gcashCurrentPage * itemsPerPage, filteredGcashTransactions.length)} of {filteredGcashTransactions.length} transactions
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setGcashCurrentPage(prev => Math.max(prev - 1, 1))}
-                      disabled={gcashCurrentPage === 1}
-                      className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                    <div className="flex items-center gap-1">
-                      {Array.from({ length: Math.min(gcashTotalPages, 5) }, (_, i) => {
-                        let pageNum;
-                        if (gcashTotalPages <= 5) {
-                          pageNum = i + 1;
-                        } else if (gcashCurrentPage <= 3) {
-                          pageNum = i + 1;
-                        } else if (gcashCurrentPage >= gcashTotalPages - 2) {
-                          pageNum = gcashTotalPages - 4 + i;
-                        } else {
-                          pageNum = gcashCurrentPage - 2 + i;
-                        }
-                        return (
-                          <button
-                            key={pageNum}
-                            onClick={() => setGcashCurrentPage(pageNum)}
-                            className={`w-8 h-8 rounded-lg text-sm transition-colors ${
-                              gcashCurrentPage === pageNum
-                                ? 'bg-orange-500 text-white'
-                                : 'bg-white/10 hover:bg-white/20 text-white/70'
-                            }`}
-                          >
-                            {pageNum}
-                          </button>
-                        );
-                      })}
+                    )}
+                  </tbody>
+                </table>
+                {gcashTotalPages > 1 && (
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
+                    <p className="text-white/60 text-sm">
+                      Showing {((gcashCurrentPage - 1) * itemsPerPage) + 1} to {Math.min(gcashCurrentPage * itemsPerPage, filteredGcashTransactions.length)} of {filteredGcashTransactions.length} transactions
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setGcashCurrentPage(prev => Math.max(prev - 1, 1))}
+                        disabled={gcashCurrentPage === 1}
+                        className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: Math.min(gcashTotalPages, 5) }, (_, i) => {
+                          let pageNum;
+                          if (gcashTotalPages <= 5) {
+                            pageNum = i + 1;
+                          } else if (gcashCurrentPage <= 3) {
+                            pageNum = i + 1;
+                          } else if (gcashCurrentPage >= gcashTotalPages - 2) {
+                            pageNum = gcashTotalPages - 4 + i;
+                          } else {
+                            pageNum = gcashCurrentPage - 2 + i;
+                          }
+                          return (
+                            <button
+                              key={pageNum}
+                              onClick={() => setGcashCurrentPage(pageNum)}
+                              className={`w-8 h-8 rounded-lg text-sm transition-colors ${
+                                gcashCurrentPage === pageNum
+                                  ? 'bg-orange-500 text-white'
+                                  : 'bg-white/10 hover:bg-white/20 text-white/70'
+                              }`}
+                            >
+                              {pageNum}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <button
+                        onClick={() => setGcashCurrentPage(prev => Math.min(prev + 1, gcashTotalPages))}
+                        disabled={gcashCurrentPage === gcashTotalPages}
+                        className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <ChevronRight size={16} />
+                      </button>
                     </div>
-                    <button
-                      onClick={() => setGcashCurrentPage(prev => Math.min(prev + 1, gcashTotalPages))}
-                      disabled={gcashCurrentPage === gcashTotalPages}
-                      className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Reports Tab */}
+      {activeTab === 'reports' && (
+        <>
+          {/* Report Configuration */}
+          <div className="glass-card p-6">
+            <h2 className="text-white text-xl font-bold mb-4">Generate Report</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="text-white/60 text-sm mb-2 block">Report Type</label>
+                <select
+                  value={reportType}
+                  onChange={(e) => setReportType(e.target.value)}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500 appearance-none cursor-pointer"
+                >
+                  {reportTypes.map(type => (
+                    <option key={type.id} value={type.id} className="bg-gray-800 text-white">{type.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-2 block">Start Date</label>
+                <input
+                  type="date"
+                  value={dateRange.start}
+                  onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              <div>
+                <label className="text-white/60 text-sm mb-2 block">End Date</label>
+                <input
+                  type="date"
+                  value={dateRange.end}
+                  onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
+                />
+              </div>
             </div>
-          </>
-        )}
-      </div>
+            <div className="mt-4 p-4 bg-white/5 rounded-lg">
+              <p className="text-white/60 text-sm">
+                <strong className="text-white">Report Description:</strong> {reportTypes.find(t => t.id === reportType)?.description}
+              </p>
+              <p className="text-white/60 text-sm mt-2">
+                <strong className="text-white">Columns Available:</strong> {availableColumns[reportType]?.length || 0}
+              </p>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };

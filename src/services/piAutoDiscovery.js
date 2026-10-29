@@ -5,6 +5,7 @@
  */
 
 const STORAGE_KEY = 'raspberry_pi_discovered_ip';
+const SMS_API_STORAGE_KEY = 'sms_api_discovered_ip';
 const DISCOVERY_TIMEOUT = 2000; // Increased to 2 seconds for more reliable connection
 const NETWORK_RANGES = [
   '192.168.1.', '192.168.0.', '192.168.100.', '192.168.50.',
@@ -27,6 +28,19 @@ export function getPersistedIp() {
 }
 
 /**
+ * Get persisted SMS API IP from localStorage
+ */
+export function getPersistedSmsApiIp() {
+  try {
+    const ip = localStorage.getItem(SMS_API_STORAGE_KEY);
+    return ip || null;
+  } catch (error) {
+    console.warn('Failed to read persisted SMS API IP:', error);
+    return null;
+  }
+}
+
+/**
  * Save discovered IP to localStorage
  */
 export function persistIp(ip) {
@@ -34,6 +48,17 @@ export function persistIp(ip) {
     localStorage.setItem(STORAGE_KEY, ip);
   } catch (error) {
     console.warn('Failed to persist IP:', error);
+  }
+}
+
+/**
+ * Save discovered SMS API IP to localStorage
+ */
+export function persistSmsApiIp(ip) {
+  try {
+    localStorage.setItem(SMS_API_STORAGE_KEY, ip);
+  } catch (error) {
+    console.warn('Failed to persist SMS API IP:', error);
   }
 }
 
@@ -77,13 +102,41 @@ async function checkRaspberryPi(ip) {
       signal: controller.signal,
       mode: 'cors'
     });
-    
+
     clearTimeout(timeoutId);
 
     if (response.ok) {
       const data = await response.json();
       // Verify it's our GPS/video server by checking the message
       if (data.message === 'Bus Monitoring Video Server Running (FastAPI)') {
+        return ip;
+      }
+    }
+    return null;
+  } catch (error) {
+    return null; // Expected for most IPs that aren't our Pi
+  }
+}
+
+/**
+ * Check if a specific IP is running the SMS API server
+ */
+async function checkSmsApi(ip) {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DISCOVERY_TIMEOUT);
+
+    const response = await fetch(`http://${ip}:8001/health`, {
+      signal: controller.signal,
+      mode: 'cors'
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      // Verify it's our SMS API by checking the service field
+      if (data.service === 'SMS API Server') {
         return ip;
       }
     }
@@ -201,14 +254,14 @@ export async function getRaspberryPiUrl(forceDiscovery = false) {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 2000);
-        
+
         const response = await fetch(`http://${persistedIp}:5000/`, {
           signal: controller.signal,
           mode: 'cors'
         });
-        
+
         clearTimeout(timeoutId);
-        
+
         if (response.ok) {
           return `http://${persistedIp}:5000`;
         }
@@ -227,4 +280,148 @@ export async function getRaspberryPiUrl(forceDiscovery = false) {
   // Fallback to localhost for local development only
   console.warn('No Raspberry Pi found, falling back to localhost (for development only)');
   return 'http://localhost:5000';
+}
+
+/**
+ * Discover SMS API on local network
+ * Scans common network ranges to find the SMS API server
+ */
+export async function discoverSmsApi(onProgress = null) {
+  if (onProgress) {
+    onProgress({ type: 'info', message: 'Starting SMS API network scan...' });
+  }
+
+  try {
+    // First, try the persisted IP if available
+    const persistedIp = getPersistedSmsApiIp();
+    if (persistedIp) {
+      if (onProgress) {
+        onProgress({ type: 'info', message: `Trying persisted SMS API IP: ${persistedIp}...` });
+      }
+
+      const result = await checkSmsApi(persistedIp);
+      if (result) {
+        if (onProgress) {
+          onProgress({ type: 'success', message: `✓ Connected to SMS API at ${result} (cached)` });
+        }
+        return result;
+      } else {
+        if (onProgress) {
+          onProgress({ type: 'warning', message: `Persisted SMS API IP ${persistedIp} not responding, scanning network...` });
+        }
+        clearPersistedSmsApiIp(); // Clear invalid cached IP
+      }
+    }
+
+    // Try localhost addresses first (for local development/testing)
+    if (onProgress) {
+      onProgress({ type: 'info', message: 'Checking localhost addresses for SMS API...' });
+    }
+
+    for (const localAddr of LOCALHOST_ADDRESSES) {
+      const result = await checkSmsApi(localAddr);
+      if (result) {
+        persistSmsApiIp(result);
+        if (onProgress) {
+          onProgress({ type: 'success', message: `✓ Found SMS API at ${result} (localhost)` });
+        }
+        return result;
+      }
+    }
+
+    // Scan a limited range of IPs (1-30 for each network to avoid long scans)
+    const ipPromises = [];
+
+    for (const networkPrefix of NETWORK_RANGES) {
+      for (let i = 1; i <= 30; i++) {
+        const ip = networkPrefix + i;
+        ipPromises.push(checkSmsApi(ip));
+      }
+    }
+
+    if (onProgress) {
+      onProgress({ type: 'info', message: `Scanning ${NETWORK_RANGES.length} network ranges (1-30) for SMS API...` });
+    }
+
+    const results = await Promise.allSettled(ipPromises);
+
+    // Find successful connections
+    const foundIPs = results
+      .filter(result => result.status === 'fulfilled' && result.value)
+      .map(result => result.value);
+
+    if (foundIPs.length > 0) {
+      const newIP = foundIPs[0];
+      persistSmsApiIp(newIP); // Save to localStorage
+
+      if (onProgress) {
+        onProgress({ type: 'success', message: `✓ Found SMS API at ${newIP}` });
+      }
+
+      return newIP;
+    } else {
+      if (onProgress) {
+        onProgress({ type: 'error', message: '✗ No SMS API found on local network' });
+      }
+      return null;
+    }
+  } catch (error) {
+    console.error('SMS API discovery error:', error);
+    if (onProgress) {
+      onProgress({ type: 'error', message: `✗ SMS API discovery failed: ${error.message}` });
+    }
+    return null;
+  }
+}
+
+/**
+ * Clear persisted SMS API IP from localStorage
+ */
+export function clearPersistedSmsApiIp() {
+  try {
+    localStorage.removeItem(SMS_API_STORAGE_KEY);
+  } catch (error) {
+    console.warn('Failed to clear persisted SMS API IP:', error);
+  }
+}
+
+/**
+ * Get SMS API URL with auto-discovery fallback
+ * Returns the URL to use for SMS API calls
+ */
+export async function getSmsApiUrl(forceDiscovery = false) {
+  // If not forcing discovery, try persisted IP first
+  if (!forceDiscovery) {
+    const persistedIp = getPersistedSmsApiIp();
+    if (persistedIp) {
+      // Quick check if persisted IP is still valid
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+        const response = await fetch(`http://${persistedIp}:8001/health`, {
+          signal: controller.signal,
+          mode: 'cors'
+        });
+
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          return `http://${persistedIp}:8001`;
+        }
+      } catch (error) {
+        clearPersistedSmsApiIp(); // Clear invalid cached IP
+      }
+    }
+  }
+
+  // Perform discovery
+  const discoveredIp = await discoverSmsApi();
+  if (discoveredIp) {
+    return `http://${discoveredIp}:8001`;
+  }
+
+  // Fallback to localhost for local development only
+  console.warn('No SMS API found, falling back to localhost (for development only)');
+  return 'http://localhost:8001';
 }

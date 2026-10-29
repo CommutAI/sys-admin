@@ -122,10 +122,16 @@ fi
 # Check network connectivity
 echo ""
 echo "=== Network Check ==="
-if ping -c 1 192.168.1.45 &> /dev/null; then
-    echo "✓ Network interface is responsive"
+# Get the default gateway IP for dynamic network check
+GATEWAY_IP=$(ip route | grep default | awk '{print $3}' | head -n 1)
+if [ -n "$GATEWAY_IP" ]; then
+    if ping -c 1 "$GATEWAY_IP" &> /dev/null; then
+        echo "✓ Network interface is responsive (gateway: $GATEWAY_IP)"
+    else
+        echo "⚠️  Cannot ping gateway $GATEWAY_IP"
+    fi
 else
-    echo "⚠️  Cannot ping local interface (this may be normal)"
+    echo "⚠️  No gateway found for network check"
 fi
 
 # Check if server is accessible

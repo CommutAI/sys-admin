@@ -13,3 +13,4 @@ python-dotenv>=1.0.0
 requests>=2.31.0
 pyserial>=3.5
 RPi.GPIO>=0.7.0
+httpx>=0.24.0

@@ -137,8 +137,8 @@ const BusDetailsModal = ({ bus, onClose }) => {
   if (!bus) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-900 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl">
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999] p-4">
+      <div className="bg-gray-900 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl relative z-[1000000]">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-800">
           <h2 className="text-white text-xl font-bold flex items-center gap-2">
@@ -482,7 +482,7 @@ const Dashboard = () => {
     assignedBus: piAssignedBus,
     activeTripId: piActiveTripId,
     usingWebSocket: piUsingWebSocket,
-  } = useRaspberryPi({ autoConnect: false, enableHealthCheck: true });
+  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
 
   // Backend video connection for YOLOv8m processing
   const {
@@ -530,6 +530,20 @@ const Dashboard = () => {
       alertsSubscription.unsubscribe();
     };
   }, []);
+
+  // Auto-start video stream when Pi connects
+  useEffect(() => {
+    if (piOnline && piCameraActive && !piIsStreaming) {
+      // Start stream automatically when Pi is online and camera is active
+      const timer = setTimeout(() => {
+        if (piOnline && piCameraActive && !piIsStreaming) {
+          console.log('[Dashboard] Auto-starting video stream');
+          // The stream will start automatically via WebSocket on connection
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [piOnline, piCameraActive, piIsStreaming]);
 
   const fetchRouteFromOSRM = async () => {
     try {
@@ -635,8 +649,7 @@ const Dashboard = () => {
         { data: passengerCounts },
         { data: irregularities },
         { data: emergencyAlerts },
-        { data: staffUsers },
-        { data: transactions }
+        { data: staffUsers }
       ] = await Promise.all([
         // Fetch active buses
         supabase.from('buses').select('*').eq('status', 'active'),
@@ -662,10 +675,7 @@ const Dashboard = () => {
           .limit(5),
 
         // Fetch staff users
-        supabase.from('staff_users').select('*').eq('is_active', true),
-
-        // Calculate revenue (from transactions)
-        supabase.from('transactions').select('amount, type').gte('created_at', todayStart)
+        supabase.from('staff_users').select('*').eq('is_active', true)
       ]);
 
       // Calculate KPIs
@@ -675,18 +685,10 @@ const Dashboard = () => {
       const activeConductorsCount = staffUsers?.filter(u => u.role === 'conductor').length || 0;
       const activeDriversCount = staffUsers?.filter(u => u.role === 'driver').length || 0;
 
-      const totalRevenue = transactions?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
-      
-      // Calculate bus fare revenue (fare_validation transactions)
-      const busFareRevenue = transactions
-        ?.filter(t => t.type === 'fare_validation')
-        .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
-      
-      // Calculate baggage fee revenue (assuming a separate transaction type or calculation)
-      // For now, we'll estimate it as a portion of total revenue since specific baggage transactions aren't defined
-      const baggageFeeRevenue = transactions
-        ?.filter(t => t.type === 'balance_topup' || t.type === 'card_issuance')
-        .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
+      // Revenue calculation disabled - transactions table structure needs to be defined
+      const totalRevenue = 0;
+      const busFareRevenue = 0;
+      const baggageFeeRevenue = 0;
 
       setKpis([
         { title: "Today's Passengers", value: totalPassengers.toLocaleString(), change: 8.5, icon: Users, color: 'bg-blue-500' },
@@ -772,8 +774,11 @@ const Dashboard = () => {
         tripByBusId[trip.bus_id] = trip;
       });
 
+      // Map GPS data by trip ID and also collect by bus ID through trips
       const latestGpsByTripId = {};
+      const latestGpsByBusId = {};
       let latestGpsAny = null;
+
       (gpsRows || []).forEach(row => {
         const gps = {
           lat: parseFloat(row.latitude),
@@ -787,26 +792,33 @@ const Dashboard = () => {
         if (!latestGpsAny) latestGpsAny = gps;
         if (row.trip_id && !latestGpsByTripId[row.trip_id]) {
           latestGpsByTripId[row.trip_id] = gps;
+          // Also map to bus ID if we have the trip info
+          const trip = (activeTrips || []).find(t => t.id === row.trip_id);
+          if (trip && !latestGpsByBusId[trip.bus_id]) {
+            latestGpsByBusId[trip.bus_id] = gps;
+          }
         }
       });
 
-      const activeTripBusIds = new Set((activeTrips || []).map(trip => trip.bus_id));
-      const fallbackGpsBusId =
-        (activeTrips || [])[0]?.bus_id ||
-        (allBuses || []).find(bus => bus.status === 'active')?.id ||
-        (allBuses || [])[0]?.id;
+      console.log('GPS Data loaded:', {
+        totalGpsRows: gpsRows?.length || 0,
+        gpsByTripId: Object.keys(latestGpsByTripId).length,
+        gpsByBusId: Object.keys(latestGpsByBusId).length,
+        activeTrips: activeTrips?.length || 0
+      });
 
-      // Build a marker for every bus — active trip buses use GPS coords
+      // Build a marker for every bus — use GPS data if available, otherwise fallback
       const busMarkers = (allBuses || []).map(bus => {
         const trip = tripByBusId[bus.id];
-        const gps = trip
-          ? latestGpsByTripId[trip.id] || latestGpsAny
-          : (!activeTripBusIds.size && bus.id === fallbackGpsBusId ? latestGpsAny : null);
+        const gps = latestGpsByBusId[bus.id] || (trip ? latestGpsByTripId[trip.id] : null) || latestGpsAny;
+
         const lat = gps?.lat ?? trip?.current_lat ?? 8.43;
         const lng = gps?.lng ?? trip?.current_lng ?? 124.76;
         const routeProgress = calculateRouteProgress(lat, lng, routeCoordinates);
         const routeDirection = getRouteDirection(routeProgress);
         const eta = estimateTimeToDestination(routeProgress, calculateRouteDistance(routeCoordinates));
+
+        console.log(`Bus ${bus.plate_number}: GPS from ${gps?.source || 'fallback'}, lat=${lat}, lng=${lng}`);
 
         return {
           id: bus.id,

@@ -15,9 +15,9 @@ from slowapi.errors import RateLimitExceeded
 
 load_dotenv()
 
-from routers import cards, transactions, analytics, reports, webhooks, staff, anomaly_detection, emergency_alerts, video_processing
+from routers import cards, transactions, analytics, reports, webhooks, staff, anomaly_detection, emergency_alerts, video_processing, trips, sms
 from database import supabase
-from auth import verify_supabase_token, require_admin
+from auth import verify_supabase_token, require_admin, require_driver
 from video_processor import video_processor
 
 # Rate limiting
@@ -64,48 +64,6 @@ app.add_middleware(
     max_age=600,
 )
 
-# Authentication dependency
-async def verify_supabase_token(request: Request):
-    """Verify Supabase JWT token from Authorization header"""
-    auth_header = request.headers.get("Authorization")
-    
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid authorization header"
-        )
-    
-    token = auth_header.split(" ")[1]
-    
-    try:
-        # Verify token with Supabase
-        user_response = supabase.auth.get_user(token)
-        if not user_response.user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token"
-            )
-        return user_response.user
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token verification failed: {str(e)}"
-        )
-
-# Role-based authorization
-async def require_admin(user = Depends(verify_supabase_token)):
-    """Require admin role"""
-    # Fetch user role from staff_users
-    staff_response = supabase.table('staff_users').select('role').eq('id', user.id).single().execute()
-    
-    if not staff_response.data or staff_response.data.get('role') != 'admin':
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required"
-        )
-    
-    return user
-
 # Include routers
 app.include_router(cards.router, prefix="/api/cards", tags=["Cards"])
 app.include_router(transactions.router, prefix="/api/transactions", tags=["Transactions"])
@@ -116,6 +74,8 @@ app.include_router(staff.router, prefix="/api/staff", tags=["Staff"])
 app.include_router(anomaly_detection.router, prefix="/api/anomaly-detection", tags=["Anomaly Detection"])
 app.include_router(emergency_alerts.router, prefix="/api/emergency-alerts", tags=["Emergency Alerts"])
 app.include_router(video_processing.router, tags=["Video Processing"])
+app.include_router(trips.router, tags=["Trips"])
+app.include_router(sms.router, tags=["SMS"])
 
 @app.get("/")
 @limiter.limit("100/minute")

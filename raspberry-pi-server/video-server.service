@@ -1,13 +1,13 @@
 [Unit]
-Description=Bus Monitoring Video Server
+Description=Bus Video Monitoring Server (FastAPI)
 After=network.target
 
 [Service]
 Type=simple
-User=chichi
-WorkingDirectory=/home/chichi/raspberry-pi-server
-Environment="PATH=/home/chichi/raspberry-pi-server/venv/bin"
-ExecStart=/home/chichi/raspberry-pi-server/venv/bin/python video_server_fastapi.py
+User=pi
+WorkingDirectory=/home/pi/raspberry-pi-server
+Environment="PATH=/home/pi/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/bin/python3 /home/pi/raspberry-pi-server/video_server_fastapi.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

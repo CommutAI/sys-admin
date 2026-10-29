@@ -36,7 +36,7 @@ except ImportError:
 
 # Supabase configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_KEY", ""))
 supabase: Optional[Client] = None
 
 if SUPABASE_URL and SUPABASE_KEY:
@@ -354,6 +354,45 @@ class VideoProcessor:
                 
         except Exception as e:
             print(f"[Video Processor] Error saving to database: {e}")
+    
+    def save_gps_to_db(self, gps_data: dict, trip_id: str = None):
+        """Save GPS location to Supabase database"""
+        if not supabase:
+            print("[Video Processor] ERROR: Supabase client not initialized")
+            return
+
+        try:
+            current_time = time.time()
+            # Throttle GPS saves to avoid overwhelming database
+            if not hasattr(self, 'last_gps_save'):
+                self.last_gps_save = 0
+            if current_time - self.last_gps_save < 2.0:  # Save GPS every 2 seconds max
+                print(f"[Video Processor] GPS throttled (last save {current_time - self.last_gps_save:.1f}s ago)")
+                return
+
+            data = {
+                'latitude': gps_data.get('latitude'),
+                'longitude': gps_data.get('longitude'),
+                'altitude': gps_data.get('altitude'),
+                'speed': gps_data.get('speed'),
+                'source': gps_data.get('source', 'gps'),
+                'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(current_time))
+            }
+
+            # Only include trip_id if it exists (nullable in schema)
+            if trip_id:
+                data['trip_id'] = trip_id
+
+            print(f"[Video Processor] Attempting to save GPS: {gps_data.get('latitude'):.6f}, {gps_data.get('longitude'):.6f}")
+            result = supabase.table('gps_locations').insert(data).execute()
+            if result:
+                self.last_gps_save = current_time
+                print(f"[Video Processor] ✓ Saved GPS: {gps_data.get('latitude'):.6f}, {gps_data.get('longitude'):.6f} (trip_id: {trip_id})")
+            else:
+                print(f"[Video Processor] ✗ GPS insert returned no data")
+
+        except Exception as e:
+            print(f"[Video Processor] ✗ Error saving GPS to database: {e}")
     
     def set_current_trip(self, trip_id: str):
         """Set the current trip ID for database recording"""

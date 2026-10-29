@@ -210,13 +210,15 @@ Starting video processing...
 
 ### 10. Find Raspberry Pi IP Address
 
-Get the IP address of your Raspberry Pi:
+Get the IP address of your Raspberry Pi (only needed for initial file transfer):
 
 ```bash
 hostname -I
 ```
 
 Note the IP address (e.g., `192.168.1.100`)
+
+> **Note:** After setup, the system automatically detects the Pi's IP via Supabase. You don't need to manually configure the IP in the dashboard - it auto-discovers the Pi automatically.
 
 ### 11. Configure Firewall (if needed)
 
@@ -275,14 +277,19 @@ On your computer, open the web application and navigate to "Video Monitoring" in
 
 ### 2. Connect to Raspberry Pi
 
-Enter the Raspberry Pi IP address in the server URL field:
-- Format: `http://192.168.1.100:5000` (replace with your actual IP)
-- Click "Refresh Connection" to connect
+The dashboard automatically discovers the Raspberry Pi via Supabase:
+
+- The Pi registers its IP address to the `pi_devices` table in Supabase automatically
+- The dashboard reads the IP from Supabase and connects automatically
+- No manual IP entry required
+- If auto-detection fails, you can manually enter the IP as a fallback:
+  - Format: `http://192.168.1.100:5000` (replace with your actual IP)
+  - Click "Refresh Connection" to connect
 
 ### 3. Start Video Stream
 
 Once connected:
-- Click "Start Stream" to begin the video feed
+- The video stream starts automatically
 - The live video will appear with AI detection overlays
 - Passenger counts will update in real-time
 

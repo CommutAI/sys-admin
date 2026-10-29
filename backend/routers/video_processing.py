@@ -104,6 +104,18 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
                     if not frame_data:
                         continue
 
+                    # Extract GPS data if available
+                    gps_data = message.get('gps')
+                    trip_id = message.get('trip_id')
+
+                    # Set trip ID if provided
+                    if trip_id:
+                        video_processor.set_current_trip(trip_id)
+
+                    # Save GPS location to database if available (now works without trip_id)
+                    if gps_data:
+                        video_processor.save_gps_to_db(gps_data, trip_id)
+
                     # Decode frame
                     frame = video_processor.decode_frame(frame_data)
                     if frame is None:
@@ -142,7 +154,23 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
                         'count': passenger_count,
                         'timestamp': message.get('timestamp')
                     })
-                    
+
+                elif message.get('type') == 'gps_update':
+                    # Handle standalone GPS update (works without camera)
+                    gps_data = message.get('gps')
+                    trip_id = message.get('trip_id')
+
+                    # Set trip ID if provided
+                    if trip_id:
+                        video_processor.set_current_trip(trip_id)
+
+                    # Save GPS location to database if available (now works without trip_id)
+                    if gps_data:
+                        video_processor.save_gps_to_db(gps_data, trip_id)
+                        print(f"[Backend] GPS update received (trip_id: {trip_id}): {gps_data['latitude']:.6f}, {gps_data['longitude']:.6f}")
+                    else:
+                        print(f"[Backend] GPS update received but no gps_data")
+
                 elif message.get('type') == 'set_trip':
                     # Set current trip ID
                     trip_id = message.get('trip_id')

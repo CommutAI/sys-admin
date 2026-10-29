@@ -21,19 +21,54 @@ const Login = () => {
     setError('');
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      console.log('Attempting login for:', email);
 
-      if (error) throw error;
+      // Check if user exists in staff_users table
+      const { data: staffUser, error: staffError } = await supabase
+        .from('staff_users')
+        .select('*')
+        .eq('email', email)
+        .single();
 
-      if (data.user) {
-        // Log login event to audit logs
-        await AuditService.logLogin(email);
-        navigate('/');
+      console.log('Staff user query result:', staffUser);
+      console.log('Staff user query error:', staffError);
+
+      if (staffError) {
+        console.error('User not found in staff_users:', staffError);
+        setError('Invalid email or password');
+        setLoading(false);
+        return;
       }
+
+      if (!staffUser) {
+        console.error('No user data returned');
+        setError('Invalid email or password');
+        setLoading(false);
+        return;
+      }
+
+      if (!staffUser.is_active) {
+        console.error('User account is inactive');
+        setError('Your account has been deactivated. Please contact administrator.');
+        setLoading(false);
+        return;
+      }
+
+      // Verify password
+      if (staffUser.password !== password) {
+        console.error('Password mismatch');
+        setError('Invalid email or password');
+        setLoading(false);
+        return;
+      }
+
+      console.log('User found in staff_users, is_active:', staffUser.is_active);
+
+      // Log login event to audit logs
+      await AuditService.logLogin(email);
+      navigate('/');
     } catch (error) {
+      console.error('Login error:', error);
       setError(error.message);
     } finally {
       setLoading(false);

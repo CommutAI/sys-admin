@@ -189,18 +189,23 @@ def register_device():
 resolve_assigned_bus()
 register_device()
 
+# Backend URL - use environment variable for now (can be automated later)
+BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
+print(f"[Backend] Using backend URL: {BACKEND_URL}")
+
 # Hardware Manager configuration
 HARDWARE_CONFIG = {
     'enable_sms': os.getenv('ENABLE_SMS', 'false').lower() == 'true',  # Disabled by default for testing
-    'enable_gps': os.getenv('ENABLE_GPS', 'false').lower() == 'true',  # Disabled by default for testing
+    'enable_gps': os.getenv('ENABLE_GPS', 'true').lower() == 'true',  # Enabled by default for NEO-M8L
     'enable_emergency_button': os.getenv('ENABLE_EMERGENCY_BUTTON', 'false').lower() == 'true',  # Disabled by default for testing
     'enable_geolocation': os.getenv('ENABLE_GEOLOCATION', 'true').lower() == 'true',
     'sim900a_port': os.getenv('SIM900A_PORT', '/dev/ttyS0'),
     'sim900a_baudrate': int(os.getenv('SIM900A_BAUDRATE', '9600')),
-    'neo6m_port': os.getenv('NEO6M_PORT', '/dev/serial0'),
-    'neo6m_baudrate': int(os.getenv('NEO6M_BAUDRATE', '9600')),
+    'gps_port': os.getenv('GPS_PORT', '/dev/ttyS1'),
+    'gps_baudrate': int(os.getenv('GPS_BAUDRATE', '9600')),
     'emergency_button_pin': int(os.getenv('EMERGENCY_BUTTON_PIN', '18')),
     'osm_user_agent': os.getenv('OSM_USER_AGENT', 'BusMonitoringSystem'),
+    # Contacts are now fetched from database, these are only fallbacks
     'emergency_contacts': os.getenv('EMERGENCY_CONTACTS', '').split(',') if os.getenv('EMERGENCY_CONTACTS') else [],
     'admin_contacts': os.getenv('ADMIN_CONTACTS', '').split(',') if os.getenv('ADMIN_CONTACTS') else []
 }
@@ -1083,9 +1088,8 @@ class VideoProcessor:
         try:
             import requests
             
-            # Get backend URL from environment or use default
-            backend_url = os.getenv('BACKEND_URL', 'http://localhost:8000')
-            detect_url = f"{backend_url}/api/anomaly-detection/detect"
+            # Use the globally resolved backend URL
+            detect_url = f"{BACKEND_URL}/api/anomaly-detection/detect"
             
             # Call anomaly detection for this specific trip
             payload = {
@@ -1930,18 +1934,18 @@ async def get_sms_statistics(days: int = 7):
     """Get SMS statistics for the specified number of days"""
     if not supabase:
         return JSONResponse({'status': 'error', 'message': 'Database not available'}, status_code=503)
-    
+
     try:
         from datetime import datetime, timedelta
-        
+
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-        
+
         loop = asyncio.get_event_loop()
         data, error = await loop.run_in_executor(
             None,
             lambda: supabase.table('sms_logs').select('*').gte('sent_at', start_date).execute()
         )
-        
+
         if error:
             return JSONResponse({'status': 'error', 'message': error.message}, status_code=500)
         
@@ -1966,6 +1970,23 @@ async def get_sms_statistics(days: int = 7):
                 stats['by_type'][sms_type]['failed'] += 1
         
         return JSONResponse({'status': 'success', 'data': stats})
+    except Exception as e:
+        return JSONResponse({'status': 'error', 'message': str(e)}, status_code=500)
+
+@app.post("/refresh-contacts")
+async def refresh_contacts():
+    """Refresh emergency and admin contacts from database"""
+    if not hardware_manager:
+        return JSONResponse({'status': 'error', 'message': 'Hardware manager not available'}, status_code=503)
+
+    try:
+        hardware_manager.refresh_contacts()
+        return JSONResponse({
+            'status': 'success',
+            'message': 'Contacts refreshed successfully',
+            'emergency_contacts_count': len(hardware_manager.emergency_contacts),
+            'admin_contacts_count': len(hardware_manager.admin_contacts)
+        })
     except Exception as e:
         return JSONResponse({'status': 'error', 'message': str(e)}, status_code=500)
 
