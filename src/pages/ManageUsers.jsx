@@ -78,6 +78,7 @@ const ManageUsers = () => {
       const userId = crypto.randomUUID();
 
       // Create user in auth.users first
+      console.log('Creating auth user for:', newUser.email);
       const { data: authData, error: authError } = await supabase.auth.admin.createUser({
         email: newUser.email,
         password: newUser.password,
@@ -90,10 +91,18 @@ const ManageUsers = () => {
 
       if (authError) {
         console.error('Auth user creation error:', authError);
+        console.error('Error details:', JSON.stringify(authError, null, 2));
+
+        // Check for common issues
+        if (authError.message.includes('User not allowed') || authError.message.includes('Email not allowed')) {
+          throw new Error(`Email domain is not allowed. Please check Supabase Authentication settings → Email Settings and add "${newUser.email.split('@')[1]}" to allowed domains.`);
+        }
+
         throw new Error(`Failed to create auth user: ${authError.message}`);
       }
 
       const authUserId = authData.user.id;
+      console.log('Auth user created successfully, ID:', authUserId);
 
       // Then create user in staff_users table
       const { error: insertError } = await supabase
