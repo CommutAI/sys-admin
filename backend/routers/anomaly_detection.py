@@ -188,6 +188,11 @@ async def detect_anomalies(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# Export function for background scheduler
+async def run_anomaly_detection():
+    """Wrapper function for calling from scheduler"""
+    return await detect_anomalies(threshold=2, check_all_active=True)
+
 
 @router.get("/status/{trip_id}")
 async def get_anomaly_status(trip_id: str):
@@ -276,3 +281,9 @@ async def resolve_irregularity(irregularity_id: str, resolved_by: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Export function for background scheduler
+async def run_anomaly_detection():
+    """Wrapper function for calling from scheduler"""
+    return await detect_anomalies(threshold=2, check_all_active=True)

@@ -3,11 +3,12 @@ FastAPI Backend Service for CommutAI System
 Handles complex operations, aggregations, and business logic
 """
 
-from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from typing import Optional
 import os
+import asyncio
 from dotenv import load_dotenv
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -23,6 +24,22 @@ from video_processor import video_processor
 # Rate limiting
 limiter = Limiter(key_func=get_remote_address)
 
+# Background task for anomaly detection
+async def anomaly_detection_scheduler():
+    """Run anomaly detection every 30 seconds"""
+    while True:
+        try:
+            print("Running scheduled anomaly detection...")
+            # Import and call the function
+            from routers.anomaly_detection import run_anomaly_detection
+            result = await run_anomaly_detection()
+            print(f"Anomaly detection completed: {result.anomalies_detected} anomalies detected, {result.irregularities_created} irregularities created")
+        except Exception as e:
+            print(f"Error in anomaly detection scheduler: {e}")
+        
+        # Wait 30 seconds before next run
+        await asyncio.sleep(30)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
@@ -31,6 +48,11 @@ async def lifespan(app: FastAPI):
     # Initialize video processor model
     print("Initializing video processor...")
     video_processor.initialize_model()
+    
+    # Start anomaly detection scheduler as background task
+    asyncio.create_task(anomaly_detection_scheduler())
+    print("Anomaly detection scheduler started (every 30s)")
+    
     yield
     # Shutdown
     print("Shutting down FastAPI backend service...")
