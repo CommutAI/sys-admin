@@ -15,12 +15,18 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Create logs directory if it doesn't exist
+script_dir = os.path.dirname(os.path.abspath(__file__))
+logs_dir = os.path.join(script_dir, 'logs')
+os.makedirs(logs_dir, exist_ok=True)
+
 # Configure logging
+log_file = os.path.join(logs_dir, 'sms-processor.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('/var/log/sms-processor.log'),
+        logging.FileHandler(log_file),
         logging.StreamHandler()
     ]
 )
@@ -211,7 +217,7 @@ class SMSQueueProcessor:
             return []
 
         try:
-            response = self.supabase.table('sms_queue').select('*').eq('status', 'pending').order('priority', desc=True).order('created_at', asc=True).limit(self.max_concurrent).execute()
+            response = self.supabase.table('sms_queue').select('*').eq('status', 'pending').order('priority', desc=True).order('created_at').limit(self.max_concurrent).execute()
 
             if response.data:
                 logger.info(f"Fetched {len(response.data)} pending SMS messages")
