@@ -107,11 +107,13 @@ echo "Step 5: Installing Python dependencies..."
 # Create virtual environment if it doesn't exist
 if [ ! -d "$INSTALL_DIR/venv" ]; then
     sudo -u $PI_USER python3 -m venv "$INSTALL_DIR/venv"
+    echo "Virtual environment created"
 fi
 
 # Activate venv and install dependencies
 sudo -u $PI_USER "$INSTALL_DIR/venv/bin/pip" install --upgrade pip
 sudo -u $PI_USER "$INSTALL_DIR/venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
+echo "Python dependencies installed"
 
 echo ""
 echo "Step 6: Configuring systemd services..."
@@ -121,15 +123,28 @@ for service in "${SERVICES[@]}"; do
         cp "$INSTALL_DIR/$service" /etc/systemd/system/
         systemctl daemon-reload
         systemctl enable "$service"
-        systemctl start "$service"
-        echo -e "${GREEN}✓ $service installed and started${NC}"
+        echo -e "${GREEN}✓ $service installed${NC}"
     else
         echo -e "${YELLOW}⚠ $service not found, skipping${NC}"
     fi
 done
 
 echo ""
-echo "Step 7: Setting up camera configuration..."
+echo "Step 7: Starting services..."
+for service in "${SERVICES[@]}"; do
+    if systemctl list-unit-files | grep -q "^${service}"; then
+        echo "Starting $service..."
+        systemctl start "$service"
+        if systemctl is-active --quiet "$service"; then
+            echo -e "${GREEN}✓ $service started${NC}"
+        else
+            echo -e "${RED}✗ $service failed to start${NC}"
+        fi
+    fi
+done
+
+echo ""
+echo "Step 8: Setting up camera configuration..."
 # Create camera configuration
 cat > "$INSTALL_DIR/camera_config.json" <<EOF
 {
@@ -144,7 +159,7 @@ EOF
 chown $PI_USER:$PI_USER "$INSTALL_DIR/camera_config.json"
 
 echo ""
-echo "Step 8: Setting up log rotation..."
+echo "Step 9: Setting up log rotation..."
 cat > /etc/logrotate.d/commutai <<EOF
 /home/pi/raspberry-pi-server/logs/*.log {
     daily
@@ -161,7 +176,7 @@ mkdir -p "$INSTALL_DIR/logs"
 chown $PI_USER:$PI_USER "$INSTALL_DIR/logs"
 
 echo ""
-echo "Step 9: Configuring network optimization..."
+echo "Step 10: Configuring network optimization..."
 # Disable WiFi power saving to improve connection stability
 if [ -f /etc/modprobe.d/8192cu.conf ]; then
     echo "options 8192cu rtw_power_mgnt=0 rtw_enusbss=0" > /etc/modprobe.d/8192cu.conf
@@ -176,7 +191,7 @@ if [ "$CURRENT_HOSTNAME" = "raspberrypi" ]; then
 fi
 
 echo ""
-echo "Step 10: Creating configuration marker..."
+echo "Step 11: Creating configuration marker..."
 mkdir -p /etc/commutai
 echo "$(date)" > /etc/commutai/.configured
 echo "Configuration completed successfully" >> /etc/commutai/.configured

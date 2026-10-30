@@ -1,6 +1,7 @@
 [Unit]
 Description=SMS Queue Processor for Bus Monitoring System
-After=network.target
+After=network.target commutai-setup.service
+Requires=commutai-setup.service
 Wants=network.target
 
 [Service]
