@@ -534,12 +534,12 @@ const EmergencyAlerts = () => {
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+            className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
           >
-            <option value="all">All Status</option>
-            <option value="active">Active</option>
-            <option value="acknowledged">Acknowledged</option>
-            <option value="resolved">Resolved</option>
+            <option value="all" className="bg-gray-800 text-white">All Status</option>
+            <option value="active" className="bg-gray-800 text-white">Active</option>
+            <option value="acknowledged" className="bg-gray-800 text-white">Acknowledged</option>
+            <option value="resolved" className="bg-gray-800 text-white">Resolved</option>
           </select>
         </div>
 

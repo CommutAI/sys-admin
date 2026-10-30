@@ -508,11 +508,11 @@ const ManageUsers = () => {
                   onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
                   className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
-                  <option value="admin">System Admin</option>
-                  <option value="operator">Operator</option>
-                  <option value="driver">Driver</option>
-                  <option value="conductor">Conductor</option>
-                  <option value="cs_desk">Customer Service Staff</option>
+                  <option value="admin" className="bg-gray-800 text-white">System Admin</option>
+                  <option value="operator" className="bg-gray-800 text-white">Operator</option>
+                  <option value="driver" className="bg-gray-800 text-white">Driver</option>
+                  <option value="conductor" className="bg-gray-800 text-white">Conductor</option>
+                  <option value="cs_desk" className="bg-gray-800 text-white">Customer Service Staff</option>
                 </select>
               </div>
               {newUser.role === 'cs_desk' && (
@@ -523,9 +523,9 @@ const ManageUsers = () => {
                     onChange={(e) => setNewUser({ ...newUser, branch: e.target.value })}
                     className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                   >
-                    <option value="">Select Branch</option>
-                    <option value="manolo_fortich_terminal">Manolo Fortich Terminal</option>
-                    <option value="agora_terminal">Agora Terminal</option>
+                    <option value="" className="bg-gray-800 text-white">Select Branch</option>
+                    <option value="manolo_fortich_terminal" className="bg-gray-800 text-white">Manolo Fortich Terminal</option>
+                    <option value="agora_terminal" className="bg-gray-800 text-white">Agora Terminal</option>
                   </select>
                 </div>
               )}
@@ -644,11 +644,11 @@ const ManageUsers = () => {
                   onChange={(e) => setEditUser({ ...editUser, role: e.target.value })}
                   className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
-                  <option value="admin">System Admin</option>
-                  <option value="operator">Operator</option>
-                  <option value="driver">Driver</option>
-                  <option value="conductor">Conductor</option>
-                  <option value="cs_desk">Customer Service Staff</option>
+                  <option value="admin" className="bg-gray-800 text-white">System Admin</option>
+                  <option value="operator" className="bg-gray-800 text-white">Operator</option>
+                  <option value="driver" className="bg-gray-800 text-white">Driver</option>
+                  <option value="conductor" className="bg-gray-800 text-white">Conductor</option>
+                  <option value="cs_desk" className="bg-gray-800 text-white">Customer Service Staff</option>
                 </select>
               </div>
               {editUser.role === 'cs_desk' && (
@@ -659,9 +659,9 @@ const ManageUsers = () => {
                     onChange={(e) => setEditUser({ ...editUser, branch: e.target.value })}
                     className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                   >
-                    <option value="">Select Branch</option>
-                    <option value="manolo_fortich_terminal">Manolo Fortich Terminal</option>
-                    <option value="agora_terminal">Agora Terminal</option>
+                    <option value="" className="bg-gray-800 text-white">Select Branch</option>
+                    <option value="manolo_fortich_terminal" className="bg-gray-800 text-white">Manolo Fortich Terminal</option>
+                    <option value="agora_terminal" className="bg-gray-800 text-white">Agora Terminal</option>
                   </select>
                 </div>
               )}

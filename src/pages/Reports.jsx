@@ -823,12 +823,12 @@ const Reports = () => {
             <select
               value={tripsFilterStatus}
               onChange={(e) => setTripsFilterStatus(e.target.value)}
-              className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+              className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-blue-500"
             >
-              <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
+              <option value="all" className="bg-gray-800 text-white">All Status</option>
+              <option value="active" className="bg-gray-800 text-white">Active</option>
+              <option value="completed" className="bg-gray-800 text-white">Completed</option>
+              <option value="cancelled" className="bg-gray-800 text-white">Cancelled</option>
             </select>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
@@ -968,20 +968,20 @@ const Reports = () => {
                 <select
                   value={transactionFilterType}
                   onChange={(e) => setTransactionFilterType(e.target.value)}
-                  className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
-                  <option value="all">All Types</option>
-                  <option value="fare_validation">Fare Validation</option>
-                  <option value="balance_topup">Balance Top-up</option>
-                  <option value="card_issuance">Card Issuance</option>
+                  <option value="all" className="bg-gray-800 text-white">All Types</option>
+                  <option value="fare_validation" className="bg-gray-800 text-white">Fare Validation</option>
+                  <option value="balance_topup" className="bg-gray-800 text-white">Balance Top-up</option>
+                  <option value="card_issuance" className="bg-gray-800 text-white">Card Issuance</option>
                 </select>
                 <select
                   value={transactionFilterStatus}
                   onChange={(e) => setTransactionFilterStatus(e.target.value)}
-                  className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
-                  <option value="all">All Status</option>
-                  <option value="completed">Completed</option>
+                  <option value="all" className="bg-gray-800 text-white">All Status</option>
+                  <option value="completed" className="bg-gray-800 text-white">Completed</option>
                   <option value="pending">Pending</option>
                   <option value="failed">Failed</option>
                 </select>
@@ -1209,12 +1209,12 @@ const Reports = () => {
                 <select
                   value={gcashFilterStatus}
                   onChange={(e) => setGcashFilterStatus(e.target.value)}
-                  className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-green-500"
+                  className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-green-500"
                 >
-                  <option value="all">All Status</option>
-                  <option value="completed">Completed</option>
-                  <option value="failed">Failed</option>
-                  <option value="pending">Pending</option>
+                  <option value="all" className="bg-gray-800 text-white">All Status</option>
+                  <option value="completed" className="bg-gray-800 text-white">Completed</option>
+                  <option value="failed" className="bg-gray-800 text-white">Failed</option>
+                  <option value="pending" className="bg-gray-800 text-white">Pending</option>
                 </select>
                 <input
                   type="date"
@@ -1391,7 +1391,7 @@ const Reports = () => {
                 <select
                   value={reportType}
                   onChange={(e) => setReportType(e.target.value)}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500 appearance-none cursor-pointer"
+                  className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500 appearance-none cursor-pointer"
                 >
                   {reportTypes.map(type => (
                     <option key={type.id} value={type.id} className="bg-gray-800 text-white">{type.label}</option>

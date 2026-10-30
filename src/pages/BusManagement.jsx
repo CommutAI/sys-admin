@@ -245,12 +245,12 @@ const BusManagement = () => {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+            className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
           >
-            <option value="all">All Status</option>
-            <option value="active">Active</option>
-            <option value="maintenance">Maintenance</option>
-            <option value="inactive">Inactive</option>
+            <option value="all" className="bg-gray-800 text-white">All Status</option>
+            <option value="active" className="bg-gray-800 text-white">Active</option>
+            <option value="maintenance" className="bg-gray-800 text-white">Maintenance</option>
+            <option value="inactive" className="bg-gray-800 text-white">Inactive</option>
           </select>
         </div>
 
@@ -301,11 +301,11 @@ const BusManagement = () => {
                     <select
                       value={bus.status}
                       onChange={(e) => handleUpdateStatus(bus.id, e.target.value)}
-                      className="bg-white/10 border border-white/20 rounded-lg px-2 py-1 text-white text-xs focus:outline-none focus:border-orange-500"
+                      className="bg-gray-800 border border-white/20 rounded-lg px-2 py-1 text-white text-xs focus:outline-none focus:border-orange-500"
                     >
-                      <option value="active">Active</option>
-                      <option value="maintenance">Maintenance</option>
-                      <option value="inactive">Inactive</option>
+                      <option value="active" className="bg-gray-800 text-white">Active</option>
+                      <option value="maintenance" className="bg-gray-800 text-white">Maintenance</option>
+                      <option value="inactive" className="bg-gray-800 text-white">Inactive</option>
                     </select>
                   </td>
                   <td className="py-3 px-4 text-white/60 text-sm">
@@ -401,11 +401,11 @@ const BusManagement = () => {
                 <select
                   value={newBus.status}
                   onChange={(e) => setNewBus({ ...newBus, status: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
-                  <option value="active">Active</option>
-                  <option value="maintenance">Maintenance</option>
-                  <option value="inactive">Inactive</option>
+                  <option value="active" className="bg-gray-800 text-white">Active</option>
+                  <option value="maintenance" className="bg-gray-800 text-white">Maintenance</option>
+                  <option value="inactive" className="bg-gray-800 text-white">Inactive</option>
                 </select>
               </div>
               <div className="flex gap-3 justify-end">
@@ -444,11 +444,11 @@ const BusManagement = () => {
                 <select
                   value={selectedConductor}
                   onChange={(e) => setSelectedConductor(e.target.value)}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
-                  <option value="">-- No Conductor --</option>
+                  <option value="" className="bg-gray-800 text-white">-- No Conductor --</option>
                   {conductors.map(conductor => (
-                    <option key={conductor.id} value={conductor.id}>
+                    <option key={conductor.id} value={conductor.id} className="bg-gray-800 text-white">
                       {conductor.full_name} ({conductor.email})
                     </option>
                   ))}

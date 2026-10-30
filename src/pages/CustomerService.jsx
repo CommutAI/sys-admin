@@ -180,14 +180,14 @@ const CustomerService = () => {
           <select
             value={filterAction}
             onChange={(e) => setFilterAction(e.target.value)}
-            className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+            className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
           >
-            <option value="all">All Actions</option>
-            <option value="complaint">Complaint</option>
-            <option value="inquiry">Inquiry</option>
-            <option value="refund">Refund</option>
-            <option value="lost_card">Lost Card</option>
-            <option value="other">Other</option>
+            <option value="all" className="bg-gray-800 text-white">All Actions</option>
+            <option value="complaint" className="bg-gray-800 text-white">Complaint</option>
+            <option value="inquiry" className="bg-gray-800 text-white">Inquiry</option>
+            <option value="refund" className="bg-gray-800 text-white">Refund</option>
+            <option value="lost_card" className="bg-gray-800 text-white">Lost Card</option>
+            <option value="other" className="bg-gray-800 text-white">Other</option>
           </select>
         </div>
 
@@ -252,13 +252,13 @@ const CustomerService = () => {
                 <select
                   value={newLog.action}
                   onChange={(e) => setNewLog({ ...newLog, action: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  className="w-full bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
                 >
-                  <option value="inquiry">Inquiry</option>
-                  <option value="complaint">Complaint</option>
-                  <option value="refund">Refund</option>
-                  <option value="lost_card">Lost Card</option>
-                  <option value="other">Other</option>
+                  <option value="inquiry" className="bg-gray-800 text-white">Inquiry</option>
+                  <option value="complaint" className="bg-gray-800 text-white">Complaint</option>
+                  <option value="refund" className="bg-gray-800 text-white">Refund</option>
+                  <option value="lost_card" className="bg-gray-800 text-white">Lost Card</option>
+                  <option value="other" className="bg-gray-800 text-white">Other</option>
                 </select>
               </div>
               <div>

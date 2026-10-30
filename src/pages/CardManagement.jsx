@@ -383,22 +383,22 @@ const CardManagement = () => {
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+            className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
           >
-            <option value="all">All Status</option>
+            <option value="all" className="bg-gray-800 text-white">All Status</option>
             {activeTab === 'qr-cards' && (
               <>
-                <option value="active">Active</option>
-                <option value="lost">Lost</option>
-                <option value="replaced">Replaced</option>
-                <option value="deactivated">Deactivated</option>
+                <option value="active" className="bg-gray-800 text-white">Active</option>
+                <option value="lost" className="bg-gray-800 text-white">Lost</option>
+                <option value="replaced" className="bg-gray-800 text-white">Replaced</option>
+                <option value="deactivated" className="bg-gray-800 text-white">Deactivated</option>
               </>
             )}
             {activeTab === 'temp-tickets' && (
               <>
-                <option value="issued">Issued</option>
-                <option value="validated">Validated</option>
-                <option value="expired">Expired</option>
+                <option value="issued" className="bg-gray-800 text-white">Issued</option>
+                <option value="validated" className="bg-gray-800 text-white">Validated</option>
+                <option value="expired" className="bg-gray-800 text-white">Expired</option>
               </>
             )}
             {activeTab === 'card-reservations' && (
