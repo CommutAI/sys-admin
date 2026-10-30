@@ -1,7 +1,7 @@
 [Unit]
 Description=CommutAI Raspberry Pi Auto-Setup
 After=network.target
-Before=video-server.service sms-queue-processor.service commutai-pi-service.service
+Before=video-server.service sms-queue-processor.service commutai-pi-service.service commutai-backend.service
 ConditionPathExists=!/etc/commutai/.configured
 
 [Service]

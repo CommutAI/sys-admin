@@ -16,10 +16,11 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-PI_USER="pi"
-INSTALL_DIR="/home/pi/raspberry-pi-server"
+PI_USER="chichi"
+INSTALL_DIR="/home/chichi/raspberry-pi-server"
+BACKEND_DIR="/home/chichi/backend"
 GPS_DEVICE="/dev/ttyS1"  # NEO-M8L uses ttyS1
-SERVICES=("video-server.service" "sms-queue-processor.service" "commutai-pi-service.service")
+SERVICES=("video-server.service" "sms-queue-processor.service" "commutai-pi-service.service" "commutai-backend.service")
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
@@ -116,7 +117,57 @@ sudo -u $PI_USER "$INSTALL_DIR/venv/bin/pip" install -r "$INSTALL_DIR/requiremen
 echo "Python dependencies installed"
 
 echo ""
-echo "Step 6: Configuring systemd services..."
+echo "Step 6: Setting up backend service..."
+if [ -d "$BACKEND_DIR" ]; then
+    echo "Backend directory found at $BACKEND_DIR"
+    
+    # Create backend venv if it doesn't exist
+    if [ ! -d "$BACKEND_DIR/venv" ]; then
+        sudo -u $PI_USER python3 -m venv "$BACKEND_DIR/venv"
+        echo "Backend virtual environment created"
+    fi
+    
+    # Install backend dependencies
+    sudo -u $PI_USER "$BACKEND_DIR/venv/bin/pip" install --upgrade pip
+    sudo -u $PI_USER "$BACKEND_DIR/venv/bin/pip" install -r "$BACKEND_DIR/requirements.txt"
+    echo "Backend dependencies installed"
+    
+    # Create backend service file
+    cat > /etc/systemd/system/commutai-backend.service <<EOF
+[Unit]
+Description=CommutAI Backend Service (FastAPI)
+After=network.target commutai-setup.service
+Requires=commutai-setup.service
+
+[Service]
+Type=simple
+User=$PI_USER
+WorkingDirectory=$BACKEND_DIR
+Environment="PATH=$BACKEND_DIR/venv/bin:/home/$PI_USER/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=$BACKEND_DIR/.env
+ExecStart=$BACKEND_DIR/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    # Also copy the service file to the backend directory for reference
+    cp /etc/systemd/system/commutai-backend.service "$BACKEND_DIR/commutai-backend.service"
+    
+    systemctl daemon-reload
+    systemctl enable commutai-backend.service
+    echo -e "${GREEN}✓ Backend service installed${NC}"
+else
+    echo -e "${YELLOW}⚠ Backend directory not found, skipping backend setup${NC}"
+fi
+
+echo ""
+echo "Step 7: Configuring systemd services..."
 for service in "${SERVICES[@]}"; do
     if [ -f "$INSTALL_DIR/$service" ]; then
         echo "Installing $service..."
@@ -130,7 +181,7 @@ for service in "${SERVICES[@]}"; do
 done
 
 echo ""
-echo "Step 7: Starting services..."
+echo "Step 8: Starting services..."
 for service in "${SERVICES[@]}"; do
     if systemctl list-unit-files | grep -q "^${service}"; then
         echo "Starting $service..."
@@ -143,8 +194,19 @@ for service in "${SERVICES[@]}"; do
     fi
 done
 
+# Start backend if it was set up
+if systemctl list-unit-files | grep -q "^commutai-backend.service"; then
+    echo "Starting backend service..."
+    systemctl start commutai-backend.service
+    if systemctl is-active --quiet commutai-backend.service; then
+        echo -e "${GREEN}✓ Backend service started${NC}"
+    else
+        echo -e "${RED}✗ Backend service failed to start${NC}"
+    fi
+fi
+
 echo ""
-echo "Step 8: Setting up camera configuration..."
+echo "Step 9: Setting up camera configuration..."
 # Create camera configuration
 cat > "$INSTALL_DIR/camera_config.json" <<EOF
 {
@@ -159,7 +221,7 @@ EOF
 chown $PI_USER:$PI_USER "$INSTALL_DIR/camera_config.json"
 
 echo ""
-echo "Step 9: Setting up log rotation..."
+echo "Step 10: Setting up log rotation..."
 cat > /etc/logrotate.d/commutai <<EOF
 /home/pi/raspberry-pi-server/logs/*.log {
     daily
@@ -176,7 +238,7 @@ mkdir -p "$INSTALL_DIR/logs"
 chown $PI_USER:$PI_USER "$INSTALL_DIR/logs"
 
 echo ""
-echo "Step 10: Configuring network optimization..."
+echo "Step 11: Configuring network optimization..."
 # Disable WiFi power saving to improve connection stability
 if [ -f /etc/modprobe.d/8192cu.conf ]; then
     echo "options 8192cu rtw_power_mgnt=0 rtw_enusbss=0" > /etc/modprobe.d/8192cu.conf
@@ -191,7 +253,7 @@ if [ "$CURRENT_HOSTNAME" = "raspberrypi" ]; then
 fi
 
 echo ""
-echo "Step 11: Creating configuration marker..."
+echo "Step 12: Creating configuration marker..."
 mkdir -p /etc/commutai
 echo "$(date)" > /etc/commutai/.configured
 echo "Configuration completed successfully" >> /etc/commutai/.configured
