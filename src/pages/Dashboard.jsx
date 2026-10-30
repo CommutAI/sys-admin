@@ -342,20 +342,6 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
           {useBackend && <span className="text-xs text-green-400">· 90%+ AI Accuracy</span>}
         </div>
         <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setUseBackend(v => !v)}
-            className={`text-xs px-2 py-1 rounded-lg transition-colors ${useBackend ? 'bg-blue-500/30 text-blue-300' : 'bg-white/10 text-white/50 hover:bg-white/20'}`}
-          >
-            {useBackend ? 'Backend YOLO' : 'Pi'}
-          </button>
-          {!useBackend && (
-            <button
-              onClick={() => setUseMjpeg(v => !v)}
-              className={`text-xs px-2 py-1 rounded-lg transition-colors ${useMjpeg ? 'bg-orange-500/30 text-orange-300' : 'bg-white/10 text-white/50 hover:bg-white/20'}`}
-            >
-              {useMjpeg ? 'MJPEG' : 'WS'}
-            </button>
-          )}
           <button onClick={refresh} className="bg-white/10 hover:bg-white/20 text-white p-1.5 rounded-lg transition-colors">
             <RefreshCw size={14} />
           </button>
