@@ -112,15 +112,15 @@ class SMSQueueProcessor:
             return False
 
     def _normalize_phone_number(self, phone_number: str) -> str:
-        """Normalize phone number to international format"""
+        """Normalize phone number to international format without + prefix for SIM900A"""
         phone_number = phone_number.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
 
         if phone_number.startswith('0'):
-            phone_number = '+63' + phone_number[1:]
-        elif phone_number.startswith('63') and not phone_number.startswith('+'):
-            phone_number = '+' + phone_number
-        elif not phone_number.startswith('+'):
-            phone_number = '+63' + phone_number
+            phone_number = '63' + phone_number[1:]
+        elif phone_number.startswith('+'):
+            phone_number = phone_number[1:]  # Remove + for SIM900A
+        elif not phone_number.startswith('63'):
+            phone_number = '63' + phone_number
 
         return phone_number
 
@@ -150,7 +150,16 @@ class SMSQueueProcessor:
 
         try:
             normalized_phone = self._normalize_phone_number(phone_number)
+
+            # Remove special characters that SIM900A can't handle in text mode
+            message = message.replace('→', '->').replace('₱', 'PHP')
+            message = message.encode('ascii', 'ignore').decode('ascii')
+
             logger.info(f"Sending SMS to {normalized_phone}: {message[:50]}...")
+
+            # Clear any pending data
+            self.serial_connection.reset_input_buffer()
+            self.serial_connection.reset_output_buffer()
 
             # Check SIM registration
             reg_check = self._send_at_command('AT+CREG?')
@@ -166,11 +175,11 @@ class SMSQueueProcessor:
 
             # Set recipient
             self._send_at_command(f'AT+CMGS="{normalized_phone}"')
-            time.sleep(0.5)
+            time.sleep(1)
 
             # Send message
             self.serial_connection.write(f'{message}\x1A'.encode())
-            time.sleep(5)
+            time.sleep(8)
 
             # Read response
             response = ""
