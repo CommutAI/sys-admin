@@ -1,0 +1,14 @@
+[Unit]
+Description=CommutAI Raspberry Pi Auto-Setup
+Before=network.target video-server.service sms-queue-processor.service commutai-pi-service.service
+ConditionPathExists=!/etc/commutai/.configured
+
+[Service]
+Type=oneshot
+ExecStart=/home/pi/raspberry-pi-server/auto-setup.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -7,8 +7,9 @@ Wants=network.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/raspberry-pi-server
-Environment="PATH=/home/pi/.local/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/usr/bin/python3 /home/pi/raspberry-pi-server/sms_queue_processor.py
+Environment="PATH=/home/pi/raspberry-pi-server/venv/bin:/home/pi/.local/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/home/pi/raspberry-pi-server/.env
+ExecStart=/home/pi/raspberry-pi-server/venv/bin/python /home/pi/raspberry-pi-server/sms_queue_processor.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
