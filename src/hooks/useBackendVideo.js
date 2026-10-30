@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { getPersistedIp, discoverRaspberryPi } from '../services/piAutoDiscovery';
 
 const HEARTBEAT_MS = 30_000;
 
@@ -18,23 +19,24 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   const heartbeatTimer = useRef(null);
   const deadRef = useRef(false);
 
-  // Auto-detect backend URL from environment
-  // Priority: VITE_BACKEND_URL > VITE_RASPBERRY_PI_URL + :8000 > localhost:8000
-  let backendUrl = import.meta.env.VITE_BACKEND_URL;
-  
-  if (!backendUrl && import.meta.env.VITE_RASPBERRY_PI_URL) {
-    // If only Pi URL is set, append backend port
-    const piUrl = import.meta.env.VITE_RASPBERRY_PI_URL.replace(/\/$/, '');
-    // Add http:// if missing
-    const protocol = piUrl.startsWith('http') ? '' : 'http://';
-    backendUrl = `${protocol}${piUrl}:8000`;
-  }
-  
-  if (!backendUrl) {
-    backendUrl = 'http://localhost:8000';
-  }
+  // Auto-detect backend URL from Pi discovery
+  const [backendUrl, setBackendUrl] = useState(() => {
+    const piIp = getPersistedIp();
+    return piIp ? `http://${piIp}:8000` : 'http://localhost:8000';
+  });
   
   const wsUrl = backendUrl.replace('http', 'ws') + '/ws/video-feed';
+
+  // Auto-discover Pi if no IP is persisted
+  useEffect(() => {
+    if (!getPersistedIp()) {
+      discoverRaspberryPi().then(ip => {
+        if (ip) {
+          setBackendUrl(`http://${ip}:8000`);
+        }
+      });
+    }
+  }, []);
 
   function clearTimers() {
     if (heartbeatTimer.current) {
@@ -61,7 +63,8 @@ export function useBackendVideo({ autoConnect = true } = {}) {
     setIsStreaming(false);
 
     try {
-      const ws = new WebSocket(wsUrl);
+      const currentWsUrl = backendUrl.replace('http', 'ws') + '/ws/video-feed';
+      const ws = new WebSocket(currentWsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -125,7 +128,7 @@ export function useBackendVideo({ autoConnect = true } = {}) {
       setError('Failed to connect');
       setConnectionStatus('error');
     }
-  }, [wsUrl]);
+  }, [backendUrl]);
 
   const disconnect = useCallback(() => {
     clearTimers();
