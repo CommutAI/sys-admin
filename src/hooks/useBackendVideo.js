@@ -18,7 +18,7 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   const heartbeatTimer = useRef(null);
   const deadRef = useRef(false);
 
-  const backendUrl = 'http://localhost:8000';
+  const backendUrl = 'http://192.168.1.35:8000';
   const wsUrl = backendUrl.replace('http', 'ws') + '/ws/video-feed';
 
   function clearTimers() {
