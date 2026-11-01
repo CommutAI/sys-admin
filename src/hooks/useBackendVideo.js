@@ -18,8 +18,14 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   const heartbeatTimer = useRef(null);
   const deadRef = useRef(false);
 
-  const backendUrl = 'http://localhost:8000';
-  const wsUrl = backendUrl.replace('http', 'ws') + '/ws/video-feed';
+  // This feed is optional. The Pi can stream directly to the dashboard, so do
+  // not assume a backend is running on the browser machine's localhost.
+  // Configure VITE_BACKEND_URL only when the central video-processing backend
+  // is deployed and reachable by dashboard users.
+  const backendUrl = import.meta.env.VITE_BACKEND_URL?.replace(/\/$/, '');
+  const wsUrl = backendUrl
+    ? backendUrl.replace(/^http/, 'ws') + '/ws/video-feed'
+    : null;
 
   function clearTimers() {
     if (heartbeatTimer.current) {
@@ -36,6 +42,13 @@ export function useBackendVideo({ autoConnect = true } = {}) {
 
   const connect = useCallback(() => {
     if (deadRef.current) return;
+
+    if (!wsUrl) {
+      setConnectionStatus('not configured');
+      setIsStreaming(false);
+      setError(null);
+      return;
+    }
 
     closeSocket(wsRef.current);
     wsRef.current = null;

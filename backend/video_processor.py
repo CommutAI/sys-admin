@@ -65,7 +65,8 @@ if ROBOFLOW_AVAILABLE:
 PASSENGER_CLASSES = ['person']
 
 # Database save interval (seconds)
-DB_SAVE_INTERVAL = int(os.getenv('DB_SAVE_INTERVAL', '5'))
+# Frames keep streaming live; only database count writes are throttled.
+DB_SAVE_INTERVAL = int(os.getenv('DB_SAVE_INTERVAL', '30'))
 
 print(f"[Video Processor] Model: {MODEL_PATH}")
 print(f"[Video Processor] Confidence threshold: {YOLO_CONFIDENCE_THRESHOLD}")

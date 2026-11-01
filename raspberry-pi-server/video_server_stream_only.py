@@ -427,18 +427,28 @@ async def send_gps_to_backend():
 
 async def main():
     """Main entry point"""
-    streamer = VideoStreamer()
-
+    gps_task = None
     try:
         # Start GPS upload task independently
         gps_task = asyncio.create_task(send_gps_to_backend())
 
-        # Start video streaming
-        await streamer.stream_frames()
+        # Keep the Pi camera service alive independently of backend restarts or
+        # temporary network loss. stream_frames() returns when the backend
+        # connection drops, so create a new camera/connection and retry.
+        while True:
+            streamer = VideoStreamer()
+            await streamer.stream_frames()
+            print("[Stream Mode] Backend unavailable; retrying in 5 seconds")
+            await asyncio.sleep(5)
     except KeyboardInterrupt:
         print("\nShutting down...")
-        streamer.stop()
-        gps_task.cancel()
+    finally:
+        if gps_task:
+            gps_task.cancel()
+            try:
+                await gps_task
+            except asyncio.CancelledError:
+                pass
 
 
 if __name__ == "__main__":

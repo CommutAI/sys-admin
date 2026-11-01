@@ -454,6 +454,10 @@ const Dashboard = () => {
   const [routeCoordinates, setRouteCoordinates] = useState(ROUTE_COORDINATES);
 
   // Single Raspberry Pi connection — shared between status indicators and the video widget
+  // With a backend URL configured, video travels Pi -> backend -> dashboard.
+  // Otherwise retain the direct-Pi stream as the fallback.
+  const useBackendVideoPipeline = Boolean(import.meta.env.VITE_BACKEND_URL);
+
   const {
     online: piOnline,
     connectionStatus: piConnectionStatus,
@@ -468,7 +472,7 @@ const Dashboard = () => {
     assignedBus: piAssignedBus,
     activeTripId: piActiveTripId,
     usingWebSocket: piUsingWebSocket,
-  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
+  } = useRaspberryPi({ autoConnect: !useBackendVideoPipeline, enableHealthCheck: true });
 
   // Backend video connection for YOLOv8m processing
   const {
@@ -476,7 +480,7 @@ const Dashboard = () => {
     passengerCount: backendCount,
     videoRef: backendVideoRef,
     refresh: backendRefresh,
-  } = useBackendVideo({ autoConnect: true });
+  } = useBackendVideo({ autoConnect: useBackendVideoPipeline });
 
   useEffect(() => {
     fetchDashboardData();
