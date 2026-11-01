@@ -178,12 +178,12 @@ const GcashTopUp = () => {
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+            className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
           >
-            <option value="all">All Status</option>
-            <option value="completed">Completed</option>
-            <option value="failed">Failed</option>
-            <option value="pending">Pending</option>
+            <option value="all" className="bg-gray-800 text-white">All Status</option>
+            <option value="completed" className="bg-gray-800 text-white">Completed</option>
+            <option value="failed" className="bg-gray-800 text-white">Failed</option>
+            <option value="pending" className="bg-gray-800 text-white">Pending</option>
           </select>
         </div>
 

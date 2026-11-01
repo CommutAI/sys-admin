@@ -571,22 +571,22 @@ const PassengerAnalytics = () => {
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+            className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
           >
-            <option value="all">All Status</option>
-            <option value="unresolved">Unresolved</option>
-            <option value="resolved">Resolved</option>
+            <option value="all" className="bg-gray-800 text-white">All Status</option>
+            <option value="unresolved" className="bg-gray-800 text-white">Unresolved</option>
+            <option value="resolved" className="bg-gray-800 text-white">Resolved</option>
           </select>
           <select
             value={filterType}
             onChange={(e) => setFilterType(e.target.value)}
-            className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+            className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
           >
-            <option value="all">All Types</option>
-            <option value="double_scan">Double Scan</option>
-            <option value="count_mismatch">Count Mismatch</option>
-            <option value="fare_evasion">Fare Evasion</option>
-            <option value="other">Other</option>
+            <option value="all" className="bg-gray-800 text-white">All Types</option>
+            <option value="double_scan" className="bg-gray-800 text-white">Double Scan</option>
+            <option value="count_mismatch" className="bg-gray-800 text-white">Count Mismatch</option>
+            <option value="fare_evasion" className="bg-gray-800 text-white">Fare Evasion</option>
+            <option value="other" className="bg-gray-800 text-white">Other</option>
           </select>
         </div>
 
