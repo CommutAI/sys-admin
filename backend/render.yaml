@@ -9,4 +9,7 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: FRONTEND_URL
+        sync: false
+        defaultValue: "https://your-vercel-app.vercel.app"
     autoDeploy: true

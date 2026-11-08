@@ -111,6 +111,7 @@ allowed_origins = [
     "http://localhost:3000",
     "http://localhost:8080",
     frontend_url,
+    "https://*.vercel.app",  # Allow all Vercel preview deployments
 ]
 
 app.add_middleware(
