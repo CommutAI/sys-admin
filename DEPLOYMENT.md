@@ -34,10 +34,23 @@ CommutAI is a comprehensive transportation management system with three main com
 1. Create a Supabase project
 2. Run the database migrations in order:
    ```bash
-   # In Supabase SQL Editor, run these files in order:
-   - add_anomaly_enhancements.sql
-   - add_irregularity_enhancements.sql
+   # In Supabase SQL Editor, run these files in order from migrations/ directory:
+   - 001_initial_schema.sql
+   - 002_add_branch_to_staff_users.sql
+   - 003_add_anomaly_enhancements.sql
+   - 004_add_irregularity_enhancements.sql
+   - 005_restrict_rls_policies.sql
+   - 006_add_password_column.sql
+   - 007_add_decline_reason_column.sql
+   - 008_create_pi_devices.sql
+   - 009_fix_staff_users_rls.sql
+   - 010_restore_staff_users_auth_fk.sql
+   - 011_update_sms_queue_types.sql
+   - 012_update_audit_logs_action_constraint.sql
+   - 013_update_card_reservations_status_constraint.sql
    ```
+
+See [migrations/README.md](migrations/README.md) for detailed migration documentation.
 
 ### Step 2: Frontend Deployment
 

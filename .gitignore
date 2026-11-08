@@ -65,6 +65,12 @@ yolov8n.pt
 *.avi
 *.mov
 
+# AI Training/Validation datasets
+test/
+train/
+valid/
+datasets/
+
 # Backup files
 *.bak
 *.backup
