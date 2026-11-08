@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { getPersistedIp, discoverRaspberryPi } from '../services/piAutoDiscovery';
 
 const HEARTBEAT_MS = 30_000;
 
@@ -18,14 +19,26 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   const heartbeatTimer = useRef(null);
   const deadRef = useRef(false);
 
-  // This feed is optional. The Pi can stream directly to the dashboard, so do
-  // not assume a backend is running on the browser machine's localhost.
-  // Configure VITE_BACKEND_URL only when the central video-processing backend
-  // is deployed and reachable by dashboard users.
-  const backendUrl = import.meta.env.VITE_BACKEND_URL?.replace(/\/$/, '');
+  // Auto-detect backend URL from Pi discovery
+  const [backendUrl, setBackendUrl] = useState(() => {
+    const piIp = getPersistedIp();
+    return piIp ? `http://${piIp}:5000` : null;
+  });
+  
   const wsUrl = backendUrl
     ? backendUrl.replace(/^http/, 'ws') + '/ws/video-feed'
     : null;
+
+  // Auto-discover Pi if no IP is persisted
+  useEffect(() => {
+    if (!getPersistedIp()) {
+      discoverRaspberryPi().then(ip => {
+        if (ip) {
+          setBackendUrl(`http://${ip}:5000`);
+        }
+      });
+    }
+  }, []);
 
   function clearTimers() {
     if (heartbeatTimer.current) {
@@ -43,7 +56,7 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   const connect = useCallback(() => {
     if (deadRef.current) return;
 
-    if (!wsUrl) {
+    if (!backendUrl) {
       setConnectionStatus('not configured');
       setIsStreaming(false);
       setError(null);
@@ -59,7 +72,8 @@ export function useBackendVideo({ autoConnect = true } = {}) {
     setIsStreaming(false);
 
     try {
-      const ws = new WebSocket(wsUrl);
+      const currentWsUrl = backendUrl.replace(/^http/, 'ws') + '/ws/video-feed';
+      const ws = new WebSocket(currentWsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -123,7 +137,7 @@ export function useBackendVideo({ autoConnect = true } = {}) {
       setError('Failed to connect');
       setConnectionStatus('error');
     }
-  }, [wsUrl]);
+  }, [backendUrl]);
 
   const disconnect = useCallback(() => {
     clearTimers();
@@ -141,7 +155,7 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   useEffect(() => {
     deadRef.current = false;
 
-    if (autoConnect) {
+    if (autoConnect && backendUrl) {
       connect();
     }
 
@@ -151,7 +165,7 @@ export function useBackendVideo({ autoConnect = true } = {}) {
       closeSocket(wsRef.current);
       wsRef.current = null;
     };
-  }, [autoConnect, connect, disconnect]);
+  }, [autoConnect, connect, disconnect, backendUrl]);
 
   return {
     isStreaming,
