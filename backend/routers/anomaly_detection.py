@@ -180,7 +180,7 @@ def detect_fare_evasion(trip: Dict, ai_count: int, boarded_count: int, staff_cou
     description = (
         f"Fare Evasion Detected: Camera count {ai_count} minus {staff_count} staff = {expected_passengers} expected, "
         f"but {boarded_count} passengers boarded. Discrepancy: {discrepancy} ({percentage_above:.1f}% above threshold). "
-        f"Trend: {trend or 'unknown'}, Historical avg discrepancy: {historical_avg:.1f if historical_avg else 'N/A'}"
+        f"Trend: {trend or 'unknown'}, Historical avg discrepancy: {f'{historical_avg:.1f}' if historical_avg else 'N/A'}"
     )
     
     # Generate recommendation
