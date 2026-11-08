@@ -28,34 +28,16 @@ docs/
 - [VIDEO_MONITORING_SETUP.md](architecture/VIDEO_MONITORING_SETUP.md) - Video monitoring setup guide
 - [SIM900A_SETUP.md](architecture/SIM900A_SETUP.md) - SIM900A GSM module setup
 - [ULTRA_LOW_LATENCY_GUIDE.md](architecture/ULTRA_LOW_LATENCY_GUIDE.md) - Low latency optimization
+- [STREAM_MODE_SETUP.md](architecture/STREAM_MODE_SETUP.md) - Stream mode setup
+- [AUDIT_LOGGING_IMPLEMENTATION.md](architecture/AUDIT_LOGGING_IMPLEMENTATION.md) - Audit logging implementation
 
 ### Security
 - [SECURITY.md](security/SECURITY.md) - Security guidelines and best practices
 - [CLEANUP_CREDENTIALS.md](security/CLEANUP_CREDENTIALS.md) - Credential cleanup instructions
 
 ### Cleanup & Maintenance
-- [CLEANUP_SUMMARY.md](cleanup/CLEANUP_SUMMARY.md) - Codebase cleanup summary
 - [CLEANUP_FINAL_REPORT.md](cleanup/CLEANUP_FINAL_REPORT.md) - Final cleanup report
 - [CODEBASE_CLEANUP.md](cleanup/CODEBASE_CLEANUP.md) - Codebase cleanup plan
-- [SQL_CLEANUP_ANALYSIS.md](cleanup/SQL_CLEANUP_ANALYSIS.md) - SQL cleanup analysis
-- [SQL_CLEANUP_SUMMARY.md](cleanup/SQL_CLEANUP_SUMMARY.md) - SQL cleanup summary
-
-### Legacy Documentation (For Reference)
-The following files are marked as LEGACY and kept for reference only:
-
-**Deployment:**
-- [DEPLOYMENT_GUIDE_LEGACY.md](deployment/DEPLOYMENT_GUIDE_LEGACY.md) - Old deployment guide
-- [AUTO_START_GUIDE_LEGACY.md](deployment/AUTO_START_GUIDE_LEGACY.md) - Old auto-start guide
-- [README_AUTO_START_LEGACY.md](deployment/README_AUTO_START_LEGACY.md) - Old auto-start README
-- [AUTO_START_SUMMARY.md](deployment/AUTO_START_SUMMARY.md) - Auto-start summary
-- [DEPLOYMENT_INSTRUCTIONS.md](deployment/DEPLOYMENT_INSTRUCTIONS.md) - Deployment instructions
-- [AUTO_SETUP_LEGACY.md](deployment/AUTO_SETUP_LEGACY.md) - Old auto-setup guide
-
-**Architecture:**
-- [AUTO_IP_DETECTION_SUMMARY.md](architecture/AUTO_IP_DETECTION_SUMMARY.md) - IP detection summary
-- [STREAM_MODE_SETUP.md](architecture/STREAM_MODE_SETUP.md) - Stream mode setup
-- [SIM900A_HARDWARE_REFERENCE.md](architecture/SIM900A_HARDWARE_REFERENCE.md) - SIM900A hardware reference
-- [AUDIT_LOGGING_IMPLEMENTATION.md](architecture/AUDIT_LOGGING_IMPLEMENTATION.md) - Audit logging implementation
 
 ## Getting Started
 
@@ -81,8 +63,8 @@ Review security guidelines:
 ### Maintenance
 
 For maintenance and cleanup:
-- [CLEANUP_SUMMARY.md](cleanup/CLEANUP_SUMMARY.md) - Recent cleanup activities
-- [SQL_CLEANUP_SUMMARY.md](cleanup/SQL_CLEANUP_SUMMARY.md) - SQL migration cleanup
+- [CLEANUP_FINAL_REPORT.md](cleanup/CLEANUP_FINAL_REPORT.md) - Recent cleanup activities
+- [CODEBASE_CLEANUP.md](cleanup/CODEBASE_CLEANUP.md) - Codebase cleanup plan
 
 ## Component-Specific Documentation
 
