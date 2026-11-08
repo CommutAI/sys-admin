@@ -12,7 +12,7 @@ const NETWORK_RANGES = [
   '10.0.0.', '10.0.1.', '172.16.0.', '192.168.88.',
   '192.168.2.', '192.168.10.' // Additional common ranges
 ];
-const LOCALHOST_ADDRESSES = ['commutai.local', 'localhost', '127.0.0.1']; // Try Raspberry Pi hostname first
+const LOCALHOST_ADDRESSES = ['localhost', '127.0.0.1']; // Try localhost for local development
 
 /**
  * Get persisted IP from localStorage
@@ -193,11 +193,11 @@ export async function discoverRaspberryPi(onProgress = null) {
       }
     }
 
-    // Scan a limited range of IPs (1-30 for each network to avoid long scans)
+    // Scan a limited range of IPs (1-60 for each network to find Pi at .54)
     const ipPromises = [];
     
     for (const networkPrefix of NETWORK_RANGES) {
-      for (let i = 1; i <= 30; i++) {
+      for (let i = 1; i <= 60; i++) {
         const ip = networkPrefix + i;
         ipPromises.push(checkRaspberryPi(ip));
       }

@@ -26,17 +26,21 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   });
   
   const wsUrl = backendUrl
-    ? backendUrl.replace(/^http/, 'ws') + '/ws/video-feed'
+    ? backendUrl.replace(/^http/, 'ws') + '/ws'
     : null;
 
   // Auto-discover Pi if no IP is persisted
   useEffect(() => {
     if (!getPersistedIp()) {
+      console.log('[Backend Video] No persisted IP, starting discovery...');
       discoverRaspberryPi().then(ip => {
+        console.log('[Backend Video] Discovery result:', ip);
         if (ip) {
           setBackendUrl(`http://${ip}:5000`);
         }
       });
+    } else {
+      console.log('[Backend Video] Using persisted IP:', getPersistedIp());
     }
   }, []);
 
@@ -57,12 +61,14 @@ export function useBackendVideo({ autoConnect = true } = {}) {
     if (deadRef.current) return;
 
     if (!backendUrl) {
+      console.log('[Backend Video] No backend URL configured');
       setConnectionStatus('not configured');
       setIsStreaming(false);
       setError(null);
       return;
     }
 
+    console.log('[Backend Video] Connecting to:', backendUrl);
     closeSocket(wsRef.current);
     wsRef.current = null;
     clearTimers();
@@ -72,7 +78,8 @@ export function useBackendVideo({ autoConnect = true } = {}) {
     setIsStreaming(false);
 
     try {
-      const currentWsUrl = backendUrl.replace(/^http/, 'ws') + '/ws/video-feed';
+      const currentWsUrl = backendUrl.replace(/^http/, 'ws') + '/ws';
+      console.log('[Backend Video] WebSocket URL:', currentWsUrl);
       const ws = new WebSocket(currentWsUrl);
       wsRef.current = ws;
 
@@ -102,13 +109,21 @@ export function useBackendVideo({ autoConnect = true } = {}) {
         try {
           const data = JSON.parse(event.data);
 
-          if (data.type === 'video_frame' && data.frame && videoRef.current) {
-            videoRef.current.src = `data:image/jpeg;base64,${data.frame}`;
+          // Handle Pi server format: {'video_frame': frame_base64}
+          if (data.video_frame && videoRef.current) {
+            videoRef.current.src = `data:image/jpeg;base64,${data.video_frame}`;
             setIsStreaming(true);
           }
 
+          // Handle passenger count from separate message
           if (data.count !== undefined) {
             setPassengerCount(data.count);
+          }
+
+          // Handle combined format (backward compatibility)
+          if (data.type === 'video_frame' && data.frame && videoRef.current) {
+            videoRef.current.src = `data:image/jpeg;base64,${data.frame}`;
+            setIsStreaming(true);
           }
         } catch (err) {
           console.error('[Backend Video] Error parsing message:', err);
@@ -155,8 +170,12 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   useEffect(() => {
     deadRef.current = false;
 
+    console.log('[Backend Video] useEffect triggered', { autoConnect, backendUrl });
     if (autoConnect && backendUrl) {
+      console.log('[Backend Video] Calling connect()');
       connect();
+    } else {
+      console.log('[Backend Video] Not connecting - autoConnect:', autoConnect, 'backendUrl:', backendUrl);
     }
 
     return () => {

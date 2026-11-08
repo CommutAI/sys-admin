@@ -256,15 +256,15 @@ class NEO6M:
             return None
     
     def read_location(self, trip_id: Optional[int] = None, db_client=None) -> Optional[GPSLocation]:
-        """Read current location from GPS and log to database"""
+        """Read current location from GPS"""
         if not self.connected:
             return None
-        
+
         try:
             # Read data from GPS
             if self.serial_connection.in_waiting > 0:
                 nmea_data = self.serial_connection.readline().decode('ascii', errors='ignore')
-                
+
                 # Parse NMEA sentence
                 parsed_data = self.parse_nmea_sentence(nmea_data)
                 if parsed_data:
@@ -278,53 +278,21 @@ class NEO6M:
                         accuracy=10.0,  # Default GPS accuracy
                         source='gps'
                     )
-                    
+
                     self.current_location = location
                     self.location_history.append(location)
-                    
+
                     # Keep only last 100 locations
                     if len(self.location_history) > 100:
                         self.location_history.pop(0)
-                    
-                    # Log location to database
-                    if db_client:
-                        self._log_location_to_db(location, trip_id, parsed_data, db_client)
-                    
+
                     return location
-            
+
             return None
         except Exception as e:
             logger.error(f"GPS read error: {e}")
             return None
-    
-    def _log_location_to_db(self, location: GPSLocation, trip_id: Optional[int], 
-                           parsed_data: dict, db_client):
-        """Log GPS location to database"""
-        try:
-            data = {
-                'latitude': location.latitude,
-                'longitude': location.longitude,
-                'altitude': location.altitude,
-                'speed': location.speed,
-                'accuracy': location.accuracy,
-                'source': location.source,
-                'trip_id': trip_id,
-                'satellite_count': parsed_data.get('satellites'),
-                'fix_quality': parsed_data.get('fix_quality')
-            }
-            # Run in thread to avoid blocking
-            import threading
-            def log_to_db():
-                try:
-                    db_client.table('gps_locations').insert(data).execute()
-                    logger.debug(f"GPS location logged to database")
-                except Exception as e:
-                    logger.error(f"Failed to log GPS location to database: {e}")
-            
-            threading.Thread(target=log_to_db, daemon=True).start()
-        except Exception as e:
-            logger.error(f"Failed to start GPS logging thread: {e}")
-    
+
     def is_location_stable(self) -> bool:
         """Check if GPS location is stable"""
         if len(self.location_history) < 5:
@@ -337,18 +305,18 @@ class NEO6M:
         return (lat_variance < self.stability_threshold and 
                 lon_variance < self.stability_threshold)
     
-    def start_continuous_tracking(self, callback: Callable[[GPSLocation], None], 
-                                trip_id: Optional[int] = None, db_client=None):
+    def start_continuous_tracking(self, callback: Callable[[GPSLocation], None],
+                                trip_id: Optional[int] = None):
         """Start continuous GPS tracking"""
         self.running = True
-        
+
         def tracking_loop():
             while self.running:
-                location = self.read_location(trip_id, db_client)
+                location = self.read_location(trip_id)
                 if location and callback:
                     callback(location)
                 time.sleep(1)
-        
+
         thread = threading.Thread(target=tracking_loop, daemon=True)
         thread.start()
         logger.info("GPS continuous tracking started")
@@ -764,7 +732,7 @@ class HardwareManager:
     def start_gps_tracking(self, callback: Optional[Callable[[GPSLocation], None]] = None):
         """Start continuous GPS tracking"""
         if self.neo6m and self.neo6m.connected:
-            self.neo6m.start_continuous_tracking(callback, self.current_trip_id, self.db_client)
+            self.neo6m.start_continuous_tracking(callback, self.current_trip_id)
     
     def stop_gps_tracking(self):
         """Stop continuous GPS tracking"""

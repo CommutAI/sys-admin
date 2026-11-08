@@ -12,6 +12,7 @@ import json
 import time
 import asyncio
 import uuid
+import websockets
 from typing import Optional
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -80,8 +81,14 @@ OPENCV_DNN_CONFIDENCE_THRESHOLD = float(os.getenv('OPENCV_DNN_CONFIDENCE_THRESHO
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
+    global backend_ws_client
+
     # Startup
     enable_camera = os.getenv('ENABLE_CAMERA', 'true').lower() == 'true'
+
+    # Start backend WebSocket client
+    backend_ws_client = BackendWebSocketClient(BACKEND_URL)
+    asyncio.create_task(backend_ws_client.start())
 
     if enable_camera:
         print("Auto-starting camera on server startup...")
@@ -110,6 +117,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     print("Cleaning up hardware resources...")
+    if backend_ws_client:
+        await backend_ws_client.stop()
     if enable_camera:
         video_processor.stop()
     if hardware_manager:
@@ -214,12 +223,31 @@ HARDWARE_CONFIG = {
 
 # Initialize Hardware Manager
 hardware_manager = None
+# Global backend WebSocket client
+backend_ws_client = None
+
+def gps_callback(location):
+    """Callback to send GPS data to backend via WebSocket"""
+    global backend_ws_client
+    if backend_ws_client:
+        gps_data = {
+            'latitude': location.latitude,
+            'longitude': location.longitude,
+            'altitude': location.altitude,
+            'speed': location.speed,
+            'accuracy': location.accuracy,
+            'source': location.source,
+            'timestamp': location.timestamp
+        }
+        # Queue the GPS data (thread-safe, can be called from any thread)
+        backend_ws_client.send_gps(gps_data, hardware_manager.current_trip_id)
+
 try:
     hardware_manager = HardwareManager(HARDWARE_CONFIG, db_client=supabase)
     if hardware_manager.initialize():
         print("Hardware manager initialized successfully")
-        # Start GPS tracking
-        hardware_manager.start_gps_tracking()
+        # Start GPS tracking with WebSocket callback
+        hardware_manager.start_gps_tracking(gps_callback)
     else:
         print("Hardware manager initialization failed - some features may be unavailable")
 except Exception as e:
@@ -295,6 +323,82 @@ print(f"YOLO confidence threshold: {YOLO_CONFIDENCE_THRESHOLD}")
 print(f"Ultra-low latency settings: ENABLE_REALTIME_MODE={ENABLE_REALTIME_MODE}, SKIP_DETECTION_FRAMES={SKIP_DETECTION_FRAMES}")
 print(f"Camera settings: {CAMERA_WIDTH}x{CAMERA_HEIGHT} @ {FPS}fps, JPEG_QUALITY={JPEG_QUALITY}")
 print(f"Performance optimizations: DISABLE_DRAWING={DISABLE_DRAWING}, DISABLE_DB_WRITES={DISABLE_DB_WRITES}, FRAME_QUEUE_SIZE={FRAME_QUEUE_SIZE}")
+
+class BackendWebSocketClient:
+    """WebSocket client to send GPS data to backend server"""
+    def __init__(self, backend_url: str):
+        self.backend_url = backend_url
+        self.websocket = None
+        self.connected = False
+        self.reconnect_delay = 5
+        self.running = False
+        import queue
+        self.gps_queue = queue.Queue()  # Thread-safe queue
+
+    async def connect(self):
+        """Connect to backend WebSocket"""
+        if not self.backend_url or self.backend_url == 'http://localhost:8000':
+            print("[Backend WS] Backend URL not configured, skipping WebSocket connection")
+            return False
+
+        ws_url = self.backend_url.replace('http://', 'ws://').replace('https://', 'wss://')
+        ws_url = f"{ws_url}/ws/video-feed"
+
+        while self.running:
+            try:
+                print(f"[Backend WS] Connecting to {ws_url}...")
+                self.websocket = await websockets.connect(ws_url)
+                self.connected = True
+                print("[Backend WS] Connected to backend")
+                return True
+            except Exception as e:
+                print(f"[Backend WS] Connection failed: {e}, retrying in {self.reconnect_delay}s...")
+                await asyncio.sleep(self.reconnect_delay)
+
+    def send_gps(self, gps_data: dict, trip_id: Optional[int] = None):
+        """Queue GPS data for sending (thread-safe, can be called from any thread)"""
+        self.gps_queue.put({'gps': gps_data, 'trip_id': trip_id})
+
+    async def process_queue(self):
+        """Process GPS queue and send to backend"""
+        while self.running:
+            try:
+                # Get from queue with timeout
+                try:
+                    data = self.gps_queue.get(timeout=0.1)
+                except queue.Empty:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                if self.connected and self.websocket:
+                    try:
+                        message = {
+                            'type': 'gps_update',
+                            'gps': data['gps'],
+                            'trip_id': data['trip_id']
+                        }
+                        await self.websocket.send(json.dumps(message))
+                        print(f"[Backend WS] Sent GPS: {data['gps'].get('latitude', 0):.6f}, {data['gps'].get('longitude', 0):.6f}")
+                    except Exception as e:
+                        print(f"[Backend WS] Failed to send GPS: {e}")
+                        self.connected = False
+            except Exception as e:
+                print(f"[Backend WS] Queue processing error: {e}")
+
+    async def start(self):
+        """Start the WebSocket client"""
+        self.running = True
+        # Start connection task
+        asyncio.create_task(self.connect())
+        # Start queue processing task
+        asyncio.create_task(self.process_queue())
+
+    async def stop(self):
+        """Stop the WebSocket client"""
+        self.running = False
+        if self.websocket:
+            await self.websocket.close()
+        self.connected = False
 
 class VideoProcessor:
     def __init__(self):
@@ -669,24 +773,50 @@ class VideoProcessor:
                 {self.onnx_session.get_inputs()[0].name: img},
             )
             
-            # Parse outputs (YOLOv8 format)
+            # Parse outputs (YOLOv8 format: 1, 84, 8400)
+            # 84 = 4 (bbox) + 80 (classes), 8400 = number of predictions
             detections = []
             if len(outputs) > 0:
-                output = outputs[0]
-                # Filter for person class (class 0 in COCO)
-                for detection in output[0]:
-                    if len(detection) >= 6:
-                        x1, y1, x2, y2, confidence, class_id = detection[:6]
-                        if class_id == 0 and confidence > YOLO_CONFIDENCE_THRESHOLD:
-                            # Scale back to original image
-                            scale_x = original_shape[1] / input_shape[1]
-                            scale_y = original_shape[0] / input_shape[0]
-                            detections.append({
-                                'bbox': [int(x1 * scale_x), int(y1 * scale_y),
-                                        int(x2 * scale_x), int(y2 * scale_y)],
-                                'confidence': float(confidence),
-                                'class': 'person'
-                            })
+                output = outputs[0]  # Shape: (1, 84, 8400)
+                predictions = output[0]  # Shape: (84, 8400)
+                
+                # Transpose to (8400, 84) for easier iteration
+                predictions = predictions.T
+                
+                # Log max confidence for debugging
+                max_conf = np.max(predictions[:, 4])
+                if max_conf > 0.01:  # Only log if there's something
+                    print(f"[ONNX] Max person confidence: {max_conf:.3f}, threshold: {YOLO_CONFIDENCE_THRESHOLD}")
+                
+                # Filter for person class (class 0 in COCO, index 4 in output)
+                for prediction in predictions:
+                    # prediction[0:4] = bbox (cx, cy, w, h)
+                    # prediction[4] = person class confidence
+                    # prediction[5:] = other class confidences
+                    
+                    person_conf = prediction[4]
+                    
+                    if person_conf > YOLO_CONFIDENCE_THRESHOLD:
+                        # Convert center/width/height to x1/y1/x2/y2
+                        cx, cy, w, h = prediction[0:4]
+                        x1 = cx - w / 2
+                        y1 = cy - h / 2
+                        x2 = cx + w / 2
+                        y2 = cy + h / 2
+                        
+                        # Scale back to original image
+                        scale_x = original_shape[1] / input_shape[1]
+                        scale_y = original_shape[0] / input_shape[0]
+                        
+                        detections.append({
+                            'bbox': [int(x1 * scale_x), int(y1 * scale_y),
+                                    int(x2 * scale_x), int(y2 * scale_y)],
+                            'confidence': float(person_conf),
+                            'class': 'person'
+                        })
+            
+            # Apply NMS to remove overlapping detections
+            detections = self._apply_nms(detections, iou_threshold=IOU_THRESHOLD)
             
             return detections
         except Exception as e:
