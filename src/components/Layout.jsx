@@ -36,6 +36,10 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
         .eq('id', user.id)
         .single();
       setUserRole(staffData?.role || 'conductor');
+    } else {
+      // Fallback to localStorage
+      const staffUserRole = localStorage.getItem('staff_user_role');
+      setUserRole(staffUserRole || 'conductor');
     }
   };
 
@@ -46,6 +50,11 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
 
       // Sign out from Supabase
       await supabase.auth.signOut();
+
+      // Clear localStorage fallback
+      localStorage.removeItem('staff_user_id');
+      localStorage.removeItem('staff_user_email');
+      localStorage.removeItem('staff_user_role');
 
       // Navigate to login page
       navigate('/login');

@@ -30,17 +30,29 @@ function ProtectedRoute({ children, requireAdmin = false, requireDriver = false 
     setAuthenticated(!!session);
 
     if (session) {
-      // Check user role
+      // Check user role from Supabase auth
       const { data: staffData } = await supabase
         .from('staff_users')
         .select('role')
         .eq('id', session.user.id)
         .single();
-      
+
       const role = staffData?.role || null;
       setIsAdmin(role === 'admin');
       setIsDriver(role === 'driver');
       setUserRole(role);
+    } else {
+      // Fallback: check localStorage for staff session
+      const staffUserId = localStorage.getItem('staff_user_id');
+      const staffUserEmail = localStorage.getItem('staff_user_email');
+      const staffUserRole = localStorage.getItem('staff_user_role');
+
+      if (staffUserId && staffUserEmail) {
+        setAuthenticated(true);
+        setIsAdmin(staffUserRole === 'admin');
+        setIsDriver(staffUserRole === 'driver');
+        setUserRole(staffUserRole);
+      }
     }
 
     setLoading(false);
