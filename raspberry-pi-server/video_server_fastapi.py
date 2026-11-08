@@ -133,6 +133,10 @@ else:
 
 # Bus assignment — look up the assigned bus_number in Supabase at startup
 BUS_NUMBER = int(os.getenv("BUS_NUMBER", "1"))
+# Use one port setting for both the HTTP server and its pi_devices registration.
+# Previously registration read PORT (default 5000) while Uvicorn read
+# SERVER_PORT (often 8000), which made dashboards connect to the wrong port.
+SERVER_PORT = int(os.getenv("SERVER_PORT", os.getenv("PORT", "5000")))
 ASSIGNED_BUS_ID: Optional[str] = None
 ASSIGNED_BUS_PLATE: Optional[str] = None
 
@@ -170,18 +174,16 @@ def register_device():
         finally:
             s.close()
 
-        server_port = int(os.getenv("PORT", "5000"))
-
         supabase.table("pi_devices").upsert({
             "bus_number": BUS_NUMBER,
             "bus_id": ASSIGNED_BUS_ID,
             "ip_address": lan_ip,
-            "port": server_port,
+            "port": SERVER_PORT,
             "last_seen": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
             "hostname": hostname,
         }, on_conflict="bus_number").execute()
 
-        print(f"[Device] Registered: bus={BUS_NUMBER} ip={lan_ip}:{server_port} hostname={hostname}")
+        print(f"[Device] Registered: bus={BUS_NUMBER} ip={lan_ip}:{SERVER_PORT} hostname={hostname}")
     except Exception as e:
         print(f"[Device] Failed to register: {e}")
 
@@ -199,10 +201,10 @@ HARDWARE_CONFIG = {
     'enable_gps': os.getenv('ENABLE_GPS', 'true').lower() == 'true',  # Enabled by default for NEO-M8L
     'enable_emergency_button': os.getenv('ENABLE_EMERGENCY_BUTTON', 'false').lower() == 'true',  # Disabled by default for testing
     'enable_geolocation': os.getenv('ENABLE_GEOLOCATION', 'true').lower() == 'true',
-    'sim900a_port': os.getenv('SIM900A_PORT', '/dev/ttyS0'),
+    'sim900a_port': os.getenv('SIM900A_PORT', '/dev/ttyUSB0'),
     'sim900a_baudrate': int(os.getenv('SIM900A_BAUDRATE', '9600')),
-    'gps_port': os.getenv('GPS_PORT', '/dev/ttyS1'),
-    'gps_baudrate': int(os.getenv('GPS_BAUDRATE', '9600')),
+    'gps_port': os.getenv('NEO6M_PORT', '/dev/ttyS0'),
+    'gps_baudrate': int(os.getenv('NEO6M_BAUDRATE', '9600')),
     'emergency_button_pin': int(os.getenv('EMERGENCY_BUTTON_PIN', '18')),
     'osm_user_agent': os.getenv('OSM_USER_AGENT', 'BusMonitoringSystem'),
     # Contacts are now fetched from database, these are only fallbacks
@@ -2165,8 +2167,7 @@ if __name__ == '__main__':
     print(f"FPS: {FPS}")
     
     try:
-        port = int(os.getenv('SERVER_PORT', '8000'))
-        uvicorn.run(app, host='0.0.0.0', port=port)
+        uvicorn.run(app, host='0.0.0.0', port=SERVER_PORT)
     except KeyboardInterrupt:
         print("Server shutdown requested")
     except Exception as e:
