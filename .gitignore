@@ -1,40 +1,76 @@
-# Logs
-logs
-*.log
+# Environment Variables (contains sensitive data)
+.env
+.env.local
+.env.production
+backend/.env
+raspberry-pi-server/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
+.pnpm-debug.log*
+.DS_Store
 *.local
 
-# Environment variables
-.env
-.env.local
-.env.*.local
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# OS
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+Thumbs.db
 
-# AI model files (too large for git)
+# AI Models (large files)
 *.pt
 *.pth
 *.onnx
-*.engine
+*.weights
+yolov8n.pt
 
-# Dataset directories
+# Video files
+*.mp4
+*.avi
+*.mov
+
+# AI Training/Validation datasets
 test/
 train/
 valid/
+datasets/
+
+# Backup files
+*.bak
+*.backup

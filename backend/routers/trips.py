@@ -30,6 +30,7 @@ async def create_trip(
 ):
     """
     Create a new trip. Only drivers can create trips.
+    Raspberry Pi will automatically detect the active trip via polling.
     """
     try:
         trip_data = {
@@ -57,16 +58,16 @@ async def create_trip(
         )
 
 @router.get("/api/trips")
-async def get_trips(
-    user = Depends(verify_supabase_token)
-):
+async def get_trips():
     """
-    Get all trips. All authenticated users can read trip data.
+    Get all trips. No authentication required for Pi polling.
     """
     try:
-        response = supabase.table('trips').select('*, buses(*), conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*)').order('started_at', {'ascending': False}).execute()
+        response = supabase.table('trips').select('id, status, bus_id, conductor_id, driver_id, started_at').order('started_at', desc=True).execute()
+        print(f"[Trips] Fetched {len(response.data) if response.data else 0} trips")
         return {"trips": response.data}
     except Exception as e:
+        print(f"[Trips] Error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching trips: {str(e)}"
@@ -103,6 +104,7 @@ async def update_trip(
     """
     Update trip status or location. Available to all authenticated users.
     (You may want to restrict this further based on your requirements)
+    Raspberry Pi will automatically detect trip status changes via polling.
     """
     try:
         update_data = {}

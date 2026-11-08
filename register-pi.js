@@ -5,13 +5,13 @@
 
 import https from 'https';
 
-const SUPABASE_URL = 'https://iyacktzzktwrpeibcena.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml5YWNrdHp6a3R3cnBlaWJjZW5hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEwNzAxMzMsImV4cCI6MjEwNjY0NjEzM30.nnUW_wjKE9t6V_ZNNR1u_HqcqQletGEsJ4A2kcBLxl0';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'your-supabase-project-url';
+const SUPABASE_KEY = process.env.SUPABASE_KEY || 'your-supabase-anon-key';
 
 // Configuration - CHANGE THIS to your Pi's actual IP
-const PI_IP = '192.168.1.63'; // Current Pi IP
-const PI_PORT = 5000;
-const BUS_NUMBER = 1;
+const PI_IP = process.env.PI_IP || '192.168.1.63'; // Current Pi IP
+const PI_PORT = process.env.PI_PORT || '5000';
+const BUS_NUMBER = process.env.BUS_NUMBER || '1';
 
 console.log('📝 Registering Raspberry Pi in database...\n');
 
@@ -21,8 +21,9 @@ const data = JSON.stringify({
   last_seen: new Date().toISOString()
 });
 
+const url = new URL(SUPABASE_URL);
 const options = {
-  hostname: 'iyacktzzktwrpeibcena.supabase.co',
+  hostname: url.hostname,
   path: `/rest/v1/pi_devices?bus_number=eq.${BUS_NUMBER}`,
   method: 'PATCH',
   headers: {

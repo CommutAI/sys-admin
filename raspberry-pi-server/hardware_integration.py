@@ -183,7 +183,7 @@ class NEO6M:
             parts = sentence.split(',')
             sentence_type = parts[0]
             
-            if sentence_type == '$GPGGA':  # Global Positioning System Fix Data
+            if sentence_type in ['$GPGGA', '$GNGGA']:  # GPS or GNSS (GPS+GLONASS) Fix Data
                 if len(parts) < 15:
                     return None
                 
@@ -214,7 +214,7 @@ class NEO6M:
                         latitude = -latitude
                 else:
                     latitude = 0.0
-                
+
                 # Convert longitude
                 if lon_str:
                     lon_deg = float(lon_str[:3])
@@ -234,7 +234,7 @@ class NEO6M:
                     'time': time_str
                 }
             
-            elif sentence_type == '$GPRMC':  # Recommended Minimum sentence
+            elif sentence_type in ['$GPRMC', '$GNRMC']:  # Recommended Minimum sentence
                 if len(parts) < 12:
                     return None
                 
@@ -259,12 +259,12 @@ class NEO6M:
         """Read current location from GPS and log to database"""
         if not self.connected:
             return None
-        
+
         try:
             # Read data from GPS
             if self.serial_connection.in_waiting > 0:
                 nmea_data = self.serial_connection.readline().decode('ascii', errors='ignore')
-                
+
                 # Parse NMEA sentence
                 parsed_data = self.parse_nmea_sentence(nmea_data)
                 if parsed_data:
@@ -278,26 +278,26 @@ class NEO6M:
                         accuracy=10.0,  # Default GPS accuracy
                         source='gps'
                     )
-                    
+
                     self.current_location = location
                     self.location_history.append(location)
-                    
+
                     # Keep only last 100 locations
                     if len(self.location_history) > 100:
                         self.location_history.pop(0)
-                    
+
                     # Log location to database
                     if db_client:
                         self._log_location_to_db(location, trip_id, parsed_data, db_client)
-                    
+
                     return location
-            
+
             return None
         except Exception as e:
             logger.error(f"GPS read error: {e}")
             return None
-    
-    def _log_location_to_db(self, location: GPSLocation, trip_id: Optional[int], 
+
+    def _log_location_to_db(self, location: GPSLocation, trip_id: Optional[int],
                            parsed_data: dict, db_client):
         """Log GPS location to database"""
         try:
@@ -320,11 +320,11 @@ class NEO6M:
                     logger.debug(f"GPS location logged to database")
                 except Exception as e:
                     logger.error(f"Failed to log GPS location to database: {e}")
-            
+
             threading.Thread(target=log_to_db, daemon=True).start()
         except Exception as e:
             logger.error(f"Failed to start GPS logging thread: {e}")
-    
+
     def is_location_stable(self) -> bool:
         """Check if GPS location is stable"""
         if len(self.location_history) < 5:
@@ -337,18 +337,18 @@ class NEO6M:
         return (lat_variance < self.stability_threshold and 
                 lon_variance < self.stability_threshold)
     
-    def start_continuous_tracking(self, callback: Callable[[GPSLocation], None], 
+    def start_continuous_tracking(self, callback: Callable[[GPSLocation], None],
                                 trip_id: Optional[int] = None, db_client=None):
         """Start continuous GPS tracking"""
         self.running = True
-        
+
         def tracking_loop():
             while self.running:
                 location = self.read_location(trip_id, db_client)
                 if location and callback:
                     callback(location)
                 time.sleep(1)
-        
+
         thread = threading.Thread(target=tracking_loop, daemon=True)
         thread.start()
         logger.info("GPS continuous tracking started")

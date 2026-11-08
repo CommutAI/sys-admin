@@ -27,8 +27,8 @@ if [ ! -f ".env" ]; then
     echo "⚙️  Creating .env file..."
     cat > .env << 'ENVEOF'
 # Supabase Configuration
-SUPABASE_URL=https://iyacktzzktwrpeibcena.supabase.co
-SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml5YWNrdHp6a3R3cnBlaWJjZW5hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEwNzAxMzMsImV4cCI6MjEwNjY0NjEzM30.nnUW_wjKE9t6V_ZNNR1u_HqcqQletGEsJ4A2kcBLxl0
+SUPABASE_URL=your-supabase-project-url
+SUPABASE_KEY=your-supabase-anon-key
 
 # Bus Configuration
 BUS_NUMBER=1

@@ -15,12 +15,13 @@ import time
 import sys
 import argparse
 import socket
+import os
 
 # Configuration
-SUPABASE_URL = "https://iyacktzzktwrpeibcena.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml5YWNrdHp6a3R3cnBlaWJjZW5hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEwNzAxMzMsImV4cCI6MjEwNjY0NjEzM30.nnUW_wjKE9t6V_ZNNR1u_HqcqQletGEsJ4A2kcBLxl0"
-BUS_NUMBER = 1
-PI_PORT = 5000
+SUPABASE_URL = os.getenv('SUPABASE_URL', 'your-supabase-project-url')
+SUPABASE_KEY = os.getenv('SUPABASE_KEY', 'your-supabase-anon-key')
+BUS_NUMBER = int(os.getenv('BUS_NUMBER', '1'))
+PI_PORT = int(os.getenv('PI_PORT', '5000'))
 
 def get_current_ip():
     """Get the Pi's current local IP address"""

@@ -66,7 +66,7 @@ PASSENGER_CLASSES = ['person']
 
 # Database save interval (seconds)
 # Frames keep streaming live; only database count writes are throttled.
-DB_SAVE_INTERVAL = int(os.getenv('DB_SAVE_INTERVAL', '30'))
+DB_SAVE_INTERVAL = int(os.getenv('DB_SAVE_INTERVAL', '5'))
 
 print(f"[Video Processor] Model: {MODEL_PATH}")
 print(f"[Video Processor] Confidence threshold: {YOLO_CONFIDENCE_THRESHOLD}")

@@ -1242,6 +1242,48 @@ npm run build
 
 The optimized build will be in the `dist` directory.
 
+## Documentation
+
+Comprehensive documentation is available in the `docs/` directory:
+
+### Quick Links
+- **[docs/README.md](docs/README.md)** - Documentation hub with all guides
+- **[docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md)** - Main deployment guide
+- **[docs/deployment/AUTO_START.md](docs/deployment/AUTO_START.md)** - Auto-start configuration
+- **[docs/security/SECURITY.md](docs/security/SECURITY.md)** - Security guidelines
+
+### Documentation Categories
+
+**Deployment** ([docs/deployment/](docs/deployment/))
+- Deployment guides for all components
+- Auto-start configuration
+- Raspberry Pi setup instructions
+- Minimal setup guides
+
+**Architecture** ([docs/architecture/](docs/architecture/))
+- Video processing architecture
+- Auto IP detection system
+- Real-time optimization
+- Hardware setup (SIM900A, GPS)
+- Low latency optimization
+
+**Security** ([docs/security/](docs/security/))
+- Security best practices
+- Credential management
+- Cleanup instructions
+
+**Cleanup** ([docs/cleanup/](docs/cleanup/))
+- Codebase cleanup summaries
+- SQL migration cleanup
+- Maintenance documentation
+
+### Component Documentation
+
+- **[backend/README.md](backend/README.md)** - Backend-specific documentation
+- **[backend/INSTALL_WINDOWS_SERVICE.md](backend/INSTALL_WINDOWS_SERVICE.md)** - Windows service installation
+- **[raspberry-pi-server/README.md](raspberry-pi-server/README.md)** - Raspberry Pi server documentation
+- **[migrations/README.md](migrations/README.md)** - Database migration documentation
+
 ## Project Structure
 
 ```
