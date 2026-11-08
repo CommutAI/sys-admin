@@ -38,10 +38,5 @@
       ]
     }
   ],
-  "env": {
-    "VITE_SUPABASE_URL": "@vite-supabase-url",
-    "VITE_SUPABASE_ANON_KEY": "@vite-supabase-anon-key",
-    "VITE_RASPBERRY_PI_URL": "@vite-raspberry-pi-url",
-    "VITE_BACKEND_URL": "@vite-backend-url"
-  }
+
 }
