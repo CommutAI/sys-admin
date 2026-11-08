@@ -12,7 +12,6 @@ import json
 import time
 import asyncio
 import uuid
-import websockets
 from typing import Optional
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -23,6 +22,8 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from hardware_integration import HardwareManager
+import socket
+import httpx
 
 # Optional AI imports - allow server to run without them
 try:
@@ -68,6 +69,83 @@ except ImportError:
 # Load environment variables from .env file
 load_dotenv()
 
+def discover_backend_ip():
+    """
+    Auto-discover Windows backend IP address on the local network
+    Returns the backend URL if found, None otherwise
+    """
+    # Check if BACKEND_URL is manually set in .env
+    manual_backend = os.getenv('BACKEND_URL')
+    if manual_backend and manual_backend != 'http://localhost:8000':
+        print(f"[Discovery] Using manually configured backend: {manual_backend}")
+        return manual_backend
+
+    print("[Discovery] Auto-discovering backend on local network...")
+
+    # Get local network interface
+    try:
+        # Get Pi's IP and network
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+
+        # Extract network (e.g., 192.168.1.35 -> 192.168.1)
+        network = '.'.join(local_ip.split('.')[:-1])
+        print(f"[Discovery] Local IP: {local_ip}, Network: {network}")
+
+        # Scan common IP range for port 8000
+        for i in range(1, 255):
+            target_ip = f"{network}.{i}"
+            if target_ip == local_ip:
+                continue
+
+            try:
+                # Quick port check for port 8000
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.1)
+                result = sock.connect_ex((target_ip, 8000))
+                sock.close()
+
+                if result == 0:
+                    # Verify it's actually our backend by checking health endpoint
+                    try:
+                        response = httpx.get(f"http://{target_ip}:8000/health", timeout=1.0)
+                        if response.status_code == 200:
+                            backend_url = f"http://{target_ip}:8000"
+                            print(f"[Discovery] Found backend at: {backend_url}")
+                            return backend_url
+                    except:
+                        continue
+
+            except:
+                continue
+
+        print("[Discovery] Backend not found on local network")
+        return None
+
+    except Exception as e:
+        print(f"[Discovery] Error during auto-discovery: {e}")
+        return None
+
+# Backend configuration - auto-discover or use manual setting
+_BACKEND_URL = discover_backend_ip() or os.getenv('BACKEND_URL', 'http://localhost:8000')
+print(f"[Backend] Using URL: {_BACKEND_URL}")
+
+def get_backend_url():
+    """Get current backend URL (allows for dynamic updates)"""
+    global _BACKEND_URL
+    return _BACKEND_URL
+
+def set_backend_url(url):
+    """Update backend URL dynamically"""
+    global _BACKEND_URL
+    _BACKEND_URL = url
+    print(f"[Backend] Updated URL to: {url}")
+
+# Use this as BACKEND_URL in the code
+BACKEND_URL = _BACKEND_URL
+
 # Roboflow configuration
 ROBOFLOW_API_KEY = os.getenv('ROBOFLOW_API_KEY', '')
 ROBOFLOW_MODEL = os.getenv('ROBOFLOW_MODEL', 'person-detection-model/1')
@@ -81,14 +159,18 @@ OPENCV_DNN_CONFIDENCE_THRESHOLD = float(os.getenv('OPENCV_DNN_CONFIDENCE_THRESHO
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
-    global backend_ws_client
-
     # Startup
-    enable_camera = os.getenv('ENABLE_CAMERA', 'true').lower() == 'true'
 
-    # Start backend WebSocket client
-    backend_ws_client = BackendWebSocketClient(BACKEND_URL)
-    asyncio.create_task(backend_ws_client.start())
+    # Validate required environment variables
+    required_vars = ['SUPABASE_URL', 'SUPABASE_KEY']
+    missing_vars = [v for v in required_vars if not os.getenv(v)]
+    if missing_vars:
+        print(f"⚠️  Warning: Missing environment variables: {', '.join(missing_vars)}")
+        print("   Database operations will be disabled")
+    else:
+        print("✓ Environment variables validated")
+
+    enable_camera = os.getenv('ENABLE_CAMERA', 'true').lower() == 'true'
 
     if enable_camera:
         print("Auto-starting camera on server startup...")
@@ -113,12 +195,67 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(periodic_register())
 
+    # Poll backend for active trips and automatically set trip_id
+    async def poll_active_trips():
+        """Poll backend every 10 seconds for active trips and set trip_id"""
+        import requests
+
+        while True:
+            try:
+                await asyncio.sleep(10)  # Check every 10 seconds
+
+                # Try to re-discover backend if using localhost
+                current_url = get_backend_url()
+                if current_url == 'http://localhost:8000':
+                    discovered_url = discover_backend_ip()
+                    if discovered_url:
+                        set_backend_url(discovered_url)
+                        current_url = discovered_url
+
+                # Get active trips from backend
+                trips_url = f"{current_url}/api/trips"
+                response = requests.get(trips_url, timeout=5)
+
+                if response.status_code == 200:
+                    trips_data = response.json()
+                    trips = trips_data.get('trips', [])
+
+                    # Find the first active trip
+                    active_trip = None
+                    for trip in trips:
+                        if trip.get('status') == 'in_progress':
+                            active_trip = trip
+                            break
+
+                    if active_trip:
+                        trip_id = active_trip['id']
+                        bus_id = active_trip.get('bus_id')
+                        # Only update if trip_id changed
+                        if video_processor.current_trip_id != trip_id:
+                            video_processor.set_current_trip(trip_id, bus_id)
+                            if hardware_manager:
+                                hardware_manager.set_current_trip(trip_id)
+                            print(f"[Trip Poll] Auto-set trip_id: {trip_id}")
+                    else:
+                        # No active trip - clear trip_id
+                        if video_processor.current_trip_id is not None:
+                            video_processor.clear_current_trip()
+                            if hardware_manager:
+                                hardware_manager.clear_current_trip()
+                            print(f"[Trip Poll] Cleared trip_id (no active trips)")
+
+            except requests.RequestException as e:
+                print(f"[Trip Poll] Failed to fetch trips from backend: {e}")
+            except Exception as e:
+                print(f"[Trip Poll] Error: {e}")
+
+    asyncio.create_task(poll_active_trips())
+    print("[Trip Poll] Started automatic trip ID polling (every 10s)")
+
     yield
 
     # Shutdown
     print("Cleaning up hardware resources...")
-    if backend_ws_client:
-        await backend_ws_client.stop()
     if enable_camera:
         video_processor.stop()
     if hardware_manager:
@@ -200,10 +337,6 @@ def register_device():
 resolve_assigned_bus()
 register_device()
 
-# Backend URL - use environment variable for now (can be automated later)
-BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
-print(f"[Backend] Using backend URL: {BACKEND_URL}")
-
 # Hardware Manager configuration
 HARDWARE_CONFIG = {
     'enable_sms': os.getenv('ENABLE_SMS', 'false').lower() == 'true',  # Disabled by default for testing
@@ -223,24 +356,9 @@ HARDWARE_CONFIG = {
 
 # Initialize Hardware Manager
 hardware_manager = None
-# Global backend WebSocket client
-backend_ws_client = None
-
 def gps_callback(location):
-    """Callback to send GPS data to backend via WebSocket"""
-    global backend_ws_client
-    if backend_ws_client:
-        gps_data = {
-            'latitude': location.latitude,
-            'longitude': location.longitude,
-            'altitude': location.altitude,
-            'speed': location.speed,
-            'accuracy': location.accuracy,
-            'source': location.source,
-            'timestamp': location.timestamp
-        }
-        # Queue the GPS data (thread-safe, can be called from any thread)
-        backend_ws_client.send_gps(gps_data, hardware_manager.current_trip_id)
+    """Callback when GPS location is updated"""
+    print(f"[GPS] Location update: {location.latitude:.6f}, {location.longitude:.6f}")
 
 try:
     hardware_manager = HardwareManager(HARDWARE_CONFIG, db_client=supabase)
@@ -282,19 +400,20 @@ else:
         CAMERA_DEVICE = _camera_id_env
 CAMERA_WIDTH = int(os.getenv('CAMERA_WIDTH', '640'))
 CAMERA_HEIGHT = int(os.getenv('CAMERA_HEIGHT', '480'))
-FPS = int(os.getenv('FPS', '10'))
+FPS = int(os.getenv('FPS', '30'))
 
 # Performance settings
 ENABLE_REALTIME_MODE = os.getenv('ENABLE_REALTIME_MODE', 'false').lower() == 'true'
-SKIP_DETECTION_FRAMES = int(os.getenv('SKIP_DETECTION_FRAMES', '2'))
+SKIP_DETECTION_FRAMES = int(os.getenv('SKIP_DETECTION_FRAMES', '9'))  # Process every 10th frame for 30fps
 FRAME_QUEUE_SIZE = int(os.getenv('FRAME_QUEUE_SIZE', '5'))
 DISABLE_DRAWING = os.getenv('DISABLE_DRAWING', 'false').lower() == 'true'
 DISABLE_DB_WRITES = os.getenv('DISABLE_DB_WRITES', 'false').lower() == 'true'
 SKIP_WEBSOCKET_THROTTLE = os.getenv('SKIP_WEBSOCKET_THROTTLE', 'false').lower() == 'true'
+DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '640'))  # ONNX model requires 640x640
 
 # AI Model configuration
 DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
-_count_method_default = 'mog2' if DISABLE_AI else 'yolo'
+_count_method_default = 'mog2' if DISABLE_AI else 'onnx'
 COUNT_METHOD = os.getenv('COUNT_METHOD', _count_method_default)
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.pt')
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))  # Keep at 0.25 for better detection
@@ -324,82 +443,6 @@ print(f"Ultra-low latency settings: ENABLE_REALTIME_MODE={ENABLE_REALTIME_MODE},
 print(f"Camera settings: {CAMERA_WIDTH}x{CAMERA_HEIGHT} @ {FPS}fps, JPEG_QUALITY={JPEG_QUALITY}")
 print(f"Performance optimizations: DISABLE_DRAWING={DISABLE_DRAWING}, DISABLE_DB_WRITES={DISABLE_DB_WRITES}, FRAME_QUEUE_SIZE={FRAME_QUEUE_SIZE}")
 
-class BackendWebSocketClient:
-    """WebSocket client to send GPS data to backend server"""
-    def __init__(self, backend_url: str):
-        self.backend_url = backend_url
-        self.websocket = None
-        self.connected = False
-        self.reconnect_delay = 5
-        self.running = False
-        import queue
-        self.gps_queue = queue.Queue()  # Thread-safe queue
-
-    async def connect(self):
-        """Connect to backend WebSocket"""
-        if not self.backend_url or self.backend_url == 'http://localhost:8000':
-            print("[Backend WS] Backend URL not configured, skipping WebSocket connection")
-            return False
-
-        ws_url = self.backend_url.replace('http://', 'ws://').replace('https://', 'wss://')
-        ws_url = f"{ws_url}/ws/video-feed"
-
-        while self.running:
-            try:
-                print(f"[Backend WS] Connecting to {ws_url}...")
-                self.websocket = await websockets.connect(ws_url)
-                self.connected = True
-                print("[Backend WS] Connected to backend")
-                return True
-            except Exception as e:
-                print(f"[Backend WS] Connection failed: {e}, retrying in {self.reconnect_delay}s...")
-                await asyncio.sleep(self.reconnect_delay)
-
-    def send_gps(self, gps_data: dict, trip_id: Optional[int] = None):
-        """Queue GPS data for sending (thread-safe, can be called from any thread)"""
-        self.gps_queue.put({'gps': gps_data, 'trip_id': trip_id})
-
-    async def process_queue(self):
-        """Process GPS queue and send to backend"""
-        while self.running:
-            try:
-                # Get from queue with timeout
-                try:
-                    data = self.gps_queue.get(timeout=0.1)
-                except queue.Empty:
-                    await asyncio.sleep(0.1)
-                    continue
-
-                if self.connected and self.websocket:
-                    try:
-                        message = {
-                            'type': 'gps_update',
-                            'gps': data['gps'],
-                            'trip_id': data['trip_id']
-                        }
-                        await self.websocket.send(json.dumps(message))
-                        print(f"[Backend WS] Sent GPS: {data['gps'].get('latitude', 0):.6f}, {data['gps'].get('longitude', 0):.6f}")
-                    except Exception as e:
-                        print(f"[Backend WS] Failed to send GPS: {e}")
-                        self.connected = False
-            except Exception as e:
-                print(f"[Backend WS] Queue processing error: {e}")
-
-    async def start(self):
-        """Start the WebSocket client"""
-        self.running = True
-        # Start connection task
-        asyncio.create_task(self.connect())
-        # Start queue processing task
-        asyncio.create_task(self.process_queue())
-
-    async def stop(self):
-        """Stop the WebSocket client"""
-        self.running = False
-        if self.websocket:
-            await self.websocket.close()
-        self.connected = False
-
 class VideoProcessor:
     def __init__(self):
         self.camera = None
@@ -412,6 +455,7 @@ class VideoProcessor:
         self.detection_history = []
         self.websocket_clients = set()
         self.current_trip_id = None
+        self.current_bus_id = None
         self.last_db_save = 0
         self.db_save_interval = 5  # Save to database every 5 seconds
         self.camera_reconnect_attempts = 0
@@ -756,17 +800,17 @@ class VideoProcessor:
         """ONNX Runtime-based YOLO detection for 90%+ accuracy on CPU."""
         try:
             import numpy as np
-            
-            # Preprocess frame for YOLO
+
+            # Preprocess frame for YOLO - model requires 640x640
             input_shape = (640, 640)
             original_shape = frame.shape[:2]
-            
+
             # Resize and pad
             img = cv2.resize(frame, input_shape)
             img = img.astype(np.float32) / 255.0
             img = np.transpose(img, (2, 0, 1))  # HWC to CHW
             img = np.expand_dims(img, axis=0)  # Add batch dimension
-            
+
             # Run inference
             outputs = self.onnx_session.run(
                 None,
@@ -1181,9 +1225,14 @@ class VideoProcessor:
           camera counts from manual ones.
         - Only writes when a trip is active (trip_id NOT NULL constraint).
         - The live WebSocket count is always sent regardless of trip state.
-        - Triggers anomaly detection after saving count.
+        - Triggers anomaly detection after saving count to compare with scanned passengers.
         """
-        if not supabase or not self.current_trip_id:
+        if not supabase:
+            print(f"[DB] Supabase not initialized - cannot save count")
+            return
+
+        if not self.current_trip_id:
+            print(f"[DB] No trip_id set - cannot save count (trip_id required for database)")
             return  # live count still streams via WebSocket — DB write needs a trip
 
         try:
@@ -1194,58 +1243,114 @@ class VideoProcessor:
 
             data = {
                 'trip_id': self.current_trip_id,
+                'bus_id': self.current_bus_id,
                 'count': count,
                 'ai_count': count,          # same value — ai_count is the camera estimate
-                'source': COUNT_METHOD,     # 'hog', 'mog2', or 'yolo'
                 'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(current_time))
             }
 
             result = supabase.table('passenger_counts').insert(data).execute()
             if result:
                 self.last_db_save = current_time
-                print(f"[DB] Saved count={count} source={COUNT_METHOD} trip={self.current_trip_id}")
-                
+                print(f"[DB] ✓ Saved count={count} trip={self.current_trip_id}")
+
                 # Trigger anomaly detection after saving count
+                # This compares AI camera count with scanned (boarded) passengers
                 self.trigger_anomaly_detection()
         except Exception as e:
-            print(f"Error saving passenger count to database: {e}")
+            print(f"[DB] ✗ Error saving passenger count to database: {e}")
     
     def trigger_anomaly_detection(self):
         """Trigger anomaly detection via backend API for the current trip.
-        This compares AI camera count with boarded passengers to identify fare evasion.
+        This compares AI camera count with boarded (scanned) passengers to identify fare evasion.
+        Runs every 5 seconds when passenger count is saved to database.
         """
         if not self.current_trip_id:
+            print(f"[Anomaly] No trip_id set - skipping anomaly detection")
             return
-        
+
         try:
             import requests
-            
+
             # Use the globally resolved backend URL
             detect_url = f"{BACKEND_URL}/api/anomaly-detection/detect"
-            
+
             # Call anomaly detection for this specific trip
             payload = {
                 'threshold': 2,
                 'check_all_active': False,
-                'trip_id': self.current_trip_id
+                'trip_id': self.current_trip_id,
+                'scenarios': ['count_mismatch', 'overcrowding', 'staff_absence', 'camera_malfunction', 
+                            'passenger_spike', 'trip_duration', 'route_deviation', 'boarding_rate']
             }
-            
+
             # Fire and forget - don't block video processing
             try:
                 response = requests.post(detect_url, json=payload, timeout=2)
                 if response.status_code == 200:
                     result = response.json()
-                    if result.get('irregularities_created', 0) > 0:
-                        print(f"[Anomaly] Created {result['irregularities_created']} irregularity(ies) for trip {self.current_trip_id}")
+                    total_anomalies = result.get('total_anomalies_detected', 0)
+                    total_irregularities = result.get('total_irregularities_created', 0)
+                    
+                    if total_anomalies > 0 or total_irregularities > 0:
+                        print(f"[Anomaly] Trip {self.current_trip_id}: {total_anomalies} anomaly(s) detected, {total_irregularities} irregularity(ies) created")
+                        
+                        # Show detailed anomaly information
+                        if result.get('results'):
+                            for trip_result in result['results']:
+                                print(f"  [Trip Summary] Bus: {trip_result.get('bus_plate')}, AI Count: {trip_result.get('ai_count')}, Boarded: {trip_result.get('boarded_count')}, Discrepancy: {trip_result.get('discrepancy')}")
+                                print(f"  [Severity Breakdown] Critical: {trip_result.get('critical_anomalies')}, High: {trip_result.get('high_anomalies')}, Medium: {trip_result.get('medium_anomalies')}, Low: {trip_result.get('low_anomalies')}")
+                                
+                                for anomaly in trip_result.get('anomalies', []):
+                                    if anomaly.get('detected'):
+                                        severity = anomaly.get('severity', 'unknown')
+                                        anomaly_type = anomaly.get('anomaly_type', 'unknown')
+                                        description = anomaly.get('description', '')
+                                        confidence = anomaly.get('confidence', 0.0)
+                                        print(f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                                        print(f"  [ANOMALY DETECTED] Type: {anomaly_type.upper()}")
+                                        print(f"  [Severity] {severity.upper()} (Confidence: {confidence:.0%})")
+                                        print(f"  [Description] {description}")
+                                        
+                                        # Show metrics if available
+                                        metrics = anomaly.get('metrics')
+                                        if metrics:
+                                            print(f"  [Metrics]")
+                                            print(f"    Current Value: {metrics.get('current_value')}")
+                                            print(f"    Threshold: {metrics.get('threshold_value')}")
+                                            print(f"    Above Threshold: {metrics.get('percentage_above_threshold', 0):.1f}%")
+                                            if metrics.get('historical_average'):
+                                                print(f"    Historical Avg: {metrics.get('historical_average'):.1f}")
+                                            if metrics.get('trend'):
+                                                print(f"    Trend: {metrics.get('trend')}")
+                                            if metrics.get('duration_minutes'):
+                                                print(f"    Duration: {metrics.get('duration_minutes'):.1f} min")
+                                            if metrics.get('affected_passengers'):
+                                                print(f"    Affected Passengers: {metrics.get('affected_passengers')}")
+                                        
+                                        # Show recommendation if available
+                                        recommendation = anomaly.get('recommendation')
+                                        if recommendation:
+                                            print(f"  [Recommendation]")
+                                            print(f"    Priority: {recommendation.get('priority')}")
+                                            print(f"    Action: {recommendation.get('action')}")
+                                            print(f"    Details: {recommendation.get('details')}")
+                                            print(f"    Impact: {recommendation.get('estimated_impact')}")
+                                        
+                                        # Show irregularity status
+                                        if anomaly.get('irregularity_created'):
+                                            print(f"  [Irregularity Created] ID: {anomaly.get('irregularity_id')}")
+                                        print(f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             except requests.RequestException as e:
                 print(f"[Anomaly] Failed to trigger detection: {e}")
         except Exception as e:
             print(f"[Anomaly] Error in detection trigger: {e}")
     
-    def set_current_trip(self, trip_id):
+    def set_current_trip(self, trip_id, bus_id=None):
         """Set the current trip ID for database recording"""
         self.current_trip_id = trip_id
-        print(f"Current trip ID set to: {trip_id}")
+        self.current_bus_id = bus_id
+        print(f"Current trip ID set to: {trip_id}, bus_id: {bus_id}")
     
     def clear_current_trip(self):
         """Clear the current trip ID"""

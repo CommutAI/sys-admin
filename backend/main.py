@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 import os
 import asyncio
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -26,7 +27,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 # Background task for anomaly detection
 async def anomaly_detection_scheduler():
-    """Run anomaly detection every 30 seconds"""
+    """Run anomaly detection every 10 seconds and store results in database"""
     while True:
         try:
             print("Running scheduled anomaly detection...")
@@ -34,25 +35,60 @@ async def anomaly_detection_scheduler():
             from routers.anomaly_detection import run_anomaly_detection
             result = await run_anomaly_detection()
             print(f"Anomaly detection completed: {result.anomalies_detected} anomalies detected, {result.irregularities_created} irregularities created")
+
+            # Store snapshot in database for historical comparison
+            from datetime import datetime
+            snapshot_data = {
+                'checked_at': datetime.now().isoformat(),
+                'total_trips_checked': result.total_trips_checked,
+                'anomalies_detected': result.anomalies_detected,
+                'irregularities_created': result.irregularities_created,
+                'results_summary': [
+                    {
+                        'trip_id': r.trip_id,
+                        'bus_plate': r.bus_plate,
+                        'ai_count': r.ai_count,
+                        'boarded_count': r.boarded_count,
+                        'discrepancy': r.discrepancy,
+                        'anomaly_detected': r.anomaly_detected
+                    }
+                    for r in result.results
+                ]
+            }
+
+            try:
+                supabase.table('anomaly_detection_snapshots').insert(snapshot_data).execute()
+                print("Anomaly detection snapshot stored in database")
+            except Exception as db_error:
+                print(f"Error storing anomaly detection snapshot: {db_error}")
+
         except Exception as e:
             print(f"Error in anomaly detection scheduler: {e}")
-        
-        # Wait 30 seconds before next run
-        await asyncio.sleep(30)
+
+        # Wait 10 seconds before next run
+        await asyncio.sleep(10)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
     # Startup
     print("Starting FastAPI backend service...")
+
+    # Validate required environment variables
+    required_vars = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']
+    missing_vars = [v for v in required_vars if not os.getenv(v)]
+    if missing_vars:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing_vars)}. Please set them in backend/.env")
+    print("✓ Environment variables validated")
+
     # Initialize video processor model
     print("Initializing video processor...")
     video_processor.initialize_model()
-    
+
     # Start anomaly detection scheduler as background task
     asyncio.create_task(anomaly_detection_scheduler())
-    print("Anomaly detection scheduler started (every 30s)")
-    
+    print("Anomaly detection scheduler started (every 10s)")
+
     yield
     # Shutdown
     print("Shutting down FastAPI backend service...")
