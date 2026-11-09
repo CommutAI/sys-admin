@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Lock, Mail, Bus, Eye, EyeOff } from 'lucide-react';
 import AuditService from '../services/auditService';
+import bcrypt from 'bcryptjs';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -54,8 +55,14 @@ const Login = () => {
         return;
       }
 
-      // Verify password
-      if (staffUser.password !== password) {
+      // Verify password — support both bcrypt hashes and plain text passwords
+      const storedPassword = staffUser.password;
+      const isBcrypt = storedPassword && storedPassword.startsWith('$2');
+      const passwordMatch = isBcrypt
+        ? await bcrypt.compare(password, storedPassword)
+        : storedPassword === password;
+
+      if (!passwordMatch) {
         console.error('Password mismatch');
         setError('Invalid email or password');
         setLoading(false);

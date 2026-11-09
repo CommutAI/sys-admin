@@ -65,6 +65,14 @@ const Reports = () => {
     'plate_number', 'route', 'conductor', 'status', 'started_at'
   ]);
 
+  // Report preview state
+  const [previewData, setPreviewData] = useState([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewCurrentPage, setPreviewCurrentPage] = useState(1);
+  const [previewItemsPerPage] = useState(10);
+  const [previewSearchTerm, setPreviewSearchTerm] = useState('');
+  const [previewStatusFilter, setPreviewStatusFilter] = useState('all');
+
   // Export column selection
   const [showExportColumns, setShowExportColumns] = useState(false);
   const [selectedExportColumns, setSelectedExportColumns] = useState([]);
@@ -196,7 +204,7 @@ const Reports = () => {
     try {
       const { data } = await supabase
         .from('trips')
-        .select('*, buses(*), conductor_staff:staff_users(*)')
+        .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*)')
         .order('started_at', { ascending: false })
         .limit(5);
 
@@ -206,11 +214,99 @@ const Reports = () => {
     }
   };
 
+  const fetchPreviewData = async (type, range) => {
+    try {
+      setPreviewLoading(true);
+      setPreviewData([]);
+      setPreviewCurrentPage(1);
+
+      const start = range?.start
+        ? new Date(range.start).toISOString()
+        : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const end = range?.end
+        ? new Date(range.end + 'T23:59:59').toISOString()
+        : new Date().toISOString();
+
+      let data = [];
+
+      switch (type) {
+        case 'trips': {
+          const { data: rows, error } = await supabase
+            .from('trips')
+            .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*)')
+            .gte('started_at', start)
+            .lte('started_at', end)
+            .order('started_at', { ascending: false });
+          if (error) throw error;
+          data = rows || [];
+          break;
+        }
+        case 'passengers': {
+          const { data: rows, error } = await supabase
+            .from('passenger_counts')
+            .select('*, trips(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .gte('recorded_at', start)
+            .lte('recorded_at', end)
+            .order('recorded_at', { ascending: false });
+          if (error) throw error;
+          data = rows || [];
+          break;
+        }
+        case 'revenue': {
+          const { data: rows, error } = await supabase
+            .from('transactions')
+            .select('*, staff:staff_users!transactions_staff_id_fkey(*)')
+            .gte('created_at', start)
+            .lte('created_at', end)
+            .order('created_at', { ascending: false });
+          if (error) throw error;
+          data = rows || [];
+          break;
+        }
+        case 'buses': {
+          const { data: rows, error } = await supabase
+            .from('buses')
+            .select('*')
+            .order('created_at', { ascending: false });
+          if (error) throw error;
+          data = rows || [];
+          break;
+        }
+        case 'irregularities': {
+          const { data: rows, error } = await supabase
+            .from('fare_irregularities')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .gte('detected_at', start)
+            .lte('detected_at', end)
+            .order('detected_at', { ascending: false });
+          if (error) throw error;
+          data = rows || [];
+          break;
+        }
+        default:
+          break;
+      }
+
+      setPreviewData(data);
+    } catch (error) {
+      console.error('Error fetching preview data:', error);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  // Refresh preview when report type or date range changes (only while on reports tab)
+  useEffect(() => {
+    setPreviewSearchTerm('');
+    setPreviewStatusFilter('all');
+    fetchPreviewData(reportType, dateRange);
+  }, [reportType, dateRange.start, dateRange.end]);
+
   const fetchTransactions = async () => {
     try {
       const { data, error } = await supabase
         .from('transactions')
-        .select('*, staff:staff_users(*)')
+        .select('*, staff:staff_users!transactions_staff_id_fkey(*)')
         .order('created_at', { ascending: false });
       if (error) throw error;
       setTransactions(data || []);
@@ -308,13 +404,13 @@ const Reports = () => {
   const filteredRecentActivity = useMemo(() => {
     return recentActivity.filter(trip => {
       const matchesStatus = tripsFilterStatus === 'all' || trip.status === tripsFilterStatus;
-      const matchesRoute = !tripsFilterRoute || trip.buses?.route?.toLowerCase().includes(tripsFilterRoute.toLowerCase());
+      const matchesRoute = !tripsFilterRoute || trip.bus_id?.route?.toLowerCase().includes(tripsFilterRoute.toLowerCase());
       return matchesStatus && matchesRoute;
     }).sort((a, b) => {
       let aValue, bValue;
       if (tripsSort.field === 'buses') {
-        aValue = a.buses?.plate_number || '';
-        bValue = b.buses?.plate_number || '';
+        aValue = a.bus_id?.plate_number || '';
+        bValue = b.bus_id?.plate_number || '';
       } else if (tripsSort.field === 'conductor_staff') {
         aValue = a.conductor_staff?.full_name || '';
         bValue = b.conductor_staff?.full_name || '';
@@ -359,7 +455,7 @@ const Reports = () => {
         case 'trips':
           const { data: trips } = await supabase
             .from('trips')
-            .select('*, buses(*), conductor_staff:staff_users(*)')
+            .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*)')
             .gte('started_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('started_at', dateRange.end || new Date().toISOString())
             .order('started_at', { ascending: false });
@@ -367,8 +463,8 @@ const Reports = () => {
           data = (trips || []).map(trip => {
             const row = {};
             if (selectedExportColumns.includes('id')) row['Trip ID'] = trip.id;
-            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = trip.buses?.plate_number;
-            if (selectedExportColumns.includes('route')) row['Route'] = trip.buses?.route;
+            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = trip.bus_id?.plate_number;
+            if (selectedExportColumns.includes('route')) row['Route'] = trip.bus_id?.route;
             if (selectedExportColumns.includes('conductor')) row['Conductor'] = trip.conductor_staff?.full_name;
             if (selectedExportColumns.includes('started_at')) row['Start Time'] = new Date(trip.started_at).toLocaleString();
             if (selectedExportColumns.includes('ended_at')) row['End Time'] = trip.ended_at ? new Date(trip.ended_at).toLocaleString() : 'N/A';
@@ -391,7 +487,7 @@ const Reports = () => {
         case 'passengers':
           const { data: passengerCounts } = await supabase
             .from('passenger_counts')
-            .select('*, trips(*, buses(*))')
+            .select('*, trips(*, bus_id:buses!trips_bus_id_fkey(*))')
             .gte('recorded_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('recorded_at', dateRange.end || new Date().toISOString())
             .order('recorded_at', { ascending: false });
@@ -400,8 +496,8 @@ const Reports = () => {
             const row = {};
             if (selectedExportColumns.includes('id')) row['Count ID'] = pc.id;
             if (selectedExportColumns.includes('trip_id')) row['Trip ID'] = pc.trip_id;
-            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = pc.trips?.buses?.plate_number;
-            if (selectedExportColumns.includes('route')) row['Route'] = pc.trips?.buses?.route;
+            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = pc.trips?.bus_id?.plate_number;
+            if (selectedExportColumns.includes('route')) row['Route'] = pc.trips?.bus_id?.route;
             if (selectedExportColumns.includes('count')) row['Count'] = pc.count;
             if (selectedExportColumns.includes('ai_count')) row['AI Count'] = pc.ai_count || 'N/A';
             if (selectedExportColumns.includes('source')) row['Source'] = pc.source;
@@ -414,7 +510,7 @@ const Reports = () => {
         case 'revenue':
           const { data: transactions } = await supabase
             .from('transactions')
-            .select('*, trips(*, buses(*)), staff:staff_users(*)')
+            .select('*, trips(*, bus_id:buses!trips_bus_id_fkey(*)), staff:staff_users!transactions_staff_id_fkey(*)')
             .gte('created_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('created_at', dateRange.end || new Date().toISOString())
             .order('created_at', { ascending: false });
@@ -427,8 +523,8 @@ const Reports = () => {
             if (selectedExportColumns.includes('fare')) row['Fare'] = tx.fare || 0;
             if (selectedExportColumns.includes('baggage')) row['Baggage'] = tx.baggage || 0;
             if (selectedExportColumns.includes('channel')) row['Channel'] = tx.channel;
-            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = tx.trips?.buses?.plate_number;
-            if (selectedExportColumns.includes('route')) row['Route'] = tx.trips?.buses?.route;
+            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = tx.trips?.bus_id?.plate_number;
+            if (selectedExportColumns.includes('route')) row['Route'] = tx.trips?.bus_id?.route;
             if (selectedExportColumns.includes('staff')) row['Staff'] = tx.staff?.full_name || 'N/A';
             if (selectedExportColumns.includes('created_at')) row['Created At'] = new Date(tx.created_at).toLocaleString();
             return row;
@@ -458,7 +554,7 @@ const Reports = () => {
         case 'irregularities':
           const { data: irregularities } = await supabase
             .from('fare_irregularities')
-            .select('*, trips(*, buses(*))')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
             .gte('detected_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('detected_at', dateRange.end || new Date().toISOString())
             .order('detected_at', { ascending: false });
@@ -468,8 +564,8 @@ const Reports = () => {
             if (selectedExportColumns.includes('id')) row['Irregularity ID'] = irr.id;
             if (selectedExportColumns.includes('type')) row['Type'] = irr.type;
             if (selectedExportColumns.includes('description')) row['Description'] = irr.description;
-            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = irr.trips?.buses?.plate_number;
-            if (selectedExportColumns.includes('route')) row['Route'] = irr.trips?.buses?.route;
+            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = irr.trips?.bus_id?.plate_number;
+            if (selectedExportColumns.includes('route')) row['Route'] = irr.trips?.bus_id?.route;
             if (selectedExportColumns.includes('detected_at')) row['Detected At'] = new Date(irr.detected_at).toLocaleString();
             if (selectedExportColumns.includes('resolved')) row['Resolved'] = irr.resolved ? 'Yes' : 'No';
             if (selectedExportColumns.includes('resolved_at')) row['Resolved At'] = irr.resolved_at ? new Date(irr.resolved_at).toLocaleString() : 'N/A';
@@ -506,7 +602,7 @@ const Reports = () => {
         case 'trips':
           const { data: trips } = await supabase
             .from('trips')
-            .select('*, buses(*), conductor_staff:staff_users(*)')
+            .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*)')
             .gte('started_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('started_at', dateRange.end || new Date().toISOString())
             .order('started_at', { ascending: false });
@@ -519,8 +615,8 @@ const Reports = () => {
           data = (trips || []).map(trip => {
             const row = [];
             if (selectedExportColumns.includes('id')) row.push(trip.id);
-            if (selectedExportColumns.includes('plate_number')) row.push(trip.buses?.plate_number || 'N/A');
-            if (selectedExportColumns.includes('route')) row.push(trip.buses?.route || 'N/A');
+            if (selectedExportColumns.includes('plate_number')) row.push(trip.bus_id?.plate_number || 'N/A');
+            if (selectedExportColumns.includes('route')) row.push(trip.bus_id?.route || 'N/A');
             if (selectedExportColumns.includes('conductor')) row.push(trip.conductor_staff?.full_name || 'N/A');
             if (selectedExportColumns.includes('started_at')) row.push(new Date(trip.started_at).toLocaleString());
             if (selectedExportColumns.includes('ended_at')) row.push(trip.ended_at ? new Date(trip.ended_at).toLocaleString() : 'N/A');
@@ -543,7 +639,7 @@ const Reports = () => {
         case 'passengers':
           const { data: passengerCounts } = await supabase
             .from('passenger_counts')
-            .select('*, trips(*, buses(*))')
+            .select('*, trips(*, bus_id:buses!trips_bus_id_fkey(*))')
             .gte('recorded_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('recorded_at', dateRange.end || new Date().toISOString())
             .order('recorded_at', { ascending: false });
@@ -557,8 +653,8 @@ const Reports = () => {
             const row = [];
             if (selectedExportColumns.includes('id')) row.push(pc.id);
             if (selectedExportColumns.includes('trip_id')) row.push(pc.trip_id);
-            if (selectedExportColumns.includes('plate_number')) row.push(pc.trips?.buses?.plate_number || 'N/A');
-            if (selectedExportColumns.includes('route')) row.push(pc.trips?.buses?.route || 'N/A');
+            if (selectedExportColumns.includes('plate_number')) row.push(pc.trips?.bus_id?.plate_number || 'N/A');
+            if (selectedExportColumns.includes('route')) row.push(pc.trips?.bus_id?.route || 'N/A');
             if (selectedExportColumns.includes('count')) row.push(pc.count);
             if (selectedExportColumns.includes('ai_count')) row.push(pc.ai_count || 'N/A');
             if (selectedExportColumns.includes('source')) row.push(pc.source);
@@ -571,7 +667,7 @@ const Reports = () => {
         case 'revenue':
           const { data: transactions } = await supabase
             .from('transactions')
-            .select('*, trips(*, buses(*)), staff:staff_users(*)')
+            .select('*, trips(*, bus_id:buses!trips_bus_id_fkey(*)), staff:staff_users!transactions_staff_id_fkey(*)')
             .gte('created_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('created_at', dateRange.end || new Date().toISOString())
             .order('created_at', { ascending: false });
@@ -589,8 +685,8 @@ const Reports = () => {
             if (selectedExportColumns.includes('fare')) row.push('₱' + parseFloat(tx.fare || 0).toFixed(2));
             if (selectedExportColumns.includes('baggage')) row.push('₱' + parseFloat(tx.baggage || 0).toFixed(2));
             if (selectedExportColumns.includes('channel')) row.push(tx.channel);
-            if (selectedExportColumns.includes('plate_number')) row.push(tx.trips?.buses?.plate_number || 'N/A');
-            if (selectedExportColumns.includes('route')) row.push(tx.trips?.buses?.route || 'N/A');
+            if (selectedExportColumns.includes('plate_number')) row.push(tx.trips?.bus_id?.plate_number || 'N/A');
+            if (selectedExportColumns.includes('route')) row.push(tx.trips?.bus_id?.route || 'N/A');
             if (selectedExportColumns.includes('staff')) row.push(tx.staff?.full_name || 'N/A');
             if (selectedExportColumns.includes('created_at')) row.push(new Date(tx.created_at).toLocaleString());
             return row;
@@ -625,7 +721,7 @@ const Reports = () => {
         case 'irregularities':
           const { data: irregularities } = await supabase
             .from('fare_irregularities')
-            .select('*, trips(*, buses(*))')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
             .gte('detected_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('detected_at', dateRange.end || new Date().toISOString())
             .order('detected_at', { ascending: false });
@@ -640,8 +736,8 @@ const Reports = () => {
             if (selectedExportColumns.includes('id')) row.push(irr.id);
             if (selectedExportColumns.includes('type')) row.push(irr.type);
             if (selectedExportColumns.includes('description')) row.push(irr.description);
-            if (selectedExportColumns.includes('plate_number')) row.push(irr.trips?.buses?.plate_number || 'N/A');
-            if (selectedExportColumns.includes('route')) row.push(irr.trips?.buses?.route || 'N/A');
+            if (selectedExportColumns.includes('plate_number')) row.push(irr.trips?.bus_id?.plate_number || 'N/A');
+            if (selectedExportColumns.includes('route')) row.push(irr.trips?.bus_id?.route || 'N/A');
             if (selectedExportColumns.includes('detected_at')) row.push(new Date(irr.detected_at).toLocaleString());
             if (selectedExportColumns.includes('resolved')) row.push(irr.resolved ? 'Yes' : 'No');
             if (selectedExportColumns.includes('resolved_at')) row.push(irr.resolved_at ? new Date(irr.resolved_at).toLocaleString() : 'N/A');
@@ -901,10 +997,10 @@ const Reports = () => {
                 {filteredRecentActivity.slice(0, 10).map((trip) => (
                   <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
                     {visibleTripsColumns.includes('plate_number') && (
-                      <td className="py-4 text-white">{trip.buses?.plate_number || 'N/A'}</td>
+                      <td className="py-4 text-white">{trip.bus_id?.plate_number || 'N/A'}</td>
                     )}
                     {visibleTripsColumns.includes('route') && (
-                      <td className="py-4 text-white/70">{trip.buses?.route || 'N/A'}</td>
+                      <td className="py-4 text-white/70">{trip.bus_id?.route || 'N/A'}</td>
                     )}
                     {visibleTripsColumns.includes('conductor') && (
                       <td className="py-4 text-white/70">{trip.conductor_staff?.full_name || 'N/A'}</td>
@@ -1425,6 +1521,337 @@ const Reports = () => {
                 <strong className="text-white">Columns Available:</strong> {availableColumns[reportType]?.length || 0}
               </p>
             </div>
+          </div>
+
+          {/* Preview Table */}
+          <div className="glass-card p-6 mt-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-white text-lg font-bold flex items-center gap-2">
+                <FileText className="text-orange-400" size={20} />
+                {reportTypes.find(t => t.id === reportType)?.label} — Preview
+                {!previewLoading && (
+                  <span className="text-white/40 text-sm font-normal ml-1">({previewData.length} records)</span>
+                )}
+              </h3>
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40" size={16} />
+                  <input
+                    type="text"
+                    placeholder="Search..."
+                    value={previewSearchTerm}
+                    onChange={(e) => { setPreviewSearchTerm(e.target.value); setPreviewCurrentPage(1); }}
+                    className="bg-white/10 border border-white/20 rounded-xl pl-9 pr-4 py-2 text-white text-sm placeholder-white/40 focus:outline-none focus:border-orange-500 w-48"
+                  />
+                </div>
+                {(reportType === 'irregularities' || reportType === 'trips' || reportType === 'revenue') && (
+                  <select
+                    value={previewStatusFilter}
+                    onChange={(e) => { setPreviewStatusFilter(e.target.value); setPreviewCurrentPage(1); }}
+                    className="bg-gray-800 border border-white/20 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="all">All</option>
+                    {reportType === 'irregularities' && (
+                      <>
+                        <option value="unresolved">Unresolved</option>
+                        <option value="resolved">Resolved</option>
+                      </>
+                    )}
+                    {reportType === 'trips' && (
+                      <>
+                        <option value="in_progress">In Progress</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                      </>
+                    )}
+                    {reportType === 'revenue' && (
+                      <>
+                        <option value="completed">Completed</option>
+                        <option value="pending">Pending</option>
+                        <option value="failed">Failed</option>
+                      </>
+                    )}
+                  </select>
+                )}
+              </div>
+            </div>
+
+            {previewLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <div className="w-6 h-6 border-2 border-orange-500/30 border-t-orange-500 rounded-full animate-spin mr-3" />
+                <span className="text-white/60">Loading data...</span>
+              </div>
+            ) : (() => {
+              // Filter preview data based on search + status
+              const filtered = previewData.filter(row => {
+                let matchesSearch = true;
+                let matchesStatus = true;
+
+                if (previewSearchTerm) {
+                  const q = previewSearchTerm.toLowerCase();
+                  if (reportType === 'irregularities') {
+                    matchesSearch = row.type?.toLowerCase().includes(q) ||
+                      row.description?.toLowerCase().includes(q) ||
+                      row.trips?.bus_id?.plate_number?.toLowerCase().includes(q) ||
+                      row.trips?.bus_id?.route?.toLowerCase().includes(q);
+                  } else if (reportType === 'trips') {
+                    matchesSearch = row.bus_id?.plate_number?.toLowerCase().includes(q) ||
+                      row.bus_id?.route?.toLowerCase().includes(q) ||
+                      row.conductor_staff?.full_name?.toLowerCase().includes(q);
+                  } else if (reportType === 'revenue') {
+                    matchesSearch = row.type?.toLowerCase().includes(q) ||
+                      row.channel?.toLowerCase().includes(q) ||
+                      row.staff?.full_name?.toLowerCase().includes(q);
+                  } else if (reportType === 'passengers') {
+                    matchesSearch = row.trips?.bus_id?.plate_number?.toLowerCase().includes(q) ||
+                      row.trips?.bus_id?.route?.toLowerCase().includes(q) ||
+                      row.source?.toLowerCase().includes(q);
+                  } else if (reportType === 'buses') {
+                    matchesSearch = row.plate_number?.toLowerCase().includes(q) ||
+                      row.route?.toLowerCase().includes(q) ||
+                      row.status?.toLowerCase().includes(q);
+                  }
+                }
+
+                if (previewStatusFilter !== 'all') {
+                  if (reportType === 'irregularities') {
+                    matchesStatus = previewStatusFilter === 'resolved' ? row.resolved : !row.resolved;
+                  } else {
+                    matchesStatus = row.status === previewStatusFilter;
+                  }
+                }
+
+                return matchesSearch && matchesStatus;
+              });
+
+              const totalPages = Math.ceil(filtered.length / previewItemsPerPage);
+              const paginated = filtered.slice(
+                (previewCurrentPage - 1) * previewItemsPerPage,
+                previewCurrentPage * previewItemsPerPage
+              );
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="text-center py-16 text-white/40">
+                    <FileText size={40} className="mx-auto mb-3 opacity-30" />
+                    <p>No records found</p>
+                  </div>
+                );
+              }
+
+              return (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-white/10 text-left text-white/50">
+                          {reportType === 'irregularities' && (
+                            <>
+                              <th className="pb-3 px-2 font-medium">Type</th>
+                              <th className="pb-3 px-2 font-medium">Description</th>
+                              <th className="pb-3 px-2 font-medium">Bus Plate</th>
+                              <th className="pb-3 px-2 font-medium">Route</th>
+                              <th className="pb-3 px-2 font-medium">Detected At</th>
+                              <th className="pb-3 px-2 font-medium">Resolved</th>
+                              <th className="pb-3 px-2 font-medium">Resolved At</th>
+                              <th className="pb-3 px-2 font-medium">Status</th>
+                            </>
+                          )}
+                          {reportType === 'trips' && (
+                            <>
+                              <th className="pb-3 px-2 font-medium">Bus</th>
+                              <th className="pb-3 px-2 font-medium">Route</th>
+                              <th className="pb-3 px-2 font-medium">Conductor</th>
+                              <th className="pb-3 px-2 font-medium">Started At</th>
+                              <th className="pb-3 px-2 font-medium">Ended At</th>
+                              <th className="pb-3 px-2 font-medium">Status</th>
+                            </>
+                          )}
+                          {reportType === 'passengers' && (
+                            <>
+                              <th className="pb-3 px-2 font-medium">Bus</th>
+                              <th className="pb-3 px-2 font-medium">Route</th>
+                              <th className="pb-3 px-2 font-medium">Count</th>
+                              <th className="pb-3 px-2 font-medium">AI Count</th>
+                              <th className="pb-3 px-2 font-medium">Source</th>
+                              <th className="pb-3 px-2 font-medium">Recorded At</th>
+                            </>
+                          )}
+                          {reportType === 'revenue' && (
+                            <>
+                              <th className="pb-3 px-2 font-medium">Type</th>
+                              <th className="pb-3 px-2 font-medium">Fare</th>
+                              <th className="pb-3 px-2 font-medium">Baggage</th>
+                              <th className="pb-3 px-2 font-medium">Amount</th>
+                              <th className="pb-3 px-2 font-medium">Channel</th>
+                              <th className="pb-3 px-2 font-medium">Staff</th>
+                              <th className="pb-3 px-2 font-medium">Date</th>
+                              <th className="pb-3 px-2 font-medium">Status</th>
+                            </>
+                          )}
+                          {reportType === 'buses' && (
+                            <>
+                              <th className="pb-3 px-2 font-medium">Bus #</th>
+                              <th className="pb-3 px-2 font-medium">Plate</th>
+                              <th className="pb-3 px-2 font-medium">Route</th>
+                              <th className="pb-3 px-2 font-medium">Capacity</th>
+                              <th className="pb-3 px-2 font-medium">Type</th>
+                              <th className="pb-3 px-2 font-medium">Status</th>
+                              <th className="pb-3 px-2 font-medium">Created At</th>
+                            </>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginated.map((row) => (
+                          <tr key={row.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                            {reportType === 'irregularities' && (
+                              <>
+                                <td className="py-3 px-2 text-white font-medium">{row.type?.replace(/_/g, ' ') || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70 max-w-xs truncate" title={row.description}>{row.description || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.plate_number || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.route || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/60">{row.detected_at ? new Date(row.detected_at).toLocaleString() : 'N/A'}</td>
+                                <td className="py-3 px-2">
+                                  {row.resolved
+                                    ? <CheckCircle size={16} className="text-green-400" />
+                                    : <AlertCircle size={16} className="text-yellow-400" />
+                                  }
+                                </td>
+                                <td className="py-3 px-2 text-white/60">{row.resolved_at ? new Date(row.resolved_at).toLocaleString() : '—'}</td>
+                                <td className="py-3 px-2">
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${row.resolved ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'}`}>
+                                    {row.resolved ? 'Resolved' : 'Unresolved'}
+                                  </span>
+                                </td>
+                              </>
+                            )}
+                            {reportType === 'trips' && (
+                              <>
+                                <td className="py-3 px-2 text-white font-medium">{row.bus_id?.plate_number || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.bus_id?.route || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.conductor_staff?.full_name || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/60">{row.started_at ? new Date(row.started_at).toLocaleString() : 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/60">{row.ended_at ? new Date(row.ended_at).toLocaleString() : '—'}</td>
+                                <td className="py-3 px-2">
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${
+                                    row.status === 'completed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                                    row.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                                    'bg-red-500/20 text-red-400 border-red-500/30'
+                                  }`}>
+                                    {row.status?.replace('_', ' ')}
+                                  </span>
+                                </td>
+                              </>
+                            )}
+                            {reportType === 'passengers' && (
+                              <>
+                                <td className="py-3 px-2 text-white font-medium">{row.trips?.bus_id?.plate_number || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.route || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white">{row.count ?? 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.ai_count ?? '—'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.source || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/60">{row.recorded_at ? new Date(row.recorded_at).toLocaleString() : 'N/A'}</td>
+                              </>
+                            )}
+                            {reportType === 'revenue' && (
+                              <>
+                                <td className="py-3 px-2">
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${transactionTypeColors[row.type] || 'bg-white/10 text-white/60 border-white/20'}`}>
+                                    {row.type?.replace(/_/g, ' ') || 'N/A'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-2 text-white font-medium">₱{parseFloat(row.fare || 0).toFixed(2)}</td>
+                                <td className="py-3 px-2 text-white/70">₱{parseFloat(row.baggage || 0).toFixed(2)}</td>
+                                <td className="py-3 px-2 text-white font-medium">₱{parseFloat(row.amount || 0).toFixed(2)}</td>
+                                <td className="py-3 px-2 text-white/70 capitalize">{row.channel || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.staff?.full_name || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/60">{row.created_at ? new Date(row.created_at).toLocaleString() : 'N/A'}</td>
+                                <td className="py-3 px-2">
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${
+                                    row.status === 'completed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                                    row.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
+                                    'bg-red-500/20 text-red-400 border-red-500/30'
+                                  }`}>
+                                    {row.status || 'N/A'}
+                                  </span>
+                                </td>
+                              </>
+                            )}
+                            {reportType === 'buses' && (
+                              <>
+                                <td className="py-3 px-2 text-white font-medium">#{row.bus_number || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white">{row.plate_number}</td>
+                                <td className="py-3 px-2 text-white/70">{row.route || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.seat_capacity}</td>
+                                <td className="py-3 px-2 text-white/70 capitalize">{row.bus_type || 'standard'}</td>
+                                <td className="py-3 px-2">
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${
+                                    row.status === 'active' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                                    row.status === 'maintenance' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
+                                    'bg-red-500/20 text-red-400 border-red-500/30'
+                                  }`}>
+                                    {row.status}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-2 text-white/60">{row.created_at ? new Date(row.created_at).toLocaleString() : 'N/A'}</td>
+                              </>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Pagination */}
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
+                      <p className="text-white/50 text-sm">
+                        Showing {((previewCurrentPage - 1) * previewItemsPerPage) + 1}–{Math.min(previewCurrentPage * previewItemsPerPage, filtered.length)} of {filtered.length}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setPreviewCurrentPage(p => Math.max(p - 1, 1))}
+                          disabled={previewCurrentPage === 1}
+                          className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+                        <div className="flex gap-1">
+                          {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                            let p;
+                            if (totalPages <= 5) p = i + 1;
+                            else if (previewCurrentPage <= 3) p = i + 1;
+                            else if (previewCurrentPage >= totalPages - 2) p = totalPages - 4 + i;
+                            else p = previewCurrentPage - 2 + i;
+                            return (
+                              <button
+                                key={p}
+                                onClick={() => setPreviewCurrentPage(p)}
+                                className={`w-8 h-8 rounded-lg text-sm transition-colors ${
+                                  previewCurrentPage === p
+                                    ? 'bg-orange-500 text-white'
+                                    : 'bg-white/10 hover:bg-white/20 text-white/70'
+                                }`}
+                              >
+                                {p}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <button
+                          onClick={() => setPreviewCurrentPage(p => Math.min(p + 1, totalPages))}
+                          disabled={previewCurrentPage === totalPages}
+                          className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <ChevronRight size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </>
       )}
