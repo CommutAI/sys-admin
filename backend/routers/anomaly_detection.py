@@ -744,12 +744,12 @@ async def detect_anomalies(
         # Get trips to check
         if trip_id:
             trip_result = supabase.table('trips').select(
-                'id, bus_id, conductor_id, driver_id, status, started_at, expected_duration_minutes, buses(plate_number, capacity)'
+                'id, bus_id, conductor_id, driver_id, status, started_at, expected_duration_minutes, buses!trips_bus_id_fkey(plate_number, capacity)'
             ).eq('id', trip_id).execute()
             trips = trip_result.data if trip_result.data else []
         elif check_all_active:
             trip_result = supabase.table('trips').select(
-                'id, bus_id, conductor_id, driver_id, status, started_at, expected_duration_minutes, buses(plate_number, capacity)'
+                'id, bus_id, conductor_id, driver_id, status, started_at, expected_duration_minutes, buses!trips_bus_id_fkey(plate_number, capacity)'
             ).eq('status', 'in_progress').execute()
             trips = trip_result.data if trip_result.data else []
         else:
@@ -922,7 +922,7 @@ async def get_anomaly_status(trip_id: str):
     """Get current anomaly status for a specific trip with all anomaly types"""
     try:
         trip_result = supabase.table('trips').select(
-            'id, bus_id, conductor_id, driver_id, status, started_at, expected_duration_minutes, buses(plate_number, capacity)'
+            'id, bus_id, conductor_id, driver_id, status, started_at, expected_duration_minutes, buses!trips_bus_id_fkey(plate_number, capacity)'
         ).eq('id', trip_id).execute()
         
         if not trip_result.data:
@@ -1200,7 +1200,7 @@ async def get_irregularity_details(irregularity_id: str):
         
         # Get trip details
         trip_id = irregularity.get('trip_id')
-        trip_result = supabase.table('trips').select('id, buses(plate_number), started_at').eq('id', trip_id).execute()
+        trip_result = supabase.table('trips').select('id, buses!trips_bus_id_fkey(plate_number), started_at').eq('id', trip_id).execute()
         
         return {
             "irregularity": irregularity,

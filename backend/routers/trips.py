@@ -82,7 +82,7 @@ async def get_trip(
     Get a specific trip by ID. All authenticated users can read trip data.
     """
     try:
-        response = supabase.table('trips').select('*, buses(*), conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*)').eq('id', trip_id).single().execute()
+        response = supabase.table('trips').select('*, buses!trips_bus_id_fkey(*), conductor:staff_users!trips_conductor_id_fkey(*), driver:staff_users!trips_driver_id_fkey(*)').eq('id', trip_id).single().execute()
         if not response.data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

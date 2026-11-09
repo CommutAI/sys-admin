@@ -23,7 +23,7 @@ const CustomerService = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('customer_service_logs')
-        .select('*, trips(*, buses(*)), handler:staff_users!handled_by(*)')
+        .select('*, trips(*, bus_id:buses!trips_bus_id_fkey(*)), handler:staff_users!customer_service_logs_handled_by_fkey(*)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -62,7 +62,7 @@ const CustomerService = () => {
   const filteredLogs = logs.filter(log => {
     const matchesSearch = log.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          log.handler?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         log.trips?.buses?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase());
+                         log.trips?.bus_id?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesAction = filterAction === 'all' || log.action === filterAction;
     return matchesSearch && matchesAction;
   });
@@ -213,7 +213,7 @@ const CustomerService = () => {
                     </td>
                     <td className="py-4 text-white/70">{log.description || '-'}</td>
                     <td className="py-4 text-white/60 text-sm">
-                      {log.trips?.buses?.plate_number || 'N/A'}
+                      {log.trips?.bus_id?.plate_number || 'N/A'}
                     </td>
                     <td className="py-4 text-white/70">
                       <div className="flex items-center gap-2">

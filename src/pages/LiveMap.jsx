@@ -67,7 +67,7 @@ const LiveMap = () => {
       // Fetch active trips with bus information
       const { data: activeTrips } = await supabase
         .from('trips')
-        .select('*, buses(*)')
+        .select('*, bus:buses!trips_bus_id_fkey(*)')
         .eq('status', 'in_progress')
         .order('started_at', { ascending: false });
 
@@ -112,8 +112,8 @@ const LiveMap = () => {
 
           return {
             id: trip.id,
-            plate: trip.buses?.plate_number || 'Unknown',
-            route: trip.buses?.route || 'Unknown',
+            plate: trip.bus?.plate_number || 'Unknown',
+            route: trip.bus?.route || 'Unknown',
             lat: gps.lat,
             lng: gps.lng,
             passengers: 0, // Will be fetched from passenger_counts
