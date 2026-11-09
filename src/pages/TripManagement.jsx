@@ -464,7 +464,12 @@ const TripManagement = ({ userRole }) => {
 
       const { data, error } = await query;
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error fetching trip history:', error);
+        throw error;
+      }
+
+      console.log('Trip history data:', data);
       setHistoryData(data || []);
 
       // Calculate statistics
@@ -501,9 +506,6 @@ const TripManagement = ({ userRole }) => {
 
   const toggleHistoryView = () => {
     setShowHistory(!showHistory);
-    if (!showHistory) {
-      fetchTripHistory(historyPeriod);
-    }
   };
 
   const filteredTrips = trips.filter(trip => {
@@ -861,6 +863,13 @@ const TripManagement = ({ userRole }) => {
   useEffect(() => {
     setBusCurrentPage(1);
   }, [busSearchTerm, busStatusFilter]);
+
+  // Fetch trip history when history view is shown or period changes
+  useEffect(() => {
+    if (showHistory) {
+      fetchTripHistory(historyPeriod);
+    }
+  }, [showHistory, historyPeriod]);
 
   // Pagination logic for history
   const historyTotalPages = Math.ceil(historyData.length / historyItemsPerPage);
