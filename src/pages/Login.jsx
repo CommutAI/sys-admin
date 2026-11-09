@@ -113,7 +113,7 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-orange-950 to-slate-900 flex items-center justify-center p-4">
       <div className="glass-card p-8 rounded-2xl w-full max-w-md">
         <div className="flex flex-col items-center mb-8">
           <img 
@@ -209,7 +209,7 @@ const Login = () => {
 
   if (resetMode) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-orange-950 to-slate-900 flex items-center justify-center p-4">
         <div className="glass-card p-8 rounded-2xl w-full max-w-md">
           <div className="flex flex-col items-center mb-8">
             <img 
