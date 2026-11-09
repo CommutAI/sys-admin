@@ -108,6 +108,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
 allowed_origins = [
     "http://localhost:5173",
+    "http://localhost:5174",
     "http://localhost:3000",
     "http://localhost:8080",
     frontend_url,
