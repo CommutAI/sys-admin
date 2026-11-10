@@ -282,9 +282,11 @@ export function useRaspberryPi(options = {}) {
     // Resolve URL from Supabase pi_devices
     let wsUrl, httpBase;
     try {
-      // Skip WebSocket connection on HTTPS — local Pi IPs are blocked by browser Mixed Content policy
-      if (isSecureOrigin()) {
-        console.log('[Pi] Skipping WebSocket — running on HTTPS (local Pi not reachable from public internet)');
+      // On HTTPS origins, skip local Pi connection UNLESS a secure public URL
+      // is configured (e.g. ngrok https:// tunnel via VITE_RASPBERRY_PI_URL).
+      const piEnvUrl = import.meta.env.VITE_RASPBERRY_PI_URL;
+      if (isSecureOrigin() && (!piEnvUrl || piEnvUrl.startsWith('http://') || piEnvUrl.startsWith('ws://'))) {
+        console.log('[Pi] Skipping WebSocket — running on HTTPS with no secure Pi URL configured');
         switchToDatabaseMode();
         return;
       }

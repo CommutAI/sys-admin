@@ -160,10 +160,11 @@ async function checkSmsApi(ip) {
  * Scans common network ranges to find the Raspberry Pi server
  */
 export async function discoverRaspberryPi(onProgress = null) {
-  // Skip discovery on HTTPS origins — local Pi IPs are unreachable and
-  // browsers block http:// requests from https:// pages (Mixed Content).
-  if (isSecureOrigin()) {
-    console.log('[Pi Discovery] Skipping — running on HTTPS (local Pi not reachable)');
+  // Skip local IP scanning on HTTPS unless a secure Pi URL (https://) is set.
+  // Browsers block http:// fetch requests from https:// pages (Mixed Content).
+  const piEnvUrl = typeof import.meta !== 'undefined' ? import.meta.env?.VITE_RASPBERRY_PI_URL : null;
+  if (isSecureOrigin() && (!piEnvUrl || piEnvUrl.startsWith('http://') || piEnvUrl.startsWith('ws://'))) {
+    console.log('[Pi Discovery] Skipping — running on HTTPS with no secure Pi URL configured');
     return null;
   }
 

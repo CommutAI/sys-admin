@@ -19,8 +19,9 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   const heartbeatTimer = useRef(null);
   const deadRef = useRef(false);
 
-  // Skip all Pi connections when running on HTTPS — local IPs are blocked (Mixed Content)
-  const piDisabled = isSecureOrigin();
+  // Skip all Pi connections when on HTTPS with no secure Pi URL configured
+  const piEnvUrl = import.meta.env.VITE_RASPBERRY_PI_URL;
+  const piDisabled = isSecureOrigin() && (!piEnvUrl || piEnvUrl.startsWith('http://') || piEnvUrl.startsWith('ws://'));
 
   // Auto-detect backend URL from Pi discovery
   const [backendUrl, setBackendUrl] = useState(() => {
@@ -36,7 +37,7 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   // Auto-discover Pi if no IP is persisted (local network only)
   useEffect(() => {
     if (piDisabled) {
-      console.log('[Backend Video] Skipping Pi discovery — running on HTTPS');
+      console.log('[Backend Video] Skipping Pi discovery — running on HTTPS with no secure Pi URL');
       return;
     }
     if (!getPersistedIp()) {
