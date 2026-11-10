@@ -21,11 +21,12 @@ export function useBackendVideo({ autoConnect = true } = {}) {
 
   // Skip all Pi connections when on HTTPS with no secure Pi URL configured
   const piEnvUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
-  const piDisabled = isSecureOrigin() && (!piEnvUrl || !piEnvUrl.startsWith('https://'));
+  const isHttps = isSecureOrigin();
 
   // Auto-detect backend URL from Pi discovery
   const [backendUrl, setBackendUrl] = useState(() => {
-    if (piDisabled) return null;
+    // On HTTPS, always use the ngrok URL — never use localStorage local IPs
+    if (isHttps) return piEnvUrl;
     const piIp = getPersistedIp();
     return piIp ? `http://${piIp}:5000` : null;
   });
@@ -36,8 +37,8 @@ export function useBackendVideo({ autoConnect = true } = {}) {
 
   // Auto-discover Pi if no IP is persisted (local network only)
   useEffect(() => {
-    if (piDisabled) {
-      console.log('[Backend Video] Skipping Pi discovery — running on HTTPS with no secure Pi URL');
+    if (isHttps) {
+      // On HTTPS, always use ngrok — never scan local IPs
       return;
     }
     if (!getPersistedIp()) {

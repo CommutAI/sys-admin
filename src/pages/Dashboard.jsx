@@ -425,9 +425,9 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
 const Dashboard = () => {
   const [kpis, setKpis] = useState([
     { title: "Today's Passengers", value: '0', change: 0, icon: Users, color: 'bg-blue-500' },
-    { title: 'Total Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-green-500' },
-    { title: 'Bus Fare Revenue', value: '$0', change: 0, icon: Bus, color: 'bg-purple-500' },
-    { title: 'Baggage Fee Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-orange-500' },
+    { title: 'Total Revenue', value: '₱0.00', change: 0, icon: DollarSign, color: 'bg-green-500' },
+    { title: 'Bus Fare Revenue', value: '₱0.00', change: 0, icon: Bus, color: 'bg-purple-500' },
+    { title: 'Baggage Fee Revenue', value: '₱0.00', change: 0, icon: DollarSign, color: 'bg-orange-500' },
   ]);
   const [alerts, setAlerts] = useState([]);
   const [stats, setStats] = useState({
@@ -672,16 +672,21 @@ const Dashboard = () => {
       const activeConductorsCount = staffUsers?.filter(u => u.role === 'conductor').length || 0;
       const activeDriversCount = staffUsers?.filter(u => u.role === 'driver').length || 0;
 
-      // Revenue calculation disabled - transactions table structure needs to be defined
-      const totalRevenue = 0;
-      const busFareRevenue = 0;
-      const baggageFeeRevenue = 0;
+      // Calculate revenue from all completed transactions
+      const { data: todayTransactions } = await supabase
+        .from('transactions')
+        .select('final_amount, fare_amount, baggage_fee, status')
+        .eq('status', 'completed');
+
+      const totalRevenue = (todayTransactions || []).reduce((sum, t) => sum + parseFloat(t.final_amount || t.fare_amount || 0), 0);
+      const busFareRevenue = (todayTransactions || []).reduce((sum, t) => sum + parseFloat(t.fare_amount || 0), 0);
+      const baggageFeeRevenue = (todayTransactions || []).reduce((sum, t) => sum + parseFloat(t.baggage_fee || 0), 0);
 
       setKpis([
         { title: "Today's Passengers", value: totalPassengers.toLocaleString(), change: 8.5, icon: Users, color: 'bg-blue-500' },
-        { title: 'Total Revenue', value: `$${totalRevenue.toLocaleString()}`, change: 12.3, icon: DollarSign, color: 'bg-green-500' },
-        { title: 'Bus Fare Revenue', value: `$${busFareRevenue.toLocaleString()}`, change: 10.1, icon: Bus, color: 'bg-purple-500' },
-        { title: 'Baggage Fee Revenue', value: `$${baggageFeeRevenue.toLocaleString()}`, change: 15.2, icon: DollarSign, color: 'bg-orange-500' },
+        { title: 'Total Revenue', value: `₱${totalRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 12.3, icon: DollarSign, color: 'bg-green-500' },
+        { title: 'Bus Fare Revenue', value: `₱${busFareRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 10.1, icon: Bus, color: 'bg-purple-500' },
+        { title: 'Baggage Fee Revenue', value: `₱${baggageFeeRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 15.2, icon: DollarSign, color: 'bg-orange-500' },
       ]);
 
       // Transform irregularities to alerts
@@ -718,9 +723,9 @@ const Dashboard = () => {
       // Set default values on error to prevent UI crashes
       setKpis([
         { title: "Today's Passengers", value: '0', change: 0, icon: Users, color: 'bg-blue-500' },
-        { title: 'Total Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-green-500' },
-        { title: 'Bus Fare Revenue', value: '$0', change: 0, icon: Bus, color: 'bg-purple-500' },
-        { title: 'Baggage Fee Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-orange-500' },
+        { title: 'Total Revenue', value: '₱0.00', change: 0, icon: DollarSign, color: 'bg-green-500' },
+        { title: 'Bus Fare Revenue', value: '₱0.00', change: 0, icon: Bus, color: 'bg-purple-500' },
+        { title: 'Baggage Fee Revenue', value: '₱0.00', change: 0, icon: DollarSign, color: 'bg-orange-500' },
       ]);
       setAlerts([]);
       setStats({

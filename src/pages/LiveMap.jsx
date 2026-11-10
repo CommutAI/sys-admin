@@ -52,6 +52,9 @@ const LiveMap = () => {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'gps_locations' }, () => {
         fetchLiveMapData();
       })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'trips' }, () => {
+        fetchLiveMapData();
+      })
       .subscribe();
 
     return () => {
@@ -67,7 +70,7 @@ const LiveMap = () => {
       // Fetch active trips with bus information
       const { data: activeTrips } = await supabase
         .from('trips')
-        .select('*, bus:buses!trips_bus_id_fkey(*)')
+        .select('*, bus:buses!trips_bus_id_fkey(*), current_lat, current_lng, gps_updated_at')
         .eq('status', 'in_progress')
         .order('started_at', { ascending: false });
 
@@ -100,31 +103,45 @@ const LiveMap = () => {
         }
       });
 
-      // Transform trips to bus markers - only include buses with actual GPS data
+      // Transform trips to bus markers - use gps_locations first, fall back to trips.current_lat/lng
       const busMarkers = (activeTrips || [])
         .map((trip) => {
           const gps = latestGpsByTripId[trip.id];
 
-          // Only include if we have actual GPS data
-          if (!gps || !Number.isFinite(gps.lat) || !Number.isFinite(gps.lng)) {
-            return null;
+          // Try gps_locations first, then fall back to current_lat/lng on the trip itself
+          let lat, lng, locationSource, locationUpdatedAt;
+
+          if (gps && Number.isFinite(gps.lat) && Number.isFinite(gps.lng)) {
+            lat = gps.lat;
+            lng = gps.lng;
+            locationSource = gps.source;
+            locationUpdatedAt = gps.recordedAt;
+          } else if (trip.current_lat != null && trip.current_lng != null) {
+            lat = parseFloat(trip.current_lat);
+            lng = parseFloat(trip.current_lng);
+            locationSource = 'trip record';
+            locationUpdatedAt = trip.gps_updated_at || trip.started_at;
+          } else {
+            return null; // No GPS data at all
           }
+
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
           return {
             id: trip.id,
             plate: trip.bus?.plate_number || 'Unknown',
             route: trip.bus?.route || 'Unknown',
-            lat: gps.lat,
-            lng: gps.lng,
-            passengers: 0, // Will be fetched from passenger_counts
+            lat,
+            lng,
+            passengers: 0,
             status: 'active',
-            locationSource: gps.tripId ? gps.source : `${gps.source} (latest GPS)`,
-            locationUpdatedAt: gps.recordedAt || trip.gps_updated_at || null,
+            locationSource,
+            locationUpdatedAt,
             busId: trip.bus_id,
             tripId: trip.id
           };
         })
-        .filter(Boolean); // Remove null entries
+        .filter(Boolean);
 
       // Add inactive buses (only those not already in active trips) - only if they have GPS data
       const activeBusIds = new Set((activeTrips || []).map(t => t.bus_id));
