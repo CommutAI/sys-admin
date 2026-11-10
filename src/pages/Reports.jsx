@@ -61,6 +61,8 @@ const Reports = () => {
   const [tripsSort, setTripsSort] = useState({ field: 'started_at', direction: 'desc' });
   const [tripsFilterStatus, setTripsFilterStatus] = useState('all');
   const [tripsFilterRoute, setTripsFilterRoute] = useState('');
+  const [tripsCurrentPage, setTripsCurrentPage] = useState(1);
+  const [tripsItemsPerPage] = useState(10);
   const [visibleTripsColumns, setVisibleTripsColumns] = useState([
     'plate_number', 'route', 'conductor', 'status', 'started_at'
   ]);
@@ -155,6 +157,8 @@ const Reports = () => {
   useEffect(() => {
     fetchStats();
     fetchRecentActivity();
+    fetchTransactions();
+    fetchGcashTransactions();
     // Log page view to audit logs
     AuditService.logPageView('Reports');
   }, []);
@@ -224,8 +228,7 @@ const Reports = () => {
       const { data } = await supabase
         .from('trips')
         .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*)')
-        .order('started_at', { ascending: false })
-        .limit(5);
+        .order('started_at', { ascending: false });
 
       setRecentActivity(data || []);
     } catch (error) {
@@ -1015,7 +1018,7 @@ const Reports = () => {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-white text-xl font-bold flex items-center gap-2">
               <Activity className="text-blue-400" />
-              Recent Trips
+              Trip History
             </h2>
             <button
               onClick={() => setVisibleTripsColumns(
@@ -1030,11 +1033,11 @@ const Reports = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <select
               value={tripsFilterStatus}
-              onChange={(e) => setTripsFilterStatus(e.target.value)}
+              onChange={(e) => { setTripsFilterStatus(e.target.value); setTripsCurrentPage(1); }}
               className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-blue-500"
             >
               <option value="all" className="bg-gray-800 text-white">All Status</option>
-              <option value="active" className="bg-gray-800 text-white">Active</option>
+              <option value="in_progress" className="bg-gray-800 text-white">In Progress</option>
               <option value="completed" className="bg-gray-800 text-white">Completed</option>
               <option value="cancelled" className="bg-gray-800 text-white">Cancelled</option>
             </select>
@@ -1044,7 +1047,7 @@ const Reports = () => {
                 type="text"
                 placeholder="Search by route..."
                 value={tripsFilterRoute}
-                onChange={(e) => setTripsFilterRoute(e.target.value)}
+                onChange={(e) => { setTripsFilterRoute(e.target.value); setTripsCurrentPage(1); }}
                 className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-blue-500"
               />
             </div>
@@ -1054,90 +1057,109 @@ const Reports = () => {
               <thead>
                 <tr className="text-left text-white/60 border-b border-white/10">
                   {visibleTripsColumns.includes('plate_number') && (
-                    <th
-                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                      onClick={() => handleSort('buses', tripsSort, setTripsSort)}
-                    >
-                      <div className="flex items-center gap-1">
-                        Bus {renderSortIcon('buses', tripsSort)}
-                      </div>
+                    <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('buses', tripsSort, setTripsSort)}>
+                      <div className="flex items-center gap-1">Bus {renderSortIcon('buses', tripsSort)}</div>
                     </th>
                   )}
                   {visibleTripsColumns.includes('route') && (
-                    <th
-                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                      onClick={() => handleSort('buses', tripsSort, setTripsSort)}
-                    >
-                      <div className="flex items-center gap-1">
-                        Route {renderSortIcon('buses', tripsSort)}
-                      </div>
+                    <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('buses', tripsSort, setTripsSort)}>
+                      <div className="flex items-center gap-1">Route {renderSortIcon('buses', tripsSort)}</div>
                     </th>
                   )}
                   {visibleTripsColumns.includes('conductor') && (
-                    <th
-                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                      onClick={() => handleSort('conductor_staff', tripsSort, setTripsSort)}
-                    >
-                      <div className="flex items-center gap-1">
-                        Conductor {renderSortIcon('conductor_staff', tripsSort)}
-                      </div>
+                    <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('conductor_staff', tripsSort, setTripsSort)}>
+                      <div className="flex items-center gap-1">Conductor {renderSortIcon('conductor_staff', tripsSort)}</div>
                     </th>
                   )}
                   {visibleTripsColumns.includes('status') && (
-                    <th
-                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                      onClick={() => handleSort('status', tripsSort, setTripsSort)}
-                    >
-                      <div className="flex items-center gap-1">
-                        Status {renderSortIcon('status', tripsSort)}
-                      </div>
+                    <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('status', tripsSort, setTripsSort)}>
+                      <div className="flex items-center gap-1">Status {renderSortIcon('status', tripsSort)}</div>
                     </th>
                   )}
                   {visibleTripsColumns.includes('started_at') && (
-                    <th
-                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                      onClick={() => handleSort('started_at', tripsSort, setTripsSort)}
-                    >
-                      <div className="flex items-center gap-1">
-                        Started {renderSortIcon('started_at', tripsSort)}
-                      </div>
+                    <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('started_at', tripsSort, setTripsSort)}>
+                      <div className="flex items-center gap-1">Started {renderSortIcon('started_at', tripsSort)}</div>
                     </th>
                   )}
                 </tr>
               </thead>
               <tbody>
-                {filteredRecentActivity.slice(0, 10).map((trip) => (
-                  <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
-                    {visibleTripsColumns.includes('plate_number') && (
-                      <td className="py-4 text-white">{trip.bus_id?.plate_number || 'N/A'}</td>
-                    )}
-                    {visibleTripsColumns.includes('route') && (
-                      <td className="py-4 text-white/70">{trip.bus_id?.route || 'N/A'}</td>
-                    )}
-                    {visibleTripsColumns.includes('conductor') && (
-                      <td className="py-4 text-white/70">{trip.conductor_staff?.full_name || 'N/A'}</td>
-                    )}
-                    {visibleTripsColumns.includes('status') && (
-                      <td className="py-4">
-                        <span className={`px-3 py-1 rounded-full text-xs ${
-                          trip.status === 'completed' ? 'bg-green-500/20 text-green-400' :
-                          trip.status === 'active' ? 'bg-blue-500/20 text-blue-400' :
-                          'bg-yellow-500/20 text-yellow-400'
-                        }`}>
-                          {trip.status}
-                        </span>
-                      </td>
-                    )}
-                    {visibleTripsColumns.includes('started_at') && (
-                      <td className="py-4 text-white/60 text-sm">
-                        {new Date(trip.started_at).toLocaleString()}
-                      </td>
-                    )}
-                  </tr>
-                ))}
+                {(() => {
+                  const totalPages = Math.ceil(filteredRecentActivity.length / tripsItemsPerPage);
+                  const paginated = filteredRecentActivity.slice(
+                    (tripsCurrentPage - 1) * tripsItemsPerPage,
+                    tripsCurrentPage * tripsItemsPerPage
+                  );
+                  return paginated.map((trip) => (
+                    <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
+                      {visibleTripsColumns.includes('plate_number') && (
+                        <td className="py-4 text-white">{trip.bus_id?.plate_number || 'N/A'}</td>
+                      )}
+                      {visibleTripsColumns.includes('route') && (
+                        <td className="py-4 text-white/70">{trip.bus_id?.route || 'N/A'}</td>
+                      )}
+                      {visibleTripsColumns.includes('conductor') && (
+                        <td className="py-4 text-white/70">{trip.conductor_staff?.full_name || 'N/A'}</td>
+                      )}
+                      {visibleTripsColumns.includes('status') && (
+                        <td className="py-4">
+                          <span className={`px-3 py-1 rounded-full text-xs ${
+                            trip.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                            trip.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400' :
+                            'bg-red-500/20 text-red-400'
+                          }`}>
+                            {trip.status?.replace('_', ' ')}
+                          </span>
+                        </td>
+                      )}
+                      {visibleTripsColumns.includes('started_at') && (
+                        <td className="py-4 text-white/60 text-sm">
+                          {trip.started_at ? new Date(trip.started_at).toLocaleString() : 'N/A'}
+                        </td>
+                      )}
+                    </tr>
+                  ));
+                })()}
               </tbody>
             </table>
           </div>
+          {/* Trips Pagination */}
+          {(() => {
+            const totalPages = Math.ceil(filteredRecentActivity.length / tripsItemsPerPage);
+            if (totalPages <= 1) return null;
+            return (
+              <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
+                <p className="text-white/50 text-sm">
+                  Showing {((tripsCurrentPage - 1) * tripsItemsPerPage) + 1}–{Math.min(tripsCurrentPage * tripsItemsPerPage, filteredRecentActivity.length)} of {filteredRecentActivity.length} trips
+                </p>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setTripsCurrentPage(p => Math.max(p - 1, 1))} disabled={tripsCurrentPage === 1}
+                    className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                    <ChevronLeft size={16} />
+                  </button>
+                  <div className="flex gap-1">
+                    {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                      let p;
+                      if (totalPages <= 5) p = i + 1;
+                      else if (tripsCurrentPage <= 3) p = i + 1;
+                      else if (tripsCurrentPage >= totalPages - 2) p = totalPages - 4 + i;
+                      else p = tripsCurrentPage - 2 + i;
+                      return (
+                        <button key={p} onClick={() => setTripsCurrentPage(p)}
+                          className={`w-8 h-8 rounded-lg text-sm transition-colors ${tripsCurrentPage === p ? 'bg-orange-500 text-white' : 'bg-white/10 hover:bg-white/20 text-white/70'}`}>
+                          {p}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button onClick={() => setTripsCurrentPage(p => Math.min(p + 1, totalPages))} disabled={tripsCurrentPage === totalPages}
+                    className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1149,20 +1171,9 @@ const Reports = () => {
               <ArrowLeftRight className="text-orange-400" />
               Transactions
             </h2>
-            <button
-              onClick={() => {
-                setShowTransactions(!showTransactions);
-                if (!showTransactions) fetchTransactions();
-              }}
-              className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors"
-            >
-              {showTransactions ? 'Hide' : 'Show Transactions'}
-            </button>
           </div>
 
-          {showTransactions && (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
                   <input
@@ -1377,8 +1388,6 @@ const Reports = () => {
                   </div>
                 )}
               </div>
-            </>
-          )}
         </div>
       )}
 
@@ -1390,20 +1399,9 @@ const Reports = () => {
               <DollarSign className="text-green-400" />
               GCash Transactions
             </h2>
-            <button
-              onClick={() => {
-                setShowGcashTransactions(!showGcashTransactions);
-                if (!showGcashTransactions) fetchGcashTransactions();
-              }}
-              className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors"
-            >
-              {showGcashTransactions ? 'Hide' : 'Show GCash Transactions'}
-            </button>
           </div>
 
-          {showGcashTransactions && (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
                   <input
@@ -1582,8 +1580,6 @@ const Reports = () => {
                   </div>
                 )}
               </div>
-            </>
-          )}
         </div>
       )}
 
