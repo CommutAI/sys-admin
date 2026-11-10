@@ -642,14 +642,14 @@ const Dashboard = () => {
         supabase.from('buses').select('*').eq('status', 'active'),
 
         // Fetch today's trips
-        supabase.from('trips').select('*, buses(*)').gte('started_at', todayStart),
+        supabase.from('trips').select('*, bus_id:buses!trips_bus_id_fkey(*)').gte('started_at', todayStart),
 
         // Fetch passenger counts for today
         supabase.from('passenger_counts').select('count').gte('recorded_at', todayStart),
 
         // Fetch fare irregularities for today
         supabase.from('fare_irregularities')
-          .select('*, trips(*, buses(*))')
+          .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
           .gte('detected_at', todayStart)
           .order('detected_at', { ascending: false })
           .limit(10),
@@ -689,7 +689,8 @@ const Dashboard = () => {
         type: `${irr.type.replace('_', ' ').toUpperCase()}`,
         message: `Trip #${irr.trip_id?.slice(0, 8)} - ${irr.description}`,
         time: new Date(irr.detected_at).toLocaleString(),
-        severity: irr.type === 'fare_evasion' ? 'high' : 'medium'
+        severity: irr.type === 'fare_evasion' ? 'high' : 'medium',
+        buses: irr.trips?.bus_id
       }));
 
       // Transform emergency alerts
@@ -746,7 +747,7 @@ const Dashboard = () => {
       ] = await Promise.all([
         supabase.from('buses').select('*').order('bus_number', { ascending: true }),
         supabase.from('trips')
-          .select('*, buses(*)')
+          .select('*, buses!trips_bus_id_fkey(*)')
           .eq('status', 'in_progress')
           .order('started_at', { ascending: false }),
         supabase.from('gps_locations')

@@ -64,7 +64,7 @@ const PassengerAnalytics = () => {
         const busFilter = assignedBus?.busId;
         let countsQuery = supabase
           .from('passenger_counts')
-          .select('*, trips(*, buses(*))')
+          .select('*, trips(*, bus_id:buses!trips_bus_id_fkey(*))')
           .gte('recorded_at', startDate.toISOString())
           .order('recorded_at', { ascending: true });
 
@@ -72,7 +72,7 @@ const PassengerAnalytics = () => {
           // Join through trips to filter by bus_id
           countsQuery = supabase
             .from('passenger_counts')
-            .select('*, trips!inner(*, buses(*))')
+            .select('*, trips!inner(*, bus_id:buses!trips_bus_id_fkey(*))')
             .eq('trips.bus_id', busFilter)
             .gte('recorded_at', startDate.toISOString())
             .order('recorded_at', { ascending: true });
@@ -99,7 +99,7 @@ const PassengerAnalytics = () => {
       try {
         const { data: irregularitiesData } = await supabase
           .from('fare_irregularities')
-          .select('*, trips(*, buses(*))')
+          .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
           .gte('detected_at', startDate.toISOString())
           .order('detected_at', { ascending: false })
           .limit(10);
@@ -207,7 +207,7 @@ const PassengerAnalytics = () => {
   const getRouteUtilization = () => {
     const routeMap = {};
     passengerCounts.forEach(pc => {
-      const route = pc.trips?.buses?.route || 'Unknown';
+      const route = pc.trips?.bus_id?.route || 'Unknown';
       if (!routeMap[route]) {
         routeMap[route] = { route, count: 0 };
       }
@@ -249,7 +249,7 @@ const PassengerAnalytics = () => {
 
   const filteredIrregularities = fareIrregularities.filter(irr => {
     const matchesSearch = irr.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         irr.trips?.buses?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase());
+                         irr.trips?.bus_id?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = filterStatus === 'all' || (filterStatus === 'resolved' ? irr.resolved : !irr.resolved);
     const matchesType = filterType === 'all' || irr.type === filterType;
     return matchesSearch && matchesStatus && matchesType;
@@ -612,7 +612,7 @@ const PassengerAnalytics = () => {
                       </span>
                     </td>
                     <td className="py-4 text-white/70">{irr.description}</td>
-                    <td className="py-4 text-white/70">{irr.trips?.buses?.plate_number || 'N/A'}</td>
+                    <td className="py-4 text-white/70">{irr.trips?.bus_id?.plate_number || 'N/A'}</td>
                     <td className="py-4 text-white/60 text-sm">
                       {new Date(irr.detected_at).toLocaleString()}
                     </td>

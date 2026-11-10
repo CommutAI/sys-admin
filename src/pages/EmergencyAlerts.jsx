@@ -50,7 +50,7 @@ const EmergencyAlerts = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('emergency_alerts')
-        .select('*, trips(*, buses(*)), conductor_staff:staff_users(*)')
+        .select('*, trips(*, bus_id:buses!trips_bus_id_fkey(*)), conductor_staff:staff_users!emergency_alerts_conductor_id_fkey(*)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -199,7 +199,7 @@ const EmergencyAlerts = () => {
 
   const filteredAlerts = alerts.filter(alert => {
     const matchesSearch = alert.notes?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         alert.trips?.buses?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         alert.trips?.bus_id?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          alert.conductor_staff?.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = filterStatus === 'all' || alert.status === filterStatus;
     return matchesSearch && matchesStatus;
@@ -565,7 +565,7 @@ const EmergencyAlerts = () => {
                         <div className="flex items-center gap-4 text-white/60 text-sm">
                           <div className="flex items-center gap-2">
                             <MapPin size={14} />
-                            <span>{alert.trips?.buses?.plate_number || 'Unknown Bus'}</span>
+                            <span>{alert.trips?.bus_id?.plate_number || 'Unknown Bus'}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <Clock size={14} />

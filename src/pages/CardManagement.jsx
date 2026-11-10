@@ -64,7 +64,7 @@ const CardManagement = () => {
   const fetchTempTickets = async () => {
     const { data, error } = await supabase
       .from('temporary_tickets')
-      .select('*, trips(*, buses(*))')
+      .select('*, trips!temporary_tickets_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
       .order('issued_at', { ascending: false });
     if (error) {
       console.error('Error fetching temp tickets:', error);
@@ -541,7 +541,7 @@ const CardManagement = () => {
                         </span>
                       </td>
                       <td className="py-4 text-white/70">
-                        {ticket.trips?.buses?.plate_number || 'N/A'}
+                        {ticket.trips?.bus_id?.plate_number || 'N/A'}
                       </td>
                       <td className="py-4 text-white/70 text-sm">
                         {new Date(ticket.issued_at).toLocaleString()}

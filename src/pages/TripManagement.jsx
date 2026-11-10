@@ -116,7 +116,7 @@ const TripManagement = ({ userRole }) => {
       setLoading(true);
       const { data, error } = await supabase
         .from('trips')
-        .select('*, buses(*), conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*)')
+        .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor:staff_users!trips_conductor_id_fkey(*), driver:staff_users!trips_driver_id_fkey(*)')
         .order('started_at', { ascending: false });
 
       if (error) throw error;
@@ -214,7 +214,7 @@ const TripManagement = ({ userRole }) => {
 
     try {
       const trip = trips.find(t => t.id === tripId);
-      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+      const busInfo = trip?.bus_id?.plate_number || 'Unknown bus';
 
       const { error } = await supabase
         .from('trips')
@@ -241,7 +241,7 @@ const TripManagement = ({ userRole }) => {
 
     try {
       const trip = trips.find(t => t.id === tripId);
-      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+      const busInfo = trip?.bus_id?.plate_number || 'Unknown bus';
 
       const { error } = await supabase
         .from('trips')
@@ -267,7 +267,7 @@ const TripManagement = ({ userRole }) => {
     try {
       const trip = trips.find(t => t.id === tripId);
       const oldStatus = trip?.status || 'unknown';
-      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+      const busInfo = trip?.bus_id?.plate_number || 'Unknown bus';
 
       const updateData = { status: newStatus };
       if (newStatus === 'completed' || newStatus === 'cancelled') {
@@ -361,7 +361,7 @@ const TripManagement = ({ userRole }) => {
 
     try {
       const trip = trips.find(t => t.id === tripId);
-      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+      const busInfo = trip?.bus_id?.plate_number || 'Unknown bus';
 
       const { error } = await supabase
         .from('trips')
@@ -416,74 +416,81 @@ const TripManagement = ({ userRole }) => {
   const fetchTripHistory = async (period) => {
     try {
       setHistoryLoading(true);
-      let startDate, endDate;
-      const now = new Date();
 
-      switch (period) {
-        case 'daily':
-          startDate = new Date(now.setHours(0, 0, 0, 0));
-          endDate = new Date();
-          break;
-        case 'weekly':
-          startDate = new Date(now.setDate(now.getDate() - 7));
-          endDate = new Date();
-          break;
-        case 'monthly':
-          startDate = new Date(now.setMonth(now.getMonth() - 1));
-          endDate = new Date();
-          break;
-        case 'yearly':
-          startDate = new Date(now.setFullYear(now.getFullYear() - 1));
-          endDate = new Date();
-          break;
-        case 'custom':
-          if (customDateRange.startDate && customDateRange.endDate) {
-            startDate = new Date(customDateRange.startDate);
-            startDate.setHours(0, 0, 0, 0);
-            endDate = new Date(customDateRange.endDate);
-            endDate.setHours(23, 59, 59, 999);
-          } else {
-            startDate = new Date(now.setHours(0, 0, 0, 0));
-            endDate = new Date();
+      // Use the already-fetched trips state and filter client-side
+      // This avoids timezone mismatches and unnecessary extra queries
+      let filtered = [...trips];
+
+      if (period !== 'all') {
+        let startDate, endDate;
+        const now = () => new Date();
+
+        switch (period) {
+          case 'daily': {
+            const d = now();
+            d.setHours(0, 0, 0, 0);
+            startDate = d;
+            endDate = now();
+            break;
           }
-          break;
-        default:
-          startDate = new Date(now.setHours(0, 0, 0, 0));
-          endDate = new Date();
+          case 'weekly': {
+            const d = now();
+            d.setDate(d.getDate() - 7);
+            startDate = d;
+            endDate = now();
+            break;
+          }
+          case 'monthly': {
+            const d = now();
+            d.setMonth(d.getMonth() - 1);
+            startDate = d;
+            endDate = now();
+            break;
+          }
+          case 'yearly': {
+            const d = now();
+            d.setFullYear(d.getFullYear() - 1);
+            startDate = d;
+            endDate = now();
+            break;
+          }
+          case 'custom':
+            if (customDateRange.startDate && customDateRange.endDate) {
+              startDate = new Date(customDateRange.startDate);
+              startDate.setHours(0, 0, 0, 0);
+              endDate = new Date(customDateRange.endDate);
+              endDate.setHours(23, 59, 59, 999);
+            }
+            break;
+          default:
+            break;
+        }
+
+        if (startDate) {
+          filtered = filtered.filter(trip => {
+            if (!trip.started_at) return false;
+            const t = new Date(trip.started_at);
+            return t >= startDate && (!endDate || t <= endDate);
+          });
+        }
       }
 
-      let query = supabase
-        .from('trips')
-        .select('*, buses(*), conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*), passenger_counts(count)')
-        .gte('started_at', startDate.toISOString())
-        .order('started_at', { ascending: false });
+      // Sort descending by start time
+      filtered.sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
 
-      if (endDate) {
-        query = query.lte('started_at', endDate.toISOString());
-      }
+      console.log('Trip history filtered:', filtered.length, 'of', trips.length, 'trips for period:', period);
+      setHistoryData(filtered);
 
-      const { data, error } = await query;
-
-      if (error) throw error;
-      setHistoryData(data || []);
-
-      // Calculate statistics
+      // Calculate statistics using total_passengers column
       const stats = {
-        totalTrips: data?.length || 0,
-        totalPassengers: 0,
+        totalTrips: filtered.length,
+        totalPassengers: filtered.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0),
         avgPassengers: 0,
         totalDistance: 0
       };
-
-      if (data && data.length > 0) {
-        const allPassengerCounts = data.flatMap(trip => 
-          trip.passenger_counts?.map(pc => pc.count) || []
-        );
-        stats.totalPassengers = allPassengerCounts.reduce((sum, count) => sum + count, 0);
-        stats.avgPassengers = allPassengerCounts.length > 0 
-          ? Math.round(stats.totalPassengers / allPassengerCounts.length)
-          : 0;
-      }
+      stats.avgPassengers = stats.totalTrips > 0
+        ? Math.round(stats.totalPassengers / stats.totalTrips)
+        : 0;
 
       setHistoryStats(stats);
     } catch (error) {
@@ -501,14 +508,11 @@ const TripManagement = ({ userRole }) => {
 
   const toggleHistoryView = () => {
     setShowHistory(!showHistory);
-    if (!showHistory) {
-      fetchTripHistory(historyPeriod);
-    }
   };
 
   const filteredTrips = trips.filter(trip => {
-    const matchesSearch = trip.buses?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         trip.buses?.route?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    const matchesSearch = trip.bus_id?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         trip.bus_id?.route?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          trip.conductor?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          trip.driver?.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = filterStatus === 'all' || trip.status === filterStatus;
@@ -664,7 +668,7 @@ const TripManagement = ({ userRole }) => {
     try {
       const { data, error } = await supabase
         .from('trips')
-        .select('*, conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*), passenger_counts(count)')
+        .select('*, conductor:staff_users!trips_conductor_id_fkey(*), driver:staff_users!trips_driver_id_fkey(*)')
         .eq('bus_id', bus.id)
         .order('started_at', { ascending: false });
 
@@ -730,8 +734,8 @@ const TripManagement = ({ userRole }) => {
       ['Completed', trips.filter(t => t.status === 'completed').length],
       ['In Progress', trips.filter(t => t.status === 'in_progress').length],
       ['Cancelled', trips.filter(t => t.status === 'cancelled').length],
-      ['Total Passengers', trips.reduce((sum, trip) => sum + (trip.passenger_counts?.[0]?.count || 0), 0)],
-      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.passenger_counts?.[0]?.count || 0), 0) / trips.length) : 0],
+      ['Total Passengers', trips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0)],
+      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0) / trips.length) : 0],
     ];
 
     autoTable(doc, {
@@ -749,7 +753,7 @@ const TripManagement = ({ userRole }) => {
         new Date(trip.started_at).toLocaleString(),
         trip.conductor?.full_name || 'N/A',
         trip.driver?.full_name || 'N/A',
-        trip.passenger_counts?.[0]?.count || 0,
+        trip.total_passengers || 0,
         trip.status.replace('_', ' '),
         trip.ended_at 
           ? `${Math.round((new Date(trip.ended_at) - new Date(trip.started_at)) / 60000)} min`
@@ -806,8 +810,8 @@ const TripManagement = ({ userRole }) => {
       ['Completed', trips.filter(t => t.status === 'completed').length],
       ['In Progress', trips.filter(t => t.status === 'in_progress').length],
       ['Cancelled', trips.filter(t => t.status === 'cancelled').length],
-      ['Total Passengers', trips.reduce((sum, trip) => sum + (trip.passenger_counts?.[0]?.count || 0), 0)],
-      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.passenger_counts?.[0]?.count || 0), 0) / trips.length) : 0],
+      ['Total Passengers', trips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0)],
+      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0) / trips.length) : 0],
     ];
     const statsSheet = XLSX.utils.aoa_to_sheet(statsData);
     XLSX.utils.book_append_sheet(workbook, statsSheet, 'Statistics');
@@ -820,7 +824,7 @@ const TripManagement = ({ userRole }) => {
           new Date(trip.started_at).toLocaleString(),
           trip.conductor?.full_name || 'N/A',
           trip.driver?.full_name || 'N/A',
-          trip.passenger_counts?.[0]?.count || 0,
+          trip.total_passengers || 0,
           trip.status.replace('_', ' '),
           trip.ended_at 
             ? `${Math.round((new Date(trip.ended_at) - new Date(trip.started_at)) / 60000)} min`
@@ -861,6 +865,13 @@ const TripManagement = ({ userRole }) => {
   useEffect(() => {
     setBusCurrentPage(1);
   }, [busSearchTerm, busStatusFilter]);
+
+  // Fetch trip history when history view is first opened, or when trips data is refreshed
+  useEffect(() => {
+    if (showHistory) {
+      fetchTripHistory(historyPeriod);
+    }
+  }, [showHistory, trips]);
 
   // Pagination logic for history
   const historyTotalPages = Math.ceil(historyData.length / historyItemsPerPage);
@@ -1046,8 +1057,8 @@ const TripManagement = ({ userRole }) => {
                     <tbody>
                       {historyPaginatedData.map((trip) => (
                         <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
-                          <td className="text-white py-3 px-4">{trip.buses?.plate_number || 'N/A'}</td>
-                          <td className="text-white/70 py-3 px-4">{trip.buses?.route || 'N/A'}</td>
+                          <td className="text-white py-3 px-4">{trip.bus_id?.plate_number || 'N/A'}</td>
+                          <td className="text-white/70 py-3 px-4">{trip.bus_id?.route || 'N/A'}</td>
                           <td className="text-white/70 py-3 px-4">{trip.conductor?.full_name || 'N/A'}</td>
                           <td className="text-white/70 py-3 px-4">{trip.driver?.full_name || 'N/A'}</td>
                           <td className="text-white/60 py-3 px-4">{new Date(trip.started_at).toLocaleString()}</td>
@@ -1274,7 +1285,7 @@ const TripManagement = ({ userRole }) => {
             <p className="text-white/60 text-sm mb-4">Update the current GPS location for this trip</p>
             <form onSubmit={handleEditTrip} className="space-y-4">
               <div className="bg-white/5 p-3 rounded-xl mb-4">
-                <p className="text-white/60 text-xs">Bus: {selectedTrip.buses?.plate_number}</p>
+                <p className="text-white/60 text-xs">Bus: {selectedTrip.bus_id?.plate_number}</p>
                 <p className="text-white/60 text-xs">Conductor: {selectedTrip.conductor?.full_name}</p>
                 {selectedTrip.driver && (
                   <p className="text-white/60 text-xs">Driver: {selectedTrip.driver.full_name}</p>
@@ -1346,7 +1357,7 @@ const TripManagement = ({ userRole }) => {
                 <Bus className="text-orange-400" />
                 <div>
                   <p className="text-white/60 text-sm">Bus</p>
-                  <p className="text-white font-medium">{selectedTrip.buses?.plate_number}</p>
+                  <p className="text-white font-medium">{selectedTrip.bus_id?.plate_number}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
@@ -1666,7 +1677,7 @@ const TripManagement = ({ userRole }) => {
                   <Users size={16} className="text-purple-400" />
                   <span className="text-white/60 text-sm">Total Passengers</span>
                 </div>
-                <p className="text-white text-2xl font-bold">{busTrips.reduce((sum, trip) => sum + (trip.passenger_counts?.[0]?.count || 0), 0)}</p>
+                <p className="text-white text-2xl font-bold">{busTrips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0)}</p>
               </div>
             </div>
 
@@ -1712,7 +1723,7 @@ const TripManagement = ({ userRole }) => {
                                 {trip.driver?.full_name || 'N/A'}
                               </td>
                               <td className="text-white/70 text-sm py-2 px-3">
-                                {trip.passenger_counts?.[0]?.count || 0}
+                                {trip.total_passengers || 0}
                               </td>
                               <td className="py-2 px-3">
                                 <span className={`px-2 py-1 rounded-full text-xs border ${statusColors[trip.status]}`}>

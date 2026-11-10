@@ -34,15 +34,15 @@ async def anomaly_detection_scheduler():
             # Import and call the function
             from routers.anomaly_detection import run_anomaly_detection
             result = await run_anomaly_detection()
-            print(f"Anomaly detection completed: {result.anomalies_detected} anomalies detected, {result.irregularities_created} irregularities created")
+            print(f"Anomaly detection completed: {result.total_anomalies_detected} anomalies detected, {result.total_irregularities_created} irregularities created")
 
             # Store snapshot in database for historical comparison
             from datetime import datetime
             snapshot_data = {
                 'checked_at': datetime.now().isoformat(),
                 'total_trips_checked': result.total_trips_checked,
-                'anomalies_detected': result.anomalies_detected,
-                'irregularities_created': result.irregularities_created,
+                'anomalies_detected': result.total_anomalies_detected,
+                'irregularities_created': result.total_irregularities_created,
                 'results_summary': [
                     {
                         'trip_id': r.trip_id,

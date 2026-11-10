@@ -31,7 +31,7 @@ const BusManagement = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('buses')
-        .select('*, conductor:staff_users(id, full_name, email)')
+        .select('*, conductor:staff_users!buses_assigned_conductor_id_fkey(id, full_name, email)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
