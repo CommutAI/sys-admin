@@ -9,17 +9,17 @@
 
 import { supabase } from '../lib/supabase';
 
-const FALLBACK_URL    = import.meta.env.VITE_RASPBERRY_PI_URL || 'http://commutai.local:5000';
+const NGROK_URL      = 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+const FALLBACK_URL   = import.meta.env.VITE_RASPBERRY_PI_URL || NGROK_URL;
 const DEFAULT_TIMEOUT = 8000;
 const BUS_NUMBER      = 1; // this dashboard manages bus 001
 
 // ── URL cache ────────────────────────────────────────────────────────────────
 // Pre-seed with the env-var so the first WebSocket attempt is instant.
-// resolvePiUrl() will upgrade this to the live DB value immediately.
 let _resolvedUrl  = FALLBACK_URL;
 let _resolving    = null;
-let _lastResolved = 0;            // 0 forces a Supabase lookup on the first call
-const REDISCOVER_INTERVAL = 10_000; // re-check every 10 seconds for faster IP detection
+let _lastResolved = 0;
+const REDISCOVER_INTERVAL = 10_000;
 
 /**
  * Resolve the Pi's base HTTP URL.
@@ -29,15 +29,15 @@ const REDISCOVER_INTERVAL = 10_000; // re-check every 10 seconds for faster IP d
 export async function resolvePiUrl() {
   const now = Date.now();
 
-  // On HTTPS origins, always use the env var URL (ngrok) and skip the Supabase
+  // On HTTPS origins, always use the ngrok URL and skip the Supabase
   // lookup — the pi_devices table stores local LAN IPs (192.168.x.x) which are
   // unreachable from the public internet and would cause Mixed Content errors.
   if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-    const secureUrl = import.meta.env.VITE_RASPBERRY_PI_URL;
+    const secureUrl = import.meta.env.VITE_RASPBERRY_PI_URL || NGROK_URL;
     if (secureUrl && secureUrl.startsWith('https://')) {
       return secureUrl;
     }
-    // No secure URL configured — stay in database mode
+    // No secure URL — stay in database mode
     return FALLBACK_URL;
   }
 
@@ -94,6 +94,11 @@ export function invalidatePiUrl() {
  * Returns an unsubscribe function.
  */
 export function subscribePiDeviceChanges(onIpChange) {
+  // On HTTPS, ignore local IP updates from pi_devices — always use the ngrok URL
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return () => {};
+  }
+
   const channel = supabase
     .channel('pi-device-watch')
     .on(

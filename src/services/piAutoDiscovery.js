@@ -163,8 +163,14 @@ export async function discoverRaspberryPi(onProgress = null) {
   // Skip local IP scanning on HTTPS unless a secure Pi URL (https://) is set.
   // Browsers block http:// fetch requests from https:// pages (Mixed Content).
   const piEnvUrl = typeof import.meta !== 'undefined' ? import.meta.env?.VITE_RASPBERRY_PI_URL : null;
-  if (isSecureOrigin() && (!piEnvUrl || piEnvUrl.startsWith('http://') || piEnvUrl.startsWith('ws://'))) {
+  const secureUrl = piEnvUrl || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+  if (isSecureOrigin() && (!secureUrl || !secureUrl.startsWith('https://'))) {
     console.log('[Pi Discovery] Skipping — running on HTTPS with no secure Pi URL configured');
+    return null;
+  }
+  if (isSecureOrigin()) {
+    // On HTTPS, don't scan local IPs — the ngrok URL handles remote access
+    console.log('[Pi Discovery] Skipping local scan — using ngrok URL on HTTPS');
     return null;
   }
 

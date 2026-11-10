@@ -20,8 +20,8 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   const deadRef = useRef(false);
 
   // Skip all Pi connections when on HTTPS with no secure Pi URL configured
-  const piEnvUrl = import.meta.env.VITE_RASPBERRY_PI_URL;
-  const piDisabled = isSecureOrigin() && (!piEnvUrl || piEnvUrl.startsWith('http://') || piEnvUrl.startsWith('ws://'));
+  const piEnvUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+  const piDisabled = isSecureOrigin() && (!piEnvUrl || !piEnvUrl.startsWith('https://'));
 
   // Auto-detect backend URL from Pi discovery
   const [backendUrl, setBackendUrl] = useState(() => {
