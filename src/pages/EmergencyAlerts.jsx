@@ -387,8 +387,8 @@ const EmergencyAlerts = () => {
             </tbody>
           </table>
           {contactsTotalPages > 1 && (
-            <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
-              <p className="text-white/60 text-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 pt-4 border-t border-white/10 gap-3">
+              <p className="text-white/60 text-xs sm:text-sm">
                 Showing {((contactsCurrentPage - 1) * itemsPerPage) + 1} to {Math.min(contactsCurrentPage * itemsPerPage, contacts.length)} of {contacts.length} contacts
               </p>
               <div className="flex items-center gap-2">
@@ -399,20 +399,27 @@ const EmergencyAlerts = () => {
                 >
                   <ChevronLeft size={16} />
                 </button>
-                <div className="flex items-center gap-1">
-                  {Array.from({ length: contactsTotalPages }, (_, i) => i + 1).map(page => (
-                    <button
-                      key={page}
-                      onClick={() => setContactsCurrentPage(page)}
-                      className={`w-8 h-8 rounded-lg text-sm transition-colors ${
-                        contactsCurrentPage === page
-                          ? 'bg-orange-500 text-white'
-                          : 'bg-white/10 hover:bg-white/20 text-white/70'
-                      }`}
-                    >
-                      {page}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-1 overflow-x-auto">
+                  {Array.from({ length: Math.min(contactsTotalPages, 5) }, (_, i) => {
+                    let p;
+                    if (contactsTotalPages <= 5) p = i + 1;
+                    else if (contactsCurrentPage <= 3) p = i + 1;
+                    else if (contactsCurrentPage >= contactsTotalPages - 2) p = contactsTotalPages - 4 + i;
+                    else p = contactsCurrentPage - 2 + i;
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => setContactsCurrentPage(p)}
+                        className={`min-w-[32px] w-8 h-8 rounded-lg text-xs sm:text-sm transition-colors ${
+                          contactsCurrentPage === p
+                            ? 'bg-orange-500 text-white'
+                            : 'bg-white/10 hover:bg-white/20 text-white/70'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
                 </div>
                 <button
                   onClick={() => setContactsCurrentPage(prev => Math.min(prev + 1, contactsTotalPages))}

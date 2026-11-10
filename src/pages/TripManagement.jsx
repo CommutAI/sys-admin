@@ -903,38 +903,38 @@ const TripManagement = ({ userRole }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
         <div>
-          <h1 className="text-white text-3xl font-bold mb-2">Trip & Bus Management</h1>
-          <p className="text-white/60">Monitor trips and manage bus fleet</p>
+          <h1 className="text-white text-2xl sm:text-3xl font-bold mb-2">Trip & Bus Management</h1>
+          <p className="text-white/60 text-sm sm:text-base">Monitor trips and manage bus fleet</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-2 sm:gap-3">
           <button
             onClick={toggleHistoryView}
-            className={`px-4 py-2 rounded-xl flex items-center gap-2 transition-colors ${
+            className={`px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 transition-colors text-sm ${
               showHistory
                 ? 'bg-orange-500 hover:bg-orange-600 text-white'
                 : 'bg-white/10 hover:bg-white/20 text-white'
             }`}
           >
             {showHistory ? <ArrowLeft size={20} /> : <BarChart3 size={20} />}
-            {showHistory ? 'Back to Trips' : 'Trip History'}
+            <span className="hidden sm:inline">{showHistory ? 'Back to Trips' : 'Trip History'}</span>
           </button>
           {userRole === 'driver' && (
             <button
               onClick={() => setShowCreateTripModal(true)}
-              className="px-4 py-2 rounded-xl flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white transition-colors"
+              className="px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white transition-colors text-sm"
             >
               <Plus size={20} />
-              Create Trip
+              <span className="hidden sm:inline">Create Trip</span>
             </button>
           )}
           <button
             onClick={() => setShowAddBusModal(true)}
-            className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+            className="bg-orange-500 hover:bg-orange-600 text-white px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 transition-colors text-sm"
           >
             <Plus size={20} />
-            Add Bus
+            <span className="hidden sm:inline">Add Bus</span>
           </button>
         </div>
       </div>
@@ -943,18 +943,18 @@ const TripManagement = ({ userRole }) => {
       {showHistory && (
         <div className="space-y-6">
           {/* Period Selector */}
-          <div className="glass-card p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-white text-xl font-bold flex items-center gap-2">
+          <div className="glass-card p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
+              <h2 className="text-white text-lg sm:text-xl font-bold flex items-center gap-2">
                 <Calendar className="text-orange-400" />
                 Trip History
               </h2>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((period) => (
                   <button
                     key={period}
                     onClick={() => handleHistoryPeriodChange(period)}
-                    className={`px-4 py-2 rounded-lg capitalize transition-colors ${
+                    className={`px-3 sm:px-4 py-2 rounded-lg capitalize transition-colors text-sm ${
                       historyPeriod === period
                         ? 'bg-orange-500 text-white'
                         : 'bg-white/10 text-white hover:bg-white/20'
@@ -968,14 +968,14 @@ const TripManagement = ({ userRole }) => {
 
             {/* Custom Date Range Picker */}
             {historyPeriod === 'custom' && (
-              <div className="mt-6 mb-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="mt-6 mb-8 grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6">
                 <div>
                   <label className="text-white/60 text-sm mb-2 block">Start Date</label>
                   <input
                     type="date"
                     value={customDateRange.startDate}
                     onChange={(e) => setCustomDateRange({...customDateRange, startDate: e.target.value})}
-                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-3 sm:px-4 py-3 text-white focus:outline-none focus:border-orange-500 text-sm"
                   />
                 </div>
                 <div>
@@ -984,13 +984,13 @@ const TripManagement = ({ userRole }) => {
                     type="date"
                     value={customDateRange.endDate}
                     onChange={(e) => setCustomDateRange({...customDateRange, endDate: e.target.value})}
-                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-3 sm:px-4 py-3 text-white focus:outline-none focus:border-orange-500 text-sm"
                   />
                 </div>
                 <div className="flex items-end">
                   <button
                     onClick={() => fetchTripHistory('custom')}
-                    className="w-full px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors"
+                    className="w-full px-4 sm:px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors text-sm"
                   >
                     Apply Filter
                   </button>
@@ -999,7 +999,7 @@ const TripManagement = ({ userRole }) => {
             )}
 
             {/* Statistics Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               <div className="bg-white/5 p-4 rounded-xl">
                 <div className="flex items-center gap-2 mb-2">
                   <Bus className="text-orange-400" size={20} />
@@ -1089,8 +1089,8 @@ const TripManagement = ({ userRole }) => {
 
                 {/* History Pagination */}
                 {historyTotalPages > 1 && (
-                  <div className="flex items-center justify-between mt-4">
-                    <div className="text-white/60 text-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 gap-3">
+                    <div className="text-white/60 text-xs sm:text-sm">
                       Showing {((historyCurrentPage - 1) * historyItemsPerPage) + 1} to {Math.min(historyCurrentPage * historyItemsPerPage, historyData.length)} of {historyData.length} trips
                     </div>
                     <div className="flex gap-2">
@@ -1101,20 +1101,27 @@ const TripManagement = ({ userRole }) => {
                       >
                         Previous
                       </button>
-                      <div className="flex gap-1">
-                        {Array.from({ length: historyTotalPages }, (_, i) => i + 1).map((page) => (
-                          <button
-                            key={page}
-                            onClick={() => setHistoryCurrentPage(page)}
-                            className={`px-3 py-1 rounded-lg text-sm transition-colors ${
-                              historyCurrentPage === page
-                                ? 'bg-orange-500 text-white'
-                                : 'bg-white/10 hover:bg-white/20 text-white'
-                            }`}
-                          >
-                            {page}
-                          </button>
-                        ))}
+                      <div className="flex gap-1 overflow-x-auto">
+                        {Array.from({ length: Math.min(historyTotalPages, 5) }, (_, i) => {
+                          let p;
+                          if (historyTotalPages <= 5) p = i + 1;
+                          else if (historyCurrentPage <= 3) p = i + 1;
+                          else if (historyCurrentPage >= historyTotalPages - 2) p = historyTotalPages - 4 + i;
+                          else p = historyCurrentPage - 2 + i;
+                          return (
+                            <button
+                              key={p}
+                              onClick={() => setHistoryCurrentPage(p)}
+                              className={`min-w-[32px] px-2 py-1 rounded-lg text-xs sm:text-sm transition-colors ${
+                                historyCurrentPage === p
+                                  ? 'bg-orange-500 text-white'
+                                  : 'bg-white/10 hover:bg-white/20 text-white'
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          );
+                        })}
                       </div>
                       <button
                         onClick={() => setHistoryCurrentPage(prev => Math.min(historyTotalPages, prev + 1))}
@@ -1236,8 +1243,8 @@ const TripManagement = ({ userRole }) => {
 
           {/* Pagination */}
           {busTotalPages > 1 && (
-            <div className="flex items-center justify-between mt-4">
-              <div className="text-white/60 text-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 gap-3">
+              <div className="text-white/60 text-xs sm:text-sm">
                 Showing {((busCurrentPage - 1) * busItemsPerPage) + 1} to {Math.min(busCurrentPage * busItemsPerPage, filteredBuses.length)} of {filteredBuses.length} buses
               </div>
               <div className="flex gap-2">
@@ -1248,20 +1255,27 @@ const TripManagement = ({ userRole }) => {
                 >
                   Previous
                 </button>
-                <div className="flex gap-1">
-                  {Array.from({ length: busTotalPages }, (_, i) => i + 1).map((page) => (
-                    <button
-                      key={page}
-                      onClick={() => setBusCurrentPage(page)}
-                      className={`px-3 py-1 rounded-lg text-sm transition-colors ${
-                        busCurrentPage === page
-                          ? 'bg-orange-500 text-white'
-                          : 'bg-white/10 hover:bg-white/20 text-white'
-                      }`}
-                    >
-                      {page}
-                    </button>
-                  ))}
+                <div className="flex gap-1 overflow-x-auto">
+                  {Array.from({ length: Math.min(busTotalPages, 5) }, (_, i) => {
+                    let p;
+                    if (busTotalPages <= 5) p = i + 1;
+                    else if (busCurrentPage <= 3) p = i + 1;
+                    else if (busCurrentPage >= busTotalPages - 2) p = busTotalPages - 4 + i;
+                    else p = busCurrentPage - 2 + i;
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => setBusCurrentPage(p)}
+                        className={`min-w-[32px] px-2 py-1 rounded-lg text-xs sm:text-sm transition-colors ${
+                          busCurrentPage === p
+                            ? 'bg-orange-500 text-white'
+                            : 'bg-white/10 hover:bg-white/20 text-white'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
                 </div>
                 <button
                   onClick={() => setBusCurrentPage(prev => Math.min(busTotalPages, prev + 1))}
@@ -1743,8 +1757,8 @@ const TripManagement = ({ userRole }) => {
                   
                   {/* Pagination */}
                   {busTrips.length > busTripsItemsPerPage && (
-                    <div className="flex items-center justify-between mt-4">
-                      <span className="text-white/60 text-sm">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 gap-3">
+                      <span className="text-white/60 text-xs sm:text-sm">
                         Showing {((busTripsCurrentPage - 1) * busTripsItemsPerPage) + 1} to {Math.min(busTripsCurrentPage * busTripsItemsPerPage, busTrips.length)} of {busTrips.length} trips
                       </span>
                       <div className="flex gap-2">
@@ -1755,7 +1769,7 @@ const TripManagement = ({ userRole }) => {
                         >
                           Previous
                         </button>
-                        <span className="text-white/60 text-sm self-center">
+                        <span className="text-white/60 text-xs sm:text-sm self-center">
                           Page {busTripsCurrentPage} of {Math.ceil(busTrips.length / busTripsItemsPerPage)}
                         </span>
                         <button
