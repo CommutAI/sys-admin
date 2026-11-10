@@ -425,9 +425,9 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
 const Dashboard = () => {
   const [kpis, setKpis] = useState([
     { title: "Today's Passengers", value: '0', change: 0, icon: Users, color: 'bg-blue-500' },
-    { title: 'Total Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-green-500' },
-    { title: 'Bus Fare Revenue', value: '$0', change: 0, icon: Bus, color: 'bg-purple-500' },
-    { title: 'Baggage Fee Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-orange-500' },
+    { title: 'Total Revenue', value: '₱0.00', change: 0, icon: DollarSign, color: 'bg-green-500' },
+    { title: 'Bus Fare Revenue', value: '₱0.00', change: 0, icon: Bus, color: 'bg-purple-500' },
+    { title: 'Baggage Fee Revenue', value: '₱0.00', change: 0, icon: DollarSign, color: 'bg-orange-500' },
   ]);
   const [alerts, setAlerts] = useState([]);
   const [stats, setStats] = useState({
@@ -672,12 +672,11 @@ const Dashboard = () => {
       const activeConductorsCount = staffUsers?.filter(u => u.role === 'conductor').length || 0;
       const activeDriversCount = staffUsers?.filter(u => u.role === 'driver').length || 0;
 
-      // Calculate revenue from today's completed transactions
+      // Calculate revenue from all completed transactions
       const { data: todayTransactions } = await supabase
         .from('transactions')
         .select('final_amount, fare_amount, baggage_fee, status')
-        .eq('status', 'completed')
-        .gte('created_at', todayStart);
+        .eq('status', 'completed');
 
       const totalRevenue = (todayTransactions || []).reduce((sum, t) => sum + parseFloat(t.final_amount || t.fare_amount || 0), 0);
       const busFareRevenue = (todayTransactions || []).reduce((sum, t) => sum + parseFloat(t.fare_amount || 0), 0);
