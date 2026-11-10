@@ -425,9 +425,9 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
 const Dashboard = () => {
   const [kpis, setKpis] = useState([
     { title: "Today's Passengers", value: '0', change: 0, icon: Users, color: 'bg-blue-500' },
-    { title: 'Total Revenue', value: '₱0.00', change: 0, icon: DollarSign, color: 'bg-green-500' },
-    { title: 'Bus Fare Revenue', value: '₱0.00', change: 0, icon: Bus, color: 'bg-purple-500' },
-    { title: 'Baggage Fee Revenue', value: '₱0.00', change: 0, icon: DollarSign, color: 'bg-orange-500' },
+    { title: 'Total Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-green-500' },
+    { title: 'Bus Fare Revenue', value: '$0', change: 0, icon: Bus, color: 'bg-purple-500' },
+    { title: 'Baggage Fee Revenue', value: '$0', change: 0, icon: DollarSign, color: 'bg-orange-500' },
   ]);
   const [alerts, setAlerts] = useState([]);
   const [stats, setStats] = useState({
@@ -672,7 +672,7 @@ const Dashboard = () => {
       const activeConductorsCount = staffUsers?.filter(u => u.role === 'conductor').length || 0;
       const activeDriversCount = staffUsers?.filter(u => u.role === 'driver').length || 0;
 
-      // Calculate revenue from all completed transactions
+      // Calculate all-time revenue from completed transactions
       const { data: todayTransactions } = await supabase
         .from('transactions')
         .select('final_amount, fare_amount, baggage_fee, status')
@@ -685,8 +685,8 @@ const Dashboard = () => {
       setKpis([
         { title: "Today's Passengers", value: totalPassengers.toLocaleString(), change: 8.5, icon: Users, color: 'bg-blue-500' },
         { title: 'Total Revenue', value: `₱${totalRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 12.3, icon: DollarSign, color: 'bg-green-500' },
-        { title: 'Bus Fare Revenue', value: `₱${busFareRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 10.1, icon: Bus, color: 'bg-purple-500' },
-        { title: 'Baggage Fee Revenue', value: `₱${baggageFeeRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 15.2, icon: DollarSign, color: 'bg-orange-500' },
+        { title: 'Total Fare Revenue', value: `₱${busFareRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 10.1, icon: Bus, color: 'bg-purple-500' },
+        { title: 'Total Baggage Revenue', value: `₱${baggageFeeRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 15.2, icon: DollarSign, color: 'bg-orange-500' },
       ]);
 
       // Transform irregularities to alerts
