@@ -156,6 +156,16 @@ const Reports = () => {
       { id: 'resolved_at', label: 'Resolved At' },
       { id: 'status', label: 'Status' },
     ],
+    card_reloads: [
+      { id: 'id', label: 'Reload ID' },
+      { id: 'card_uid', label: 'Card UID' },
+      { id: 'amount', label: 'Amount' },
+      { id: 'reload_method', label: 'Method' },
+      { id: 'reference_number', label: 'Reference #' },
+      { id: 'reload_location', label: 'Location' },
+      { id: 'status', label: 'Status' },
+      { id: 'recorded_at', label: 'Recorded At' },
+    ],
   };
 
   useEffect(() => {
@@ -323,6 +333,17 @@ const Reports = () => {
             .gte('detected_at', start)
             .lte('detected_at', end)
             .order('detected_at', { ascending: false });
+          if (error) throw error;
+          data = rows || [];
+          break;
+        }
+        case 'card_reloads': {
+          const { data: rows, error } = await supabase
+            .from('card_reloads')
+            .select('*, card:qr_cards!card_reloads_card_id_fkey(card_uid, owner_name)')
+            .gte('recorded_at', start)
+            .lte('recorded_at', end)
+            .order('recorded_at', { ascending: false });
           if (error) throw error;
           data = rows || [];
           break;
@@ -581,6 +602,30 @@ const Reports = () => {
           fileName = 'revenue_report';
           break;
 
+        case 'card_reloads': {
+          const { data: reloads } = await supabase
+            .from('card_reloads')
+            .select('*, card:qr_cards!card_reloads_card_id_fkey(card_uid, owner_name)')
+            .gte('recorded_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+            .lte('recorded_at', dateRange.end || new Date().toISOString())
+            .order('recorded_at', { ascending: false });
+
+          data = (reloads || []).map(r => {
+            const row = {};
+            if (selectedExportColumns.includes('id')) row['Reload ID'] = r.id;
+            if (selectedExportColumns.includes('card_uid')) row['Card UID'] = r.card?.card_uid || 'N/A';
+            if (selectedExportColumns.includes('amount')) row['Amount'] = r.amount || 0;
+            if (selectedExportColumns.includes('reload_method')) row['Method'] = r.reload_method || 'N/A';
+            if (selectedExportColumns.includes('reference_number')) row['Reference #'] = r.reference_number || 'N/A';
+            if (selectedExportColumns.includes('reload_location')) row['Location'] = r.reload_location || 'N/A';
+            if (selectedExportColumns.includes('status')) row['Status'] = r.status || 'N/A';
+            if (selectedExportColumns.includes('recorded_at')) row['Recorded At'] = r.recorded_at ? new Date(r.recorded_at).toLocaleString() : 'N/A';
+            return row;
+          });
+          fileName = 'card_reloads_report';
+          break;
+        }
+
         case 'buses':
           const { data: buses } = await supabase
             .from('buses')
@@ -781,6 +826,35 @@ const Reports = () => {
           fileName = 'revenue_report';
           break;
 
+        case 'card_reloads': {
+          const { data: reloads } = await supabase
+            .from('card_reloads')
+            .select('*, card:qr_cards!card_reloads_card_id_fkey(card_uid, owner_name)')
+            .gte('recorded_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+            .lte('recorded_at', dateRange.end || new Date().toISOString())
+            .order('recorded_at', { ascending: false });
+
+          columns = selectedExportColumns.map(colId => {
+            const col = availableColumns.card_reloads.find(c => c.id === colId);
+            return col ? col.label : colId;
+          });
+
+          data = (reloads || []).map(r => {
+            const row = [];
+            if (selectedExportColumns.includes('id')) row.push(r.id);
+            if (selectedExportColumns.includes('card_uid')) row.push(r.card?.card_uid || 'N/A');
+            if (selectedExportColumns.includes('amount')) row.push('₱' + parseFloat(r.amount || 0).toFixed(2));
+            if (selectedExportColumns.includes('reload_method')) row.push(r.reload_method || 'N/A');
+            if (selectedExportColumns.includes('reference_number')) row.push(r.reference_number || 'N/A');
+            if (selectedExportColumns.includes('reload_location')) row.push(r.reload_location || 'N/A');
+            if (selectedExportColumns.includes('status')) row.push(r.status || 'N/A');
+            if (selectedExportColumns.includes('recorded_at')) row.push(r.recorded_at ? new Date(r.recorded_at).toLocaleString() : 'N/A');
+            return row;
+          });
+          fileName = 'card_reloads_report';
+          break;
+        }
+
         case 'buses':
           const { data: buses } = await supabase
             .from('buses')
@@ -909,6 +983,7 @@ const Reports = () => {
     { id: 'trips', label: 'Trips', icon: Bus, description: 'Trip records with bus and conductor info' },
     { id: 'passengers', label: 'Passenger Counts', icon: Users, description: 'Passenger count snapshots' },
     { id: 'revenue', label: 'Revenue', icon: DollarSign, description: 'Financial transactions' },
+    { id: 'card_reloads', label: 'Card Reloads', icon: TrendingUp, description: 'Card top-up / reload history' },
     { id: 'buses', label: 'Buses', icon: Bus, description: 'Bus fleet information' },
     { id: 'irregularities', label: 'Fare Irregularities', icon: Activity, description: 'Manually reported fare issues by conductors' },
     { id: 'anomalies', label: 'Anomaly Detection', icon: AlertCircle, description: 'Auto-detected anomalies (trip duration, camera, crowding, etc.)' },
@@ -1669,7 +1744,7 @@ const Reports = () => {
                     className="bg-white/10 border border-white/20 rounded-xl pl-9 pr-4 py-2 text-white text-sm placeholder-white/40 focus:outline-none focus:border-orange-500 w-48"
                   />
                 </div>
-                {(reportType === 'irregularities' || reportType === 'anomalies' || reportType === 'trips' || reportType === 'revenue') && (
+                {(reportType === 'irregularities' || reportType === 'anomalies' || reportType === 'trips' || reportType === 'revenue' || reportType === 'card_reloads') && (
                   <select
                     value={previewStatusFilter}
                     onChange={(e) => { setPreviewStatusFilter(e.target.value); setPreviewCurrentPage(1); }}
@@ -1680,6 +1755,13 @@ const Reports = () => {
                       <>
                         <option value="unresolved">Unresolved</option>
                         <option value="resolved">Resolved</option>
+                      </>
+                    )}
+                    {reportType === 'card_reloads' && (
+                      <>
+                        <option value="completed">Completed</option>
+                        <option value="pending">Pending</option>
+                        <option value="failed">Failed</option>
                       </>
                     )}
                     {reportType === 'trips' && (
@@ -1747,6 +1829,13 @@ const Reports = () => {
                     matchesSearch = row.plate_number?.toLowerCase().includes(q) ||
                       row.route?.toLowerCase().includes(q) ||
                       row.status?.toLowerCase().includes(q);
+                  } else if (reportType === 'card_reloads') {
+                    matchesSearch = row.card?.card_uid?.toLowerCase().includes(q) ||
+                      row.card?.owner_name?.toLowerCase().includes(q) ||
+                      row.reload_method?.toLowerCase().includes(q) ||
+                      row.reload_location?.toLowerCase().includes(q) ||
+                      row.reference_number?.toLowerCase().includes(q) ||
+                      row.amount?.toString().includes(q);
                   }
                 }
 
@@ -1757,7 +1846,6 @@ const Reports = () => {
                     matchesStatus = row.status === previewStatusFilter;
                   }
                 }
-
                 return matchesSearch && matchesStatus;
               });
 
@@ -1840,6 +1928,18 @@ const Reports = () => {
                               <th className="pb-3 px-2 font-medium">Staff</th>
                               <th className="pb-3 px-2 font-medium">Date</th>
                               <th className="pb-3 px-2 font-medium">Status</th>
+                            </>
+                          )}
+                          {reportType === 'card_reloads' && (
+                            <>
+                              <th className="pb-3 px-2 font-medium">Card UID</th>
+                              <th className="pb-3 px-2 font-medium">Owner</th>
+                              <th className="pb-3 px-2 font-medium">Amount</th>
+                              <th className="pb-3 px-2 font-medium">Method</th>
+                              <th className="pb-3 px-2 font-medium">Reference #</th>
+                              <th className="pb-3 px-2 font-medium">Location</th>
+                              <th className="pb-3 px-2 font-medium">Status</th>
+                              <th className="pb-3 px-2 font-medium">Recorded At</th>
                             </>
                           )}
                           {reportType === 'buses' && (
@@ -1976,6 +2076,26 @@ const Reports = () => {
                                     {row.status || 'N/A'}
                                   </span>
                                 </td>
+                              </>
+                            )}
+                            {reportType === 'card_reloads' && (
+                              <>
+                                <td className="py-3 px-2 text-white font-mono text-xs">{row.card?.card_uid || '—'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.card?.owner_name || '—'}</td>
+                                <td className="py-3 px-2 text-white font-medium">₱{parseFloat(row.amount || 0).toFixed(2)}</td>
+                                <td className="py-3 px-2 text-white/70 capitalize">{row.reload_method || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs font-mono">{row.reference_number || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs">{row.reload_location || '—'}</td>
+                                <td className="py-3 px-2">
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${
+                                    row.status === 'completed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                                    row.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
+                                    'bg-red-500/20 text-red-400 border-red-500/30'
+                                  }`}>
+                                    {row.status || 'N/A'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-2 text-white/60 text-xs whitespace-nowrap">{row.recorded_at ? new Date(row.recorded_at).toLocaleString() : 'N/A'}</td>
                               </>
                             )}
                             {reportType === 'buses' && (
