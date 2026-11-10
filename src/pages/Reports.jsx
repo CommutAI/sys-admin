@@ -43,7 +43,7 @@ const Reports = () => {
   const [itemsPerPage] = useState(10);
   const [transactionSort, setTransactionSort] = useState({ field: 'created_at', direction: 'desc' });
   const [visibleTransactionColumns, setVisibleTransactionColumns] = useState([
-    'type', 'fare', 'baggage', 'amount', 'channel', 'staff', 'created_at'
+    'type', 'fare_amount', 'baggage_fee', 'amount', 'channel', 'staff', 'created_at'
   ]);
 
   // GCash transaction state
@@ -107,9 +107,13 @@ const Reports = () => {
       { id: 'id', label: 'Transaction ID' },
       { id: 'type', label: 'Type' },
       { id: 'amount', label: 'Amount' },
-      { id: 'fare', label: 'Fare' },
-      { id: 'baggage', label: 'Baggage' },
+      { id: 'fare_amount', label: 'Fare Amount' },
+      { id: 'discount_amount', label: 'Discount' },
+      { id: 'final_amount', label: 'Final Amount' },
+      { id: 'baggage_fee', label: 'Baggage Fee' },
+      { id: 'baggage_category', label: 'Baggage Category' },
       { id: 'channel', label: 'Channel' },
+      { id: 'payment_method', label: 'Payment Method' },
       { id: 'plate_number', label: 'Bus Plate' },
       { id: 'route', label: 'Route' },
       { id: 'staff', label: 'Staff' },
@@ -365,8 +369,9 @@ const Reports = () => {
     return transactions.filter(transaction => {
       const matchesSearch = transaction.channel?.toLowerCase().includes(transactionSearchTerm.toLowerCase()) ||
                            transaction.staff?.full_name?.toLowerCase().includes(transactionSearchTerm.toLowerCase()) ||
-                           transaction.fare?.toString().includes(transactionSearchTerm) ||
-                           transaction.baggage?.toString().includes(transactionSearchTerm) ||
+                           transaction.fare_amount?.toString().includes(transactionSearchTerm) ||
+                           transaction.baggage_fee?.toString().includes(transactionSearchTerm) ||
+                           transaction.payment_method?.toLowerCase().includes(transactionSearchTerm.toLowerCase()) ||
                            transaction.id?.toLowerCase().includes(transactionSearchTerm.toLowerCase());
       const matchesType = transactionFilterType === 'all' || transaction.type === transactionFilterType;
       const matchesStatus = transactionFilterStatus === 'all' || transaction.status === transactionFilterStatus;
@@ -559,12 +564,16 @@ const Reports = () => {
             const row = {};
             if (selectedExportColumns.includes('id')) row['Transaction ID'] = tx.id;
             if (selectedExportColumns.includes('type')) row['Type'] = tx.type;
-            if (selectedExportColumns.includes('amount')) row['Amount'] = tx.amount;
-            if (selectedExportColumns.includes('fare')) row['Fare'] = tx.fare || 0;
-            if (selectedExportColumns.includes('baggage')) row['Baggage'] = tx.baggage || 0;
+            if (selectedExportColumns.includes('amount')) row['Amount'] = tx.final_amount || tx.amount || 0;
+            if (selectedExportColumns.includes('fare_amount')) row['Fare Amount'] = tx.fare_amount || 0;
+            if (selectedExportColumns.includes('discount_amount')) row['Discount'] = tx.discount_amount || 0;
+            if (selectedExportColumns.includes('final_amount')) row['Final Amount'] = tx.final_amount || 0;
+            if (selectedExportColumns.includes('baggage_fee')) row['Baggage Fee'] = tx.baggage_fee || 0;
+            if (selectedExportColumns.includes('baggage_category')) row['Baggage Category'] = tx.baggage_category || 'N/A';
             if (selectedExportColumns.includes('channel')) row['Channel'] = tx.channel;
-            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = tx.trips?.bus_id?.plate_number;
-            if (selectedExportColumns.includes('route')) row['Route'] = tx.trips?.bus_id?.route;
+            if (selectedExportColumns.includes('payment_method')) row['Payment Method'] = tx.payment_method || 'N/A';
+            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = tx.trips?.bus_id?.plate_number || 'N/A';
+            if (selectedExportColumns.includes('route')) row['Route'] = tx.trips?.bus_id?.route || 'N/A';
             if (selectedExportColumns.includes('staff')) row['Staff'] = tx.staff?.full_name || 'N/A';
             if (selectedExportColumns.includes('created_at')) row['Created At'] = new Date(tx.created_at).toLocaleString();
             return row;
@@ -755,10 +764,14 @@ const Reports = () => {
             const row = [];
             if (selectedExportColumns.includes('id')) row.push(tx.id);
             if (selectedExportColumns.includes('type')) row.push(tx.type);
-            if (selectedExportColumns.includes('amount')) row.push('₱' + parseFloat(tx.amount).toFixed(2));
-            if (selectedExportColumns.includes('fare')) row.push('₱' + parseFloat(tx.fare || 0).toFixed(2));
-            if (selectedExportColumns.includes('baggage')) row.push('₱' + parseFloat(tx.baggage || 0).toFixed(2));
+            if (selectedExportColumns.includes('amount')) row.push('₱' + parseFloat(tx.final_amount || tx.amount || 0).toFixed(2));
+            if (selectedExportColumns.includes('fare_amount')) row.push('₱' + parseFloat(tx.fare_amount || 0).toFixed(2));
+            if (selectedExportColumns.includes('discount_amount')) row.push('₱' + parseFloat(tx.discount_amount || 0).toFixed(2));
+            if (selectedExportColumns.includes('final_amount')) row.push('₱' + parseFloat(tx.final_amount || 0).toFixed(2));
+            if (selectedExportColumns.includes('baggage_fee')) row.push(tx.baggage_fee ? '₱' + parseFloat(tx.baggage_fee).toFixed(2) : '—');
+            if (selectedExportColumns.includes('baggage_category')) row.push(tx.baggage_category || '—');
             if (selectedExportColumns.includes('channel')) row.push(tx.channel);
+            if (selectedExportColumns.includes('payment_method')) row.push(tx.payment_method || '—');
             if (selectedExportColumns.includes('plate_number')) row.push(tx.trips?.bus_id?.plate_number || 'N/A');
             if (selectedExportColumns.includes('route')) row.push(tx.trips?.bus_id?.route || 'N/A');
             if (selectedExportColumns.includes('staff')) row.push(tx.staff?.full_name || 'N/A');
@@ -1227,23 +1240,23 @@ const Reports = () => {
                           </div>
                         </th>
                       )}
-                      {visibleTransactionColumns.includes('fare') && (
+                      {visibleTransactionColumns.includes('fare_amount') && (
                         <th
                           className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('fare', transactionSort, setTransactionSort)}
+                          onClick={() => handleSort('fare_amount', transactionSort, setTransactionSort)}
                         >
                           <div className="flex items-center gap-1">
-                            Fare {renderSortIcon('fare', transactionSort)}
+                            Fare {renderSortIcon('fare_amount', transactionSort)}
                           </div>
                         </th>
                       )}
-                      {visibleTransactionColumns.includes('baggage') && (
+                      {visibleTransactionColumns.includes('baggage_fee') && (
                         <th
                           className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('baggage', transactionSort, setTransactionSort)}
+                          onClick={() => handleSort('baggage_fee', transactionSort, setTransactionSort)}
                         >
                           <div className="flex items-center gap-1">
-                            Baggage {renderSortIcon('baggage', transactionSort)}
+                            Baggage Fee {renderSortIcon('baggage_fee', transactionSort)}
                           </div>
                         </th>
                       )}
@@ -1301,17 +1314,21 @@ const Reports = () => {
                               </span>
                             </td>
                           )}
-                          {visibleTransactionColumns.includes('fare') && (
-                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.fare || 0).toFixed(2)}</td>
+                          {visibleTransactionColumns.includes('fare_amount') && (
+                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.fare_amount || 0).toFixed(2)}</td>
                           )}
-                          {visibleTransactionColumns.includes('baggage') && (
-                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.baggage || 0).toFixed(2)}</td>
+                          {visibleTransactionColumns.includes('baggage_fee') && (
+                            <td className="py-4 text-white/70">
+                              {transaction.baggage_fee
+                                ? `₱${parseFloat(transaction.baggage_fee).toFixed(2)}${transaction.baggage_category ? ` (${transaction.baggage_category})` : ''}`
+                                : '—'}
+                            </td>
                           )}
                           {visibleTransactionColumns.includes('amount') && (
-                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.amount).toFixed(2)}</td>
+                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.final_amount || transaction.amount || 0).toFixed(2)}</td>
                           )}
                           {visibleTransactionColumns.includes('channel') && (
-                            <td className="py-4 text-white/70">{transaction.channel}</td>
+                            <td className="py-4 text-white/70 capitalize">{transaction.channel}</td>
                           )}
                           {visibleTransactionColumns.includes('staff') && (
                             <td className="py-4 text-white/70">{transaction.staff?.full_name || 'N/A'}</td>
@@ -1816,9 +1833,10 @@ const Reports = () => {
                             <>
                               <th className="pb-3 px-2 font-medium">Type</th>
                               <th className="pb-3 px-2 font-medium">Fare</th>
-                              <th className="pb-3 px-2 font-medium">Baggage</th>
-                              <th className="pb-3 px-2 font-medium">Amount</th>
+                              <th className="pb-3 px-2 font-medium">Baggage Fee</th>
+                              <th className="pb-3 px-2 font-medium">Total</th>
                               <th className="pb-3 px-2 font-medium">Channel</th>
+                              <th className="pb-3 px-2 font-medium">Payment</th>
                               <th className="pb-3 px-2 font-medium">Staff</th>
                               <th className="pb-3 px-2 font-medium">Date</th>
                               <th className="pb-3 px-2 font-medium">Status</th>
@@ -1938,12 +1956,17 @@ const Reports = () => {
                                     {row.type?.replace(/_/g, ' ') || 'N/A'}
                                   </span>
                                 </td>
-                                <td className="py-3 px-2 text-white font-medium">₱{parseFloat(row.fare || 0).toFixed(2)}</td>
-                                <td className="py-3 px-2 text-white/70">₱{parseFloat(row.baggage || 0).toFixed(2)}</td>
-                                <td className="py-3 px-2 text-white font-medium">₱{parseFloat(row.amount || 0).toFixed(2)}</td>
+                                <td className="py-3 px-2 text-white font-medium">₱{parseFloat(row.fare_amount || 0).toFixed(2)}</td>
+                                <td className="py-3 px-2 text-white/70">
+                                  {row.baggage_fee
+                                    ? `₱${parseFloat(row.baggage_fee).toFixed(2)}${row.baggage_category ? ` · ${row.baggage_category}` : ''}`
+                                    : '—'}
+                                </td>
+                                <td className="py-3 px-2 text-white font-medium">₱{parseFloat(row.final_amount || row.amount || 0).toFixed(2)}</td>
                                 <td className="py-3 px-2 text-white/70 capitalize">{row.channel || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70 capitalize">{row.payment_method || row.channel || 'N/A'}</td>
                                 <td className="py-3 px-2 text-white/70">{row.staff?.full_name || 'N/A'}</td>
-                                <td className="py-3 px-2 text-white/60">{row.created_at ? new Date(row.created_at).toLocaleString() : 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs whitespace-nowrap">{row.created_at ? new Date(row.created_at).toLocaleString() : 'N/A'}</td>
                                 <td className="py-3 px-2">
                                   <span className={`px-2 py-1 rounded-full text-xs border ${
                                     row.status === 'completed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
