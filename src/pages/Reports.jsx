@@ -124,7 +124,6 @@ const Reports = () => {
     irregularities: [
       { id: 'id', label: 'Irregularity ID' },
       { id: 'type', label: 'Type' },
-      { id: 'anomaly_type', label: 'Anomaly Type' },
       { id: 'severity', label: 'Severity' },
       { id: 'description', label: 'Description' },
       { id: 'plate_number', label: 'Bus Plate' },
@@ -134,6 +133,18 @@ const Reports = () => {
       { id: 'boarding_stop', label: 'Boarding Stop' },
       { id: 'destination_stop', label: 'Destination Stop' },
       { id: 'notes', label: 'Notes' },
+      { id: 'detected_at', label: 'Detected At' },
+      { id: 'resolved', label: 'Resolved' },
+      { id: 'resolved_at', label: 'Resolved At' },
+      { id: 'status', label: 'Status' },
+    ],
+    anomalies: [
+      { id: 'id', label: 'Anomaly ID' },
+      { id: 'anomaly_type', label: 'Anomaly Type' },
+      { id: 'severity', label: 'Severity' },
+      { id: 'description', label: 'Description' },
+      { id: 'plate_number', label: 'Bus Plate' },
+      { id: 'route', label: 'Route' },
       { id: 'detected_at', label: 'Detected At' },
       { id: 'resolved', label: 'Resolved' },
       { id: 'resolved_at', label: 'Resolved At' },
@@ -281,9 +292,27 @@ const Reports = () => {
           break;
         }
         case 'irregularities': {
+          // Manual conductor-reported irregularities only
+          // These have a conductor_id set (submitted from the app) and types that are human-reported
+          const MANUAL_TYPES = ['passenger_dispute', 'wrong_route', 'overshooting', 'underpayment', 'card_sharing', 'unauthorized_passenger', 'fare_evasion', 'double_scan', 'other'];
           const { data: rows, error } = await supabase
             .from('fare_irregularities')
             .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*)), conductor:staff_users!fare_irregularities_conductor_id_fkey(full_name)')
+            .in('type', MANUAL_TYPES)
+            .gte('detected_at', start)
+            .lte('detected_at', end)
+            .order('detected_at', { ascending: false });
+          if (error) throw error;
+          data = rows || [];
+          break;
+        }
+        case 'anomalies': {
+          // Auto-detected anomalies only — identified by anomaly_type being set
+          const ANOMALY_TYPES = ['trip_duration', 'camera_malfunction', 'count_mismatch', 'overcrowding', 'staff_absence', 'passenger_spike', 'route_deviation', 'boarding_rate'];
+          const { data: rows, error } = await supabase
+            .from('fare_irregularities')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .in('anomaly_type', ANOMALY_TYPES)
             .gte('detected_at', start)
             .lte('detected_at', end)
             .order('detected_at', { ascending: false });
@@ -571,7 +600,6 @@ const Reports = () => {
             const row = {};
             if (selectedExportColumns.includes('id')) row['Irregularity ID'] = irr.id;
             if (selectedExportColumns.includes('type')) row['Type'] = irr.type?.replace(/_/g, ' ');
-            if (selectedExportColumns.includes('anomaly_type')) row['Anomaly Type'] = irr.anomaly_type?.replace(/_/g, ' ') || 'N/A';
             if (selectedExportColumns.includes('severity')) row['Severity'] = irr.severity || 'N/A';
             if (selectedExportColumns.includes('description')) row['Description'] = irr.description;
             if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = irr.trips?.bus_id?.plate_number || 'N/A';
@@ -589,9 +617,36 @@ const Reports = () => {
           });
           fileName = 'fare_irregularities_report';
           break;
+
+        case 'anomalies': {
+          const ANOMALY_TYPES = ['trip_duration', 'camera_malfunction', 'count_mismatch', 'overcrowding', 'staff_absence', 'passenger_spike', 'route_deviation', 'boarding_rate'];
+          const { data: anomalyRows } = await supabase
+            .from('fare_irregularities')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .in('anomaly_type', ANOMALY_TYPES)
+            .gte('detected_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+            .lte('detected_at', dateRange.end || new Date().toISOString())
+            .order('detected_at', { ascending: false });
+
+          data = (anomalyRows || []).map(row => {
+            const r = {};
+            if (selectedExportColumns.includes('id')) r['Anomaly ID'] = row.id;
+            if (selectedExportColumns.includes('anomaly_type')) r['Anomaly Type'] = row.anomaly_type?.replace(/_/g, ' ') || 'N/A';
+            if (selectedExportColumns.includes('severity')) r['Severity'] = row.severity || 'N/A';
+            if (selectedExportColumns.includes('description')) r['Description'] = row.description || 'N/A';
+            if (selectedExportColumns.includes('plate_number')) r['Bus Plate'] = row.trips?.bus_id?.plate_number || 'N/A';
+            if (selectedExportColumns.includes('route')) r['Route'] = row.trips?.bus_id?.route || 'N/A';
+            if (selectedExportColumns.includes('detected_at')) r['Detected At'] = row.detected_at ? new Date(row.detected_at).toLocaleString() : 'N/A';
+            if (selectedExportColumns.includes('resolved')) r['Resolved'] = row.resolved ? 'Yes' : 'No';
+            if (selectedExportColumns.includes('resolved_at')) r['Resolved At'] = row.resolved_at ? new Date(row.resolved_at).toLocaleString() : 'N/A';
+            if (selectedExportColumns.includes('status')) r['Status'] = row.status || 'N/A';
+            return r;
+          });
+          fileName = 'anomaly_detection_report';
+          break;
+        }
       }
 
-      const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Report');
       XLSX.writeFile(wb, `${fileName}_${new Date().toISOString().split('T')[0]}.xlsx`);
@@ -751,7 +806,6 @@ const Reports = () => {
             const row = [];
             if (selectedExportColumns.includes('id')) row.push(irr.id);
             if (selectedExportColumns.includes('type')) row.push(irr.type?.replace(/_/g, ' ') || 'N/A');
-            if (selectedExportColumns.includes('anomaly_type')) row.push(irr.anomaly_type?.replace(/_/g, ' ') || 'N/A');
             if (selectedExportColumns.includes('severity')) row.push(irr.severity || 'N/A');
             if (selectedExportColumns.includes('description')) row.push(irr.description || 'N/A');
             if (selectedExportColumns.includes('plate_number')) row.push(irr.trips?.bus_id?.plate_number || 'N/A');
@@ -769,6 +823,39 @@ const Reports = () => {
           });
           fileName = 'fare_irregularities_report';
           break;
+
+        case 'anomalies': {
+          const ANOMALY_TYPES = ['trip_duration', 'camera_malfunction', 'count_mismatch', 'overcrowding', 'staff_absence', 'passenger_spike', 'route_deviation', 'boarding_rate'];
+          const { data: anomalyRows } = await supabase
+            .from('fare_irregularities')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .in('anomaly_type', ANOMALY_TYPES)
+            .gte('detected_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+            .lte('detected_at', dateRange.end || new Date().toISOString())
+            .order('detected_at', { ascending: false });
+
+          columns = selectedExportColumns.map(colId => {
+            const col = availableColumns.anomalies.find(c => c.id === colId);
+            return col ? col.label : colId;
+          });
+
+          data = (anomalyRows || []).map(row => {
+            const r = [];
+            if (selectedExportColumns.includes('id')) r.push(row.id);
+            if (selectedExportColumns.includes('anomaly_type')) r.push(row.anomaly_type?.replace(/_/g, ' ') || 'N/A');
+            if (selectedExportColumns.includes('severity')) r.push(row.severity || 'N/A');
+            if (selectedExportColumns.includes('description')) r.push(row.description || 'N/A');
+            if (selectedExportColumns.includes('plate_number')) r.push(row.trips?.bus_id?.plate_number || 'N/A');
+            if (selectedExportColumns.includes('route')) r.push(row.trips?.bus_id?.route || 'N/A');
+            if (selectedExportColumns.includes('detected_at')) r.push(row.detected_at ? new Date(row.detected_at).toLocaleString() : 'N/A');
+            if (selectedExportColumns.includes('resolved')) r.push(row.resolved ? 'Yes' : 'No');
+            if (selectedExportColumns.includes('resolved_at')) r.push(row.resolved_at ? new Date(row.resolved_at).toLocaleString() : 'N/A');
+            if (selectedExportColumns.includes('status')) r.push(row.status || 'N/A');
+            return r;
+          });
+          fileName = 'anomaly_detection_report';
+          break;
+        }
       }
 
       const doc = new jsPDF();
@@ -807,7 +894,8 @@ const Reports = () => {
     { id: 'passengers', label: 'Passenger Counts', icon: Users, description: 'Passenger count snapshots' },
     { id: 'revenue', label: 'Revenue', icon: DollarSign, description: 'Financial transactions' },
     { id: 'buses', label: 'Buses', icon: Bus, description: 'Bus fleet information' },
-    { id: 'irregularities', label: 'Fare Irregularities', icon: Activity, description: 'Fare compliance issues' },
+    { id: 'irregularities', label: 'Fare Irregularities', icon: Activity, description: 'Manually reported fare issues by conductors' },
+    { id: 'anomalies', label: 'Anomaly Detection', icon: AlertCircle, description: 'Auto-detected anomalies (trip duration, camera, crowding, etc.)' },
   ];
 
   const tabs = [
@@ -1568,14 +1656,14 @@ const Reports = () => {
                     className="bg-white/10 border border-white/20 rounded-xl pl-9 pr-4 py-2 text-white text-sm placeholder-white/40 focus:outline-none focus:border-orange-500 w-48"
                   />
                 </div>
-                {(reportType === 'irregularities' || reportType === 'trips' || reportType === 'revenue') && (
+                {(reportType === 'irregularities' || reportType === 'anomalies' || reportType === 'trips' || reportType === 'revenue') && (
                   <select
                     value={previewStatusFilter}
                     onChange={(e) => { setPreviewStatusFilter(e.target.value); setPreviewCurrentPage(1); }}
                     className="bg-gray-800 border border-white/20 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-orange-500"
                   >
                     <option value="all">All</option>
-                    {reportType === 'irregularities' && (
+                    {(reportType === 'irregularities' || reportType === 'anomalies') && (
                       <>
                         <option value="unresolved">Unresolved</option>
                         <option value="resolved">Resolved</option>
@@ -1615,7 +1703,6 @@ const Reports = () => {
                   const q = previewSearchTerm.toLowerCase();
                   if (reportType === 'irregularities') {
                     matchesSearch = row.type?.toLowerCase().includes(q) ||
-                      row.anomaly_type?.toLowerCase().includes(q) ||
                       row.description?.toLowerCase().includes(q) ||
                       row.severity?.toLowerCase().includes(q) ||
                       row.card_uid?.toLowerCase().includes(q) ||
@@ -1623,6 +1710,12 @@ const Reports = () => {
                       row.destination_stop?.toLowerCase().includes(q) ||
                       row.notes?.toLowerCase().includes(q) ||
                       row.conductor?.full_name?.toLowerCase().includes(q) ||
+                      row.trips?.bus_id?.plate_number?.toLowerCase().includes(q) ||
+                      row.trips?.bus_id?.route?.toLowerCase().includes(q);
+                  } else if (reportType === 'anomalies') {
+                    matchesSearch = row.anomaly_type?.toLowerCase().includes(q) ||
+                      row.description?.toLowerCase().includes(q) ||
+                      row.severity?.toLowerCase().includes(q) ||
                       row.trips?.bus_id?.plate_number?.toLowerCase().includes(q) ||
                       row.trips?.bus_id?.route?.toLowerCase().includes(q);
                   } else if (reportType === 'trips') {
@@ -1645,7 +1738,7 @@ const Reports = () => {
                 }
 
                 if (previewStatusFilter !== 'all') {
-                  if (reportType === 'irregularities') {
+                  if (reportType === 'irregularities' || reportType === 'anomalies') {
                     matchesStatus = previewStatusFilter === 'resolved' ? row.resolved : !row.resolved;
                   } else {
                     matchesStatus = row.status === previewStatusFilter;
@@ -1679,7 +1772,6 @@ const Reports = () => {
                           {reportType === 'irregularities' && (
                             <>
                               <th className="pb-3 px-2 font-medium">Type</th>
-                              <th className="pb-3 px-2 font-medium">Anomaly</th>
                               <th className="pb-3 px-2 font-medium">Severity</th>
                               <th className="pb-3 px-2 font-medium">Description</th>
                               <th className="pb-3 px-2 font-medium">Bus Plate</th>
@@ -1689,6 +1781,17 @@ const Reports = () => {
                               <th className="pb-3 px-2 font-medium">Boarding Stop</th>
                               <th className="pb-3 px-2 font-medium">Destination</th>
                               <th className="pb-3 px-2 font-medium">Notes</th>
+                              <th className="pb-3 px-2 font-medium">Detected At</th>
+                              <th className="pb-3 px-2 font-medium">Status</th>
+                            </>
+                          )}
+                          {reportType === 'anomalies' && (
+                            <>
+                              <th className="pb-3 px-2 font-medium">Anomaly Type</th>
+                              <th className="pb-3 px-2 font-medium">Severity</th>
+                              <th className="pb-3 px-2 font-medium">Description</th>
+                              <th className="pb-3 px-2 font-medium">Bus Plate</th>
+                              <th className="pb-3 px-2 font-medium">Route</th>
                               <th className="pb-3 px-2 font-medium">Detected At</th>
                               <th className="pb-3 px-2 font-medium">Status</th>
                             </>
@@ -1748,7 +1851,6 @@ const Reports = () => {
                                     {row.type?.replace(/_/g, ' ') || 'N/A'}
                                   </span>
                                 </td>
-                                <td className="py-3 px-2 text-white/60 text-xs">{row.anomaly_type?.replace(/_/g, ' ') || '—'}</td>
                                 <td className="py-3 px-2">
                                   <span className={`px-2 py-1 rounded-full text-xs border ${
                                     row.severity === 'emergency' ? 'bg-red-700/30 text-red-300 border-red-700/40' :
@@ -1768,6 +1870,35 @@ const Reports = () => {
                                 <td className="py-3 px-2 text-white/60 text-xs">{row.boarding_stop || '—'}</td>
                                 <td className="py-3 px-2 text-white/60 text-xs">{row.destination_stop || '—'}</td>
                                 <td className="py-3 px-2 text-white/60 text-xs max-w-[160px] truncate" title={row.notes}>{row.notes || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs whitespace-nowrap">{row.detected_at ? new Date(row.detected_at).toLocaleString() : 'N/A'}</td>
+                                <td className="py-3 px-2">
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${row.resolved ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'}`}>
+                                    {row.resolved ? 'Resolved' : 'Unresolved'}
+                                  </span>
+                                </td>
+                              </>
+                            )}
+                            {reportType === 'anomalies' && (
+                              <>
+                                <td className="py-3 px-2">
+                                  <span className="px-2 py-1 rounded-full text-xs border bg-blue-500/20 text-blue-400 border-blue-500/30 capitalize">
+                                    {row.anomaly_type?.replace(/_/g, ' ') || 'N/A'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-2">
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${
+                                    row.severity === 'emergency' ? 'bg-red-700/30 text-red-300 border-red-700/40' :
+                                    row.severity === 'critical' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                                    row.severity === 'high' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' :
+                                    row.severity === 'medium' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
+                                    'bg-gray-500/20 text-gray-400 border-gray-500/30'
+                                  }`}>
+                                    {row.severity || 'N/A'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-2 text-white/70 text-xs max-w-[240px] truncate" title={row.description}>{row.description || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.plate_number || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.route || 'N/A'}</td>
                                 <td className="py-3 px-2 text-white/60 text-xs whitespace-nowrap">{row.detected_at ? new Date(row.detected_at).toLocaleString() : 'N/A'}</td>
                                 <td className="py-3 px-2">
                                   <span className={`px-2 py-1 rounded-full text-xs border ${row.resolved ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'}`}>
@@ -1800,7 +1931,7 @@ const Reports = () => {
                                 <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.route || 'N/A'}</td>
                                 <td className="py-3 px-2 text-white">{row.count ?? 'N/A'}</td>
                                 <td className="py-3 px-2 text-white/70">{row.ai_count ?? '—'}</td>
-                                <td className="py-3 px-2 text-white/70">{row.source || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.source || 'manual'}</td>
                                 <td className="py-3 px-2 text-white/60">{row.recorded_at ? new Date(row.recorded_at).toLocaleString() : 'N/A'}</td>
                               </>
                             )}
