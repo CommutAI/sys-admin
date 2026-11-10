@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getPersistedIp, discoverRaspberryPi } from '../services/piAutoDiscovery';
+import { getPersistedIp, discoverRaspberryPi, isSecureOrigin } from '../services/piAutoDiscovery';
 
 const HEARTBEAT_MS = 30_000;
 
@@ -19,8 +19,13 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   const heartbeatTimer = useRef(null);
   const deadRef = useRef(false);
 
+  // Skip all Pi connections when on HTTPS with no secure Pi URL configured
+  const piEnvUrl = import.meta.env.VITE_RASPBERRY_PI_URL;
+  const piDisabled = isSecureOrigin() && (!piEnvUrl || piEnvUrl.startsWith('http://') || piEnvUrl.startsWith('ws://'));
+
   // Auto-detect backend URL from Pi discovery
   const [backendUrl, setBackendUrl] = useState(() => {
+    if (piDisabled) return null;
     const piIp = getPersistedIp();
     return piIp ? `http://${piIp}:5000` : null;
   });
@@ -29,8 +34,12 @@ export function useBackendVideo({ autoConnect = true } = {}) {
     ? backendUrl.replace(/^http/, 'ws') + '/ws'
     : null;
 
-  // Auto-discover Pi if no IP is persisted
+  // Auto-discover Pi if no IP is persisted (local network only)
   useEffect(() => {
+    if (piDisabled) {
+      console.log('[Backend Video] Skipping Pi discovery — running on HTTPS with no secure Pi URL');
+      return;
+    }
     if (!getPersistedIp()) {
       console.log('[Backend Video] No persisted IP, starting discovery...');
       discoverRaspberryPi().then(ip => {

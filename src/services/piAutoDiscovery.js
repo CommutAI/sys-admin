@@ -15,6 +15,15 @@ const NETWORK_RANGES = [
 const LOCALHOST_ADDRESSES = ['localhost', '127.0.0.1']; // Try localhost for local development
 
 /**
+ * Returns true when the app is served over HTTPS (i.e. production/Vercel).
+ * Browsers block http:// and ws:// requests from https:// pages (Mixed Content),
+ * so Pi discovery and direct connections must be skipped in this context.
+ */
+export function isSecureOrigin() {
+  return typeof window !== 'undefined' && window.location.protocol === 'https:';
+}
+
+/**
  * Get persisted IP from localStorage
  */
 export function getPersistedIp() {
@@ -151,6 +160,14 @@ async function checkSmsApi(ip) {
  * Scans common network ranges to find the Raspberry Pi server
  */
 export async function discoverRaspberryPi(onProgress = null) {
+  // Skip local IP scanning on HTTPS unless a secure Pi URL (https://) is set.
+  // Browsers block http:// fetch requests from https:// pages (Mixed Content).
+  const piEnvUrl = typeof import.meta !== 'undefined' ? import.meta.env?.VITE_RASPBERRY_PI_URL : null;
+  if (isSecureOrigin() && (!piEnvUrl || piEnvUrl.startsWith('http://') || piEnvUrl.startsWith('ws://'))) {
+    console.log('[Pi Discovery] Skipping — running on HTTPS with no secure Pi URL configured');
+    return null;
+  }
+
   if (onProgress) {
     onProgress({ type: 'info', message: 'Starting network scan...' });
   }
