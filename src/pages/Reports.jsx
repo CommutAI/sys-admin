@@ -54,7 +54,7 @@ const Reports = () => {
   const [showGcashTransactions, setShowGcashTransactions] = useState(false);
   const [gcashSort, setGcashSort] = useState({ field: 'created_at', direction: 'desc' });
   const [visibleGcashColumns, setVisibleGcashColumns] = useState([
-    'created_at', 'phone_number', 'amount', 'status', 'stripe_payment_id'
+    'created_at', 'card_uid', 'fare_amount', 'baggage_fee', 'final_amount', 'status', 'staff'
   ]);
 
   // Recent trips state
@@ -425,9 +425,11 @@ const Reports = () => {
 
   const fetchGcashTransactions = async () => {
     try {
+      // GCash payments live in the transactions table with channel = 'gcash'
       const { data, error } = await supabase
-        .from('gcash_transactions')
-        .select('*')
+        .from('transactions')
+        .select('*, staff:staff_users!transactions_staff_id_fkey(full_name), card:qr_cards!transactions_card_id_fkey(card_uid, owner_name)')
+        .eq('channel', 'gcash')
         .order('created_at', { ascending: false });
       if (error) throw error;
       setGcashTransactions(data || []);
@@ -444,9 +446,12 @@ const Reports = () => {
 
   const filteredGcashTransactions = useMemo(() => {
     return gcashTransactions.filter(transaction => {
-      const matchesSearch = transaction.phone_number?.includes(gcashSearchTerm) ||
-                           transaction.stripe_payment_id?.toLowerCase().includes(gcashSearchTerm.toLowerCase()) ||
-                           transaction.id?.toLowerCase().includes(gcashSearchTerm.toLowerCase());
+      const matchesSearch = !gcashSearchTerm ||
+                           transaction.card?.card_uid?.toLowerCase().includes(gcashSearchTerm.toLowerCase()) ||
+                           transaction.card?.owner_name?.toLowerCase().includes(gcashSearchTerm.toLowerCase()) ||
+                           transaction.staff?.full_name?.toLowerCase().includes(gcashSearchTerm.toLowerCase()) ||
+                           transaction.fare_amount?.toString().includes(gcashSearchTerm) ||
+                           transaction.final_amount?.toString().includes(gcashSearchTerm);
       const matchesStatus = gcashFilterStatus === 'all' || transaction.status === gcashFilterStatus;
       const matchesDateRange = (!gcashDateRange.start || new Date(transaction.created_at) >= new Date(gcashDateRange.start)) &&
                                (!gcashDateRange.end || new Date(transaction.created_at) <= new Date(gcashDateRange.end));
@@ -1528,54 +1533,33 @@ const Reports = () => {
                   <thead>
                     <tr className="text-left text-white/60 border-b border-white/10">
                       {visibleGcashColumns.includes('created_at') && (
-                        <th
-                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('created_at', gcashSort, setGcashSort)}
-                        >
-                          <div className="flex items-center gap-1">
-                            Date {renderSortIcon('created_at', gcashSort)}
-                          </div>
+                        <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('created_at', gcashSort, setGcashSort)}>
+                          <div className="flex items-center gap-1">Date {renderSortIcon('created_at', gcashSort)}</div>
                         </th>
                       )}
-                      {visibleGcashColumns.includes('phone_number') && (
-                        <th
-                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('phone_number', gcashSort, setGcashSort)}
-                        >
-                          <div className="flex items-center gap-1">
-                            Phone Number {renderSortIcon('phone_number', gcashSort)}
-                          </div>
+                      {visibleGcashColumns.includes('card_uid') && (
+                        <th className="pb-3 font-medium">Card UID</th>
+                      )}
+                      {visibleGcashColumns.includes('fare_amount') && (
+                        <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('fare_amount', gcashSort, setGcashSort)}>
+                          <div className="flex items-center gap-1">Fare {renderSortIcon('fare_amount', gcashSort)}</div>
                         </th>
                       )}
-                      {visibleGcashColumns.includes('amount') && (
-                        <th
-                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('amount', gcashSort, setGcashSort)}
-                        >
-                          <div className="flex items-center gap-1">
-                            Amount {renderSortIcon('amount', gcashSort)}
-                          </div>
+                      {visibleGcashColumns.includes('baggage_fee') && (
+                        <th className="pb-3 font-medium">Baggage Fee</th>
+                      )}
+                      {visibleGcashColumns.includes('final_amount') && (
+                        <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('final_amount', gcashSort, setGcashSort)}>
+                          <div className="flex items-center gap-1">Total {renderSortIcon('final_amount', gcashSort)}</div>
                         </th>
                       )}
                       {visibleGcashColumns.includes('status') && (
-                        <th
-                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('status', gcashSort, setGcashSort)}
-                        >
-                          <div className="flex items-center gap-1">
-                            Status {renderSortIcon('status', gcashSort)}
-                          </div>
+                        <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('status', gcashSort, setGcashSort)}>
+                          <div className="flex items-center gap-1">Status {renderSortIcon('status', gcashSort)}</div>
                         </th>
                       )}
-                      {visibleGcashColumns.includes('stripe_payment_id') && (
-                        <th
-                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('stripe_payment_id', gcashSort, setGcashSort)}
-                        >
-                          <div className="flex items-center gap-1">
-                            Payment ID {renderSortIcon('stripe_payment_id', gcashSort)}
-                          </div>
-                        </th>
+                      {visibleGcashColumns.includes('staff') && (
+                        <th className="pb-3 font-medium">Staff</th>
                       )}
                       <th className="pb-3 font-medium">Actions</th>
                     </tr>
@@ -1585,25 +1569,35 @@ const Reports = () => {
                       paginatedGcashTransactions.map((transaction) => (
                         <tr key={transaction.id} className="border-b border-white/5 hover:bg-white/5">
                           {visibleGcashColumns.includes('created_at') && (
-                            <td className="py-4 text-white/70 text-sm">
+                            <td className="py-4 text-white/70 text-sm whitespace-nowrap">
                               {new Date(transaction.created_at).toLocaleString()}
                             </td>
                           )}
-                          {visibleGcashColumns.includes('phone_number') && (
-                            <td className="py-4 text-white font-medium">{transaction.phone_number}</td>
+                          {visibleGcashColumns.includes('card_uid') && (
+                            <td className="py-4 text-white font-mono text-xs">{transaction.card?.card_uid || 'N/A'}</td>
                           )}
-                          {visibleGcashColumns.includes('amount') && (
-                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.amount).toFixed(2)}</td>
+                          {visibleGcashColumns.includes('fare_amount') && (
+                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.fare_amount || 0).toFixed(2)}</td>
+                          )}
+                          {visibleGcashColumns.includes('baggage_fee') && (
+                            <td className="py-4 text-white/70">
+                              {transaction.baggage_fee
+                                ? `₱${parseFloat(transaction.baggage_fee).toFixed(2)}${transaction.baggage_category ? ` · ${transaction.baggage_category}` : ''}`
+                                : '—'}
+                            </td>
+                          )}
+                          {visibleGcashColumns.includes('final_amount') && (
+                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.final_amount || transaction.amount || 0).toFixed(2)}</td>
                           )}
                           {visibleGcashColumns.includes('status') && (
                             <td className="py-4">
-                              <span className={`px-3 py-1 rounded-full text-xs border ${gcashStatusColors[transaction.status]}`}>
+                              <span className={`px-3 py-1 rounded-full text-xs border ${gcashStatusColors[transaction.status] || 'bg-gray-500/20 text-gray-400 border-gray-500/30'}`}>
                                 {transaction.status}
                               </span>
                             </td>
                           )}
-                          {visibleGcashColumns.includes('stripe_payment_id') && (
-                            <td className="py-4 text-white/70 text-sm">{transaction.stripe_payment_id || 'N/A'}</td>
+                          {visibleGcashColumns.includes('staff') && (
+                            <td className="py-4 text-white/70 text-sm">{transaction.staff?.full_name || 'N/A'}</td>
                           )}
                           <td className="py-4">
                             <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
