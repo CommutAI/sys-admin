@@ -1057,12 +1057,12 @@ const TripManagement = ({ userRole }) => {
                     <tbody>
                       {historyPaginatedData.map((trip) => (
                         <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
-                          <td className="text-white py-3 px-4">{trip.bus_id?.plate_number || 'N/A'}</td>
-                          <td className="text-white/70 py-3 px-4">{trip.bus_id?.route || 'N/A'}</td>
-                          <td className="text-white/70 py-3 px-4">{trip.conductor?.full_name || 'N/A'}</td>
-                          <td className="text-white/70 py-3 px-4">{trip.driver?.full_name || 'N/A'}</td>
-                          <td className="text-white/60 py-3 px-4">{new Date(trip.started_at).toLocaleString()}</td>
-                          <td className="py-3 px-4">
+                          <td className="text-white py-3 px-4 text-sm">{trip.bus_id?.plate_number || 'N/A'}</td>
+                          <td className="text-white/70 py-3 px-4 text-sm">{trip.bus_id?.route || 'N/A'}</td>
+                          <td className="text-white/70 py-3 px-4 text-sm">{trip.conductor?.full_name || 'N/A'}</td>
+                          <td className="text-white/70 py-3 px-4 text-sm">{trip.driver?.full_name || 'N/A'}</td>
+                          <td className="text-white/60 py-3 px-4 text-sm">{new Date(trip.started_at).toLocaleString()}</td>
+                          <td className="py-3 px-4 text-sm">
                             <select
                               value={trip.status}
                               onChange={(e) => handleUpdateTripStatus(trip.id, e.target.value)}
@@ -1073,7 +1073,7 @@ const TripManagement = ({ userRole }) => {
                               <option value="cancelled" className="bg-gray-800 text-white">Cancelled</option>
                             </select>
                           </td>
-                          <td className="py-3 px-4">
+                          <td className="py-3 px-4 text-sm">
                             <button
                               onClick={() => openViewModal(trip)}
                               className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-white text-xs transition-colors"

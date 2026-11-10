@@ -228,7 +228,7 @@ const PassengerAnalytics = () => {
 
       const { error } = await supabase
         .from('fare_irregularities')
-        .update({ 
+        .update({
           resolved: true,
           resolved_at: new Date().toISOString(),
           resolved_by: (await supabase.auth.getUser()).data.user?.id
@@ -240,7 +240,14 @@ const PassengerAnalytics = () => {
       // Log irregularity resolution to audit logs
       await AuditService.logIrregularityResolved(irregularityId, irregularityType);
 
-      fetchAnalyticsData();
+      // Update local state instead of refetching all data
+      setFareIrregularities(prev =>
+        prev.map(irr =>
+          irr.id === irregularityId
+            ? { ...irr, resolved: true, resolved_at: new Date().toISOString() }
+            : irr
+        )
+      );
     } catch (error) {
       console.error('Error resolving irregularity:', error);
       alert('Error resolving irregularity: ' + error.message);

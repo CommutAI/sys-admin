@@ -349,10 +349,10 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
       </div>
 
       {/* Video — responsive height */}
-      <div className="relative bg-black rounded-xl overflow-hidden" style={{ height: '300px', minHeight: '250px' }}>
+      <div className="relative bg-black rounded-xl overflow-hidden" style={{ height: '450px', minHeight: '350px' }}>
         {/* Backend YOLO Stream */}
         {useBackend && (
-          <img ref={videoRef} alt="Live feed" className={`w-full h-full object-contain ${isStreaming ? 'block' : 'hidden'}`} />
+          <img ref={videoRef} alt="Live feed" className={`w-full h-full object-cover ${isStreaming ? 'block' : 'hidden'}`} />
         )}
 
         {/* Backend connecting message */}
@@ -1012,7 +1012,7 @@ const Dashboard = () => {
       {/* Live Video Monitoring and Raspberry Pi Status — Responsive */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Live Video Monitoring — compact widget */}
-        <div className="glass-card p-4 rounded-xl lg:col-span-2">
+        <div className="glass-card p-3 sm:p-4 rounded-xl lg:col-span-2">
           <CompactVideoFeed
             online={backendStreaming || piOnline}
             connectionStatus={backendStreaming ? 'connected' : piConnectionStatus}
