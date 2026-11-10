@@ -18,6 +18,7 @@ import {
   getPiBaseUrl,
 } from '../services/raspberryPiApi';
 import { supabase } from '../lib/supabase';
+import { isSecureOrigin } from '../services/piAutoDiscovery';
 
 const RECONNECT_BASE     = 3_000;
 const RECONNECT_MAX      = 30_000;
@@ -281,6 +282,13 @@ export function useRaspberryPi(options = {}) {
     // Resolve URL from Supabase pi_devices
     let wsUrl, httpBase;
     try {
+      // Skip WebSocket connection on HTTPS — local Pi IPs are blocked by browser Mixed Content policy
+      if (isSecureOrigin()) {
+        console.log('[Pi] Skipping WebSocket — running on HTTPS (local Pi not reachable from public internet)');
+        switchToDatabaseMode();
+        return;
+      }
+
       const { resolvePiUrl } = await import('../services/raspberryPiApi');
       httpBase = await resolvePiUrl();
       wsUrl = httpBase.replace(/^http/, 'ws').replace(/\/?$/, '/ws');
