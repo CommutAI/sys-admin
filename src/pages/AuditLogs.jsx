@@ -327,8 +327,8 @@ const AuditLogs = () => {
             </div>
 
             {/* Pagination */}
-            <div className="mt-5 pt-4 border-t border-white/10 flex items-center justify-between">
-              <p className="text-white/50 text-sm">
+            <div className="mt-5 pt-4 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <p className="text-white/50 text-xs sm:text-sm">
                 {filteredLogs.length === 0
                   ? 'No results'
                   : `Showing ${((currentPage - 1) * itemsPerPage) + 1}–${Math.min(currentPage * itemsPerPage, filteredLogs.length)} of ${filteredLogs.length.toLocaleString()} logs`
@@ -343,18 +343,18 @@ const AuditLogs = () => {
                   >
                     <ChevronLeft size={16} />
                   </button>
-                  <div className="flex gap-1">
-                    {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+                  <div className="flex gap-1 overflow-x-auto">
+                    {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
                       let p;
-                      if (totalPages <= 7) p = i + 1;
-                      else if (currentPage <= 4) p = i + 1;
-                      else if (currentPage >= totalPages - 3) p = totalPages - 6 + i;
-                      else p = currentPage - 3 + i;
+                      if (totalPages <= 5) p = i + 1;
+                      else if (currentPage <= 3) p = i + 1;
+                      else if (currentPage >= totalPages - 2) p = totalPages - 4 + i;
+                      else p = currentPage - 2 + i;
                       return (
                         <button
                           key={p}
                           onClick={() => setCurrentPage(p)}
-                          className={`w-8 h-8 rounded-lg text-sm transition-colors ${
+                          className={`min-w-[32px] w-8 h-8 rounded-lg text-xs sm:text-sm transition-colors ${
                             currentPage === p
                               ? 'bg-orange-500 text-white'
                               : 'bg-white/10 hover:bg-white/20 text-white/70'

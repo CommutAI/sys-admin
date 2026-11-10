@@ -118,17 +118,17 @@ const estimateTimeToDestination = (progress, routeDistance = ROUTE_TOTAL_DISTANC
 
 
 const KPICard = ({ title, value, change, icon: Icon, color }) => (
-  <div className="glass-card p-6 hover:scale-105 transition-transform duration-300">
+  <div className="glass-card p-4 sm:p-6 hover:scale-105 transition-transform duration-300">
     <div className="flex items-center justify-between mb-4">
-      <div className={`w-12 h-12 rounded-xl ${color} flex items-center justify-center`}>
-        <Icon className="w-6 h-6 text-white" />
+      <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl ${color} flex items-center justify-center`}>
+        <Icon className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
       </div>
-      <span className={`text-sm ${change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+      <span className={`text-xs sm:text-sm ${change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
         {change >= 0 ? '+' : ''}{change}%
       </span>
     </div>
-    <h3 className="text-white/60 text-sm mb-1">{title}</h3>
-    <p className="text-white text-3xl font-bold">{value}</p>
+    <h3 className="text-white/60 text-xs sm:text-sm mb-1">{title}</h3>
+    <p className="text-white text-xl sm:text-3xl font-bold">{value}</p>
   </div>
 );
 
@@ -140,8 +140,8 @@ const BusDetailsModal = ({ bus, onClose }) => {
     <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999] p-4">
       <div className="bg-gray-900 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl relative z-[1000000]">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-800">
-          <h2 className="text-white text-xl font-bold flex items-center gap-2">
+        <div className="flex items-center justify-between p-4 sm:p-6 border-b border-gray-700 bg-gray-800">
+          <h2 className="text-white text-lg sm:text-xl font-bold flex items-center gap-2">
             <Bus className="text-orange-400" size={24} />
             Bus #{bus.plate || 'N/A'} Details
           </h2>
@@ -153,10 +153,10 @@ const BusDetailsModal = ({ bus, onClose }) => {
           </button>
         </div>
 
-        {/* Split Pane Content */}
-        <div className="grid grid-cols-2 divide-x divide-gray-700">
+        {/* Split Pane Content - Responsive */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-gray-700">
           {/* Left Column */}
-          <div className="p-6 space-y-6">
+          <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
             {/* Route */}
             <div>
               <p className="text-gray-400 text-sm mb-1">Route</p>
@@ -176,7 +176,7 @@ const BusDetailsModal = ({ bus, onClose }) => {
             {/* Passengers */}
             <div>
               <p className="text-gray-400 text-sm mb-1">Passengers</p>
-              <p className="text-white text-3xl font-bold flex items-center gap-2">
+              <p className="text-white text-2xl sm:text-3xl font-bold flex items-center gap-2">
                 <Users className="text-orange-400" size={24} />
                 {bus.passengers}
               </p>
@@ -185,7 +185,7 @@ const BusDetailsModal = ({ bus, onClose }) => {
             {/* GPS Coordinates */}
             <div>
               <p className="text-gray-400 text-sm mb-1">GPS Coordinates</p>
-              <p className="text-white font-mono text-sm bg-gray-800 p-3 rounded-lg border border-gray-700">
+              <p className="text-white font-mono text-xs sm:text-sm bg-gray-800 p-3 rounded-lg border border-gray-700 break-all">
                 {Number(bus.lat).toFixed(6)}, {Number(bus.lng).toFixed(6)}
               </p>
             </div>
@@ -202,7 +202,7 @@ const BusDetailsModal = ({ bus, onClose }) => {
           </div>
 
           {/* Right Column */}
-          <div className="p-6 space-y-6 bg-gray-800/50">
+          <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 bg-gray-800/50">
             {/* Route Progress */}
             {bus.routeProgress !== undefined && (
               <>
@@ -215,7 +215,7 @@ const BusDetailsModal = ({ bus, onClose }) => {
                         style={{ width: `${bus.routeProgress}%` }}
                       />
                     </div>
-                    <span className="text-orange-400 font-bold text-xl min-w-[70px] text-right">
+                    <span className="text-orange-400 font-bold text-lg sm:text-xl min-w-[60px] sm:min-w-[70px] text-right">
                       {bus.routeProgress.toFixed(1)}%
                     </span>
                   </div>
@@ -223,12 +223,12 @@ const BusDetailsModal = ({ bus, onClose }) => {
 
                 <div>
                   <p className="text-gray-400 text-sm mb-1">Direction</p>
-                  <p className="text-white font-semibold text-lg">{bus.routeDirection}</p>
+                  <p className="text-white font-semibold text-base sm:text-lg">{bus.routeDirection}</p>
                 </div>
 
                 <div>
                   <p className="text-gray-400 text-sm mb-1">ETA to Destination</p>
-                  <p className="text-white font-semibold text-2xl">{bus.eta}</p>
+                  <p className="text-white font-semibold text-xl sm:text-2xl">{bus.eta}</p>
                 </div>
               </>
             )}
@@ -236,7 +236,7 @@ const BusDetailsModal = ({ bus, onClose }) => {
             {/* Last Update */}
             <div>
               <p className="text-gray-400 text-sm mb-1">Last Update</p>
-              <p className="text-white font-semibold">
+              <p className="text-white font-semibold text-sm">
                 {bus.locationUpdatedAt ? new Date(bus.locationUpdatedAt).toLocaleString() : 'No data'}
               </p>
             </div>
@@ -244,7 +244,7 @@ const BusDetailsModal = ({ bus, onClose }) => {
         </div>
 
         {/* Footer */}
-        <div className="p-6 border-t border-gray-700 bg-gray-800">
+        <div className="p-4 sm:p-6 border-t border-gray-700 bg-gray-800">
           <button
             onClick={onClose}
             className="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-xl font-medium transition-colors"
@@ -339,7 +339,7 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
           <Video className="w-4 h-4 text-orange-400" />
           <h2 className="text-white font-semibold text-sm">Bus Video Monitoring</h2>
           <span className={`text-xs ${statusColor}`}>· {statusLabel}</span>
-          {useBackend && <span className="text-xs text-green-400">· 90%+ AI Accuracy</span>}
+          {useBackend && <span className="text-xs text-green-400 hidden sm:inline">· 90%+ AI Accuracy</span>}
         </div>
         <div className="flex items-center gap-1.5">
           <button onClick={refresh} className="bg-white/10 hover:bg-white/20 text-white p-1.5 rounded-lg transition-colors">
@@ -348,8 +348,8 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
         </div>
       </div>
 
-      {/* Video — fixed height for compact size */}
-      <div className="relative bg-black rounded-xl overflow-hidden" style={{ height: '500px' }}>
+      {/* Video — responsive height */}
+      <div className="relative bg-black rounded-xl overflow-hidden" style={{ height: '300px', minHeight: '250px' }}>
         {/* Backend YOLO Stream */}
         {useBackend && (
           <img ref={videoRef} alt="Live feed" className={`w-full h-full object-contain ${isStreaming ? 'block' : 'hidden'}`} />
@@ -999,18 +999,18 @@ const Dashboard = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-white text-3xl font-bold mb-2">Dashboard</h1>
-        <p className="text-white/60">Welcome back! Here's what's happening today.</p>
+        <h1 className="text-white text-2xl sm:text-3xl font-bold mb-2">Dashboard</h1>
+        <p className="text-white/60 text-sm sm:text-base">Welcome back! Here's what's happening today.</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         {kpis.map((kpi, index) => (
           <KPICard key={index} {...kpi} />
         ))}
       </div>
 
-      {/* Live Video Monitoring and Raspberry Pi Status — Side by Side */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Live Video Monitoring and Raspberry Pi Status — Responsive */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Live Video Monitoring — compact widget */}
         <div className="glass-card p-4 rounded-xl lg:col-span-2">
           <CompactVideoFeed
@@ -1025,8 +1025,8 @@ const Dashboard = () => {
         </div>
 
         {/* Video Processing Status Indicators */}
-        <div className="glass-card p-6 rounded-xl">
-          <h2 className="text-white text-lg font-bold mb-4 flex items-center gap-2">
+        <div className="glass-card p-4 sm:p-6 rounded-xl">
+          <h2 className="text-white text-base sm:text-lg font-bold mb-4 flex items-center gap-2 flex-wrap">
             <Camera className="text-orange-400" size={20} />
             Video Processing Status
             {piAssignedBus?.busPlate && (
@@ -1038,59 +1038,59 @@ const Dashboard = () => {
               Stream Mode
             </span>
           </h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-white/5 p-4 rounded-xl">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4">
+            <div className="bg-white/5 p-3 sm:p-4 rounded-xl">
               <div className="flex items-center gap-2 mb-2">
                 <Video className="w-4 h-4 text-indigo-400" />
                 <p className="text-white/60 text-xs">Backend</p>
               </div>
-              <p className={`text-lg font-bold ${backendStreaming ? 'text-green-400' : 'text-red-400'}`}>
+              <p className={`text-base sm:text-lg font-bold ${backendStreaming ? 'text-green-400' : 'text-red-400'}`}>
                 {backendStreaming ? 'Online' : 'Offline'}
               </p>
               <p className="text-white/40 text-xs mt-1">{backendStreaming ? 'Processing frames' : 'Disconnected'}</p>
             </div>
-            <div className="bg-white/5 p-4 rounded-xl">
+            <div className="bg-white/5 p-3 sm:p-4 rounded-xl">
               <div className="flex items-center gap-2 mb-2">
                 <Camera className="w-4 h-4 text-blue-400" />
                 <p className="text-white/60 text-xs">Camera</p>
               </div>
-              <p className={`text-lg font-bold ${backendStreaming ? 'text-green-400' : 'text-red-400'}`}>
+              <p className={`text-base sm:text-lg font-bold ${backendStreaming ? 'text-green-400' : 'text-red-400'}`}>
                 {backendStreaming ? 'Streaming' : 'Inactive'}
               </p>
               <p className="text-white/40 text-xs mt-1">{backendStreaming ? 'Pi sending frames' : 'No stream'}</p>
             </div>
-            <div className="bg-white/5 p-4 rounded-xl">
+            <div className="bg-white/5 p-3 sm:p-4 rounded-xl">
               <div className="flex items-center gap-2 mb-2">
                 <Users className="w-4 h-4 text-purple-400" />
                 <p className="text-white/60 text-xs">Passengers</p>
               </div>
-              <p className="text-lg font-bold text-white">{backendCount || piPassengerCount}</p>
+              <p className="text-base sm:text-lg font-bold text-white">{backendCount || piPassengerCount}</p>
               <p className="text-white/40 text-xs mt-1">Current count</p>
             </div>
-            <div className="bg-white/5 p-4 rounded-xl">
+            <div className="bg-white/5 p-3 sm:p-4 rounded-xl">
               <div className="flex items-center gap-2 mb-2">
                 <Activity className="w-4 h-4 text-orange-400" />
                 <p className="text-white/60 text-xs">Trip ID</p>
               </div>
-              <p className="text-lg font-bold text-white">
+              <p className="text-base sm:text-lg font-bold text-white">
                 {piCurrentTripId ? `#${piCurrentTripId.slice(0, 8)}` : 'None'}
               </p>
               <p className="text-white/40 text-xs mt-1">Active trip</p>
             </div>
-            <div className="bg-white/5 p-4 rounded-xl">
+            <div className="bg-white/5 p-3 sm:p-4 rounded-xl">
               <div className="flex items-center gap-2 mb-2">
                 <Brain className="w-4 h-4 text-purple-400" />
                 <p className="text-white/60 text-xs">Detection</p>
               </div>
-              <p className="text-lg font-bold text-white">YOLOv8n</p>
+              <p className="text-base sm:text-lg font-bold text-white">YOLOv8n</p>
               <p className="text-white/40 text-xs mt-1">Backend AI</p>
             </div>
-            <div className="bg-white/5 p-4 rounded-xl">
+            <div className="bg-white/5 p-3 sm:p-4 rounded-xl">
               <div className="flex items-center gap-2 mb-2">
                 <AlertTriangle className={`w-4 h-4 ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`} />
                 <p className="text-white/60 text-xs">Emergency</p>
               </div>
-              <p className={`text-lg font-bold ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`}>
+              <p className={`text-base sm:text-lg font-bold ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-green-400'}`}>
                 {piEmergencyStatus.emergency_active ? 'Active' : 'Clear'}
               </p>
             </div>
@@ -1099,9 +1099,9 @@ const Dashboard = () => {
       </div>
 
       {/* Live Map Section - Enhanced */}
-      <div className="glass-card p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-white text-xl font-bold flex items-center gap-2">
+      <div className="glass-card p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
+          <h2 className="text-white text-lg sm:text-xl font-bold flex items-center gap-2">
             <MapPin className="text-orange-400" />
             Live Bus Tracking
           </h2>
@@ -1110,15 +1110,15 @@ const Dashboard = () => {
               fetchLiveMapData();
               fetchDashboardData();
             }}
-            className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+            className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors self-start sm:self-auto"
           >
             <RefreshCw size={18} />
             Refresh
           </button>
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2">
-            <div className="h-[500px] rounded-xl overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+          <div className="lg:col-span-2 order-2 lg:order-1">
+            <div className="h-[350px] sm:h-[500px] rounded-xl overflow-hidden">
               <MapContainer center={mapCenter} zoom={mapZoom} style={{ height: '100%', width: '100%' }}>
                 <TileLayer
                   attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -1135,14 +1135,14 @@ const Dashboard = () => {
                 ))}
               </MapContainer>
             </div>
-            <div className="bg-white/5 p-4 rounded-xl mt-4">
+            <div className="bg-white/5 p-3 sm:p-4 rounded-xl mt-4">
               <h3 className="text-white text-sm font-bold mb-3">Map Legend</h3>
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-1 bg-orange-500 rounded"></div>
                   <span className="text-white/70 text-xs">Route: Manolo Fortich ↔ Agora</span>
                 </div>
-                <div className="flex gap-6 text-xs">
+                <div className="flex flex-wrap gap-4 sm:gap-6 text-xs">
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full bg-green-400" />
                     <span className="text-white/70">On Active Trip</span>
@@ -1159,34 +1159,34 @@ const Dashboard = () => {
               </div>
             </div>
           </div>
-          <div className="space-y-4">
+          <div className="space-y-4 order-1 lg:order-2">
             {/* Quick Stats */}
             <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white/5 p-4 rounded-xl">
+              <div className="bg-white/5 p-3 sm:p-4 rounded-xl">
                 <div className="flex items-center gap-2 mb-2">
                   <Bus className="w-4 h-4 text-blue-400" />
                   <p className="text-white/60 text-xs">Active Buses</p>
                 </div>
-                <p className="text-white text-2xl font-bold">{mapStats.activeBuses}</p>
+                <p className="text-white text-xl sm:text-2xl font-bold">{mapStats.activeBuses}</p>
                 <p className="text-white/40 text-xs mt-1">on trip now</p>
               </div>
-              <div className="bg-white/5 p-4 rounded-xl">
+              <div className="bg-white/5 p-3 sm:p-4 rounded-xl">
                 <div className="flex items-center gap-2 mb-2">
                   <Users className="w-4 h-4 text-green-400" />
                   <p className="text-white/60 text-xs">Passengers</p>
                 </div>
-                <p className="text-white text-2xl font-bold">{mapStats.totalPassengers}</p>
+                <p className="text-white text-xl sm:text-2xl font-bold">{mapStats.totalPassengers}</p>
                 <p className="text-white/40 text-xs mt-1">on buses</p>
               </div>
             </div>
 
             {/* Fleet List */}
-            <div className="bg-white/5 p-4 rounded-xl">
+            <div className="bg-white/5 p-3 sm:p-4 rounded-xl">
               <h3 className="text-white text-sm font-bold mb-3 flex items-center gap-2">
                 <Navigation className="text-green-400" size={16} />
                 Active Fleet
               </h3>
-              <div className="space-y-2 max-h-[300px] overflow-y-auto">
+              <div className="space-y-2 max-h-[250px] sm:max-h-[300px] overflow-y-auto">
                 {buses.filter(bus => bus.status === 'active').length > 0 ? (
                   buses.filter(bus => bus.status === 'active').map((bus) => (
                     <div
@@ -1252,55 +1252,55 @@ const Dashboard = () => {
       </div>
 
       {/* Emergency Alerts and Recent Activity — Split Screen */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Emergency Alerts */}
         <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-white text-lg font-bold flex items-center gap-2">
+            <h2 className="text-white text-base sm:text-lg font-bold flex items-center gap-2">
               <AlertTriangle className="text-orange-400" />
               Emergency Alerts
             </h2>
           </div>
-          
+
           {/* Alert Stats */}
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            <div className="bg-red-500/10 border border-red-500/30 p-3 rounded-xl">
+          <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-4">
+            <div className="bg-red-500/10 border border-red-500/30 p-2 sm:p-3 rounded-xl">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-red-500/20 rounded-lg flex items-center justify-center">
-                  <AlertTriangle className="w-4 h-4 text-red-400" />
+                <div className="w-6 h-6 sm:w-8 sm:h-8 bg-red-500/20 rounded-lg flex items-center justify-center">
+                  <AlertTriangle className="w-3 h-3 sm:w-4 sm:h-4 text-red-400" />
                 </div>
                 <div>
                   <p className="text-white/60 text-xs">Active</p>
-                  <p className="text-white text-lg font-bold">{emergencyAlerts.filter(a => a.status === 'active').length}</p>
+                  <p className="text-white text-base sm:text-lg font-bold">{emergencyAlerts.filter(a => a.status === 'active').length}</p>
                 </div>
               </div>
             </div>
-            <div className="bg-yellow-500/10 border border-yellow-500/30 p-3 rounded-xl">
+            <div className="bg-yellow-500/10 border border-yellow-500/30 p-2 sm:p-3 rounded-xl">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-yellow-500/20 rounded-lg flex items-center justify-center">
-                  <Clock className="w-4 h-4 text-yellow-400" />
+                <div className="w-6 h-6 sm:w-8 sm:h-8 bg-yellow-500/20 rounded-lg flex items-center justify-center">
+                  <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-yellow-400" />
                 </div>
                 <div>
                   <p className="text-white/60 text-xs">Acknowledged</p>
-                  <p className="text-white text-lg font-bold">{emergencyAlerts.filter(a => a.status === 'acknowledged').length}</p>
+                  <p className="text-white text-base sm:text-lg font-bold">{emergencyAlerts.filter(a => a.status === 'acknowledged').length}</p>
                 </div>
               </div>
             </div>
-            <div className="bg-green-500/10 border border-green-500/30 p-3 rounded-xl">
+            <div className="bg-green-500/10 border border-green-500/30 p-2 sm:p-3 rounded-xl">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
-                  <CheckCircle className="w-4 h-4 text-green-400" />
+                <div className="w-6 h-6 sm:w-8 sm:h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
+                  <CheckCircle className="w-3 h-3 sm:w-4 sm:h-4 text-green-400" />
                 </div>
                 <div>
                   <p className="text-white/60 text-xs">Resolved</p>
-                  <p className="text-white text-lg font-bold">{emergencyAlerts.filter(a => a.status === 'resolved').length}</p>
+                  <p className="text-white text-base sm:text-lg font-bold">{emergencyAlerts.filter(a => a.status === 'resolved').length}</p>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Alert Filters */}
-          <div className="flex items-center gap-3 mb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 mb-3">
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={16} />
               <input
@@ -1390,7 +1390,7 @@ const Dashboard = () => {
 
         {/* Recent Activity */}
         <div className="glass-card p-4">
-          <h2 className="text-white text-lg font-bold mb-3">Recent Activity</h2>
+          <h2 className="text-white text-base sm:text-lg font-bold mb-3">Recent Activity</h2>
           {alerts.length > 0 ? (
             <div className="divide-y divide-white/5 max-h-[300px] overflow-y-auto">
               {alerts.slice(0, 10).map((alert, index) => (
@@ -1400,8 +1400,8 @@ const Dashboard = () => {
                     alert.severity === 'medium' ? 'bg-orange-400' : 'bg-yellow-400'
                   }`} />
                   <div className="flex-1 min-w-0">
-                    <span className="text-white/80 text-sm font-medium">{alert.type}</span>
-                    <span className="text-white/50 text-xs ml-2 truncate">{alert.message}</span>
+                    <span className="text-white/80 text-sm font-medium block">{alert.type}</span>
+                    <span className="text-white/50 text-xs truncate block">{alert.message}</span>
                   </div>
                   <span className="text-white/30 text-xs flex-shrink-0">{alert.time}</span>
                 </div>

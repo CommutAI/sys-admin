@@ -1003,35 +1003,35 @@ const Reports = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
         <div>
-          <h1 className="text-white text-3xl font-bold mb-2">Reports Dashboard</h1>
-          <p className="text-white/60">System analytics and report generation</p>
+          <h1 className="text-white text-2xl sm:text-3xl font-bold mb-2">Reports Dashboard</h1>
+          <p className="text-white/60 text-sm sm:text-base">System analytics and report generation</p>
         </div>
         {activeTab === 'reports' && (
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-2 sm:gap-3">
             <button
               onClick={() => setShowExportColumns(!showExportColumns)}
-              className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+              className="bg-white/10 hover:bg-white/20 text-white px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 transition-colors text-sm"
             >
               <Settings size={18} />
-              Columns
+              <span className="hidden sm:inline">Columns</span>
             </button>
             <button
               onClick={handleExportExcel}
               disabled={loading}
-              className="bg-green-500 hover:bg-green-600 disabled:bg-green-500/50 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+              className="bg-green-500 hover:bg-green-600 disabled:bg-green-500/50 text-white px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 transition-colors text-sm"
             >
               <Download size={18} />
-              Excel
+              <span className="hidden sm:inline">Excel</span>
             </button>
             <button
               onClick={handleExportPDF}
               disabled={loading}
-              className="bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+              className="bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 transition-colors text-sm"
             >
               <FileText size={18} />
-              PDF
+              <span className="hidden sm:inline">PDF</span>
             </button>
           </div>
         )}
@@ -1039,19 +1039,19 @@ const Reports = () => {
 
       {/* Tabs */}
       <div className="glass-card p-2">
-        <div className="flex gap-2">
+        <div className="flex gap-2 overflow-x-auto">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-3 rounded-xl transition-colors ${
+              className={`flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-3 rounded-xl transition-colors whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'bg-orange-500 text-white'
                   : 'text-white/60 hover:bg-white/10 hover:text-white'
               }`}
             >
               <tab.icon size={18} />
-              <span className="font-medium">{tab.label}</span>
+              <span className="font-medium text-sm">{tab.label}</span>
             </button>
           ))}
         </div>
@@ -1059,9 +1059,9 @@ const Reports = () => {
 
       {/* Export Column Selector */}
       {showExportColumns && activeTab === 'reports' && (
-        <div className="glass-card p-6">
+        <div className="glass-card p-4 sm:p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-white text-lg font-bold">Select Export Columns</h3>
+            <h3 className="text-white text-base sm:text-lg font-bold">Select Export Columns</h3>
             <button
               onClick={() => setShowExportColumns(false)}
               className="p-2 hover:bg-white/10 rounded-lg transition-colors"
@@ -1069,7 +1069,7 @@ const Reports = () => {
               <X size={20} className="text-white/70" />
             </button>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {availableColumns[reportType]?.map(col => (
               <label key={col.id} className="flex items-center gap-2 p-3 bg-white/5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors">
                 <input
@@ -1107,9 +1107,9 @@ const Reports = () => {
 
       {/* Trips Tab */}
       {activeTab === 'trips' && (
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-white text-xl font-bold flex items-center gap-2">
+        <div className="glass-card p-4 sm:p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
+            <h2 className="text-white text-lg sm:text-xl font-bold flex items-center gap-2">
               <Activity className="text-blue-400" />
               Trip History
             </h2>
@@ -1117,17 +1117,17 @@ const Reports = () => {
               onClick={() => setVisibleTripsColumns(
                 visibleTripsColumns.length === 5 ? ['plate_number', 'status', 'started_at'] : ['plate_number', 'route', 'conductor', 'status', 'started_at']
               )}
-              className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors"
+              className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors self-start"
               title="Toggle column visibility"
             >
               {visibleTripsColumns.length === 5 ? <EyeOff size={18} /> : <Eye size={18} />}
             </button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4">
             <select
               value={tripsFilterStatus}
               onChange={(e) => { setTripsFilterStatus(e.target.value); setTripsCurrentPage(1); }}
-              className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+              className="bg-gray-800 border border-white/20 rounded-xl px-3 sm:px-4 py-2 text-white focus:outline-none focus:border-blue-500 text-sm"
             >
               <option value="all" className="bg-gray-800 text-white">All Status</option>
               <option value="in_progress" className="bg-gray-800 text-white">In Progress</option>
@@ -1141,7 +1141,7 @@ const Reports = () => {
                 placeholder="Search by route..."
                 value={tripsFilterRoute}
                 onChange={(e) => { setTripsFilterRoute(e.target.value); setTripsCurrentPage(1); }}
-                className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-blue-500 text-sm"
               />
             </div>
           </div>
@@ -1186,16 +1186,16 @@ const Reports = () => {
                   return paginated.map((trip) => (
                     <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
                       {visibleTripsColumns.includes('plate_number') && (
-                        <td className="py-4 text-white">{trip.bus_id?.plate_number || 'N/A'}</td>
+                        <td className="py-3 sm:py-4 text-white text-sm">{trip.bus_id?.plate_number || 'N/A'}</td>
                       )}
                       {visibleTripsColumns.includes('route') && (
-                        <td className="py-4 text-white/70">{trip.bus_id?.route || 'N/A'}</td>
+                        <td className="py-3 sm:py-4 text-white/70 text-sm">{trip.bus_id?.route || 'N/A'}</td>
                       )}
                       {visibleTripsColumns.includes('conductor') && (
-                        <td className="py-4 text-white/70">{trip.conductor_staff?.full_name || 'N/A'}</td>
+                        <td className="py-3 sm:py-4 text-white/70 text-sm">{trip.conductor_staff?.full_name || 'N/A'}</td>
                       )}
                       {visibleTripsColumns.includes('status') && (
-                        <td className="py-4">
+                        <td className="py-3 sm:py-4">
                           <span className={`px-3 py-1 rounded-full text-xs ${
                             trip.status === 'completed' ? 'bg-green-500/20 text-green-400' :
                             trip.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400' :
@@ -1221,8 +1221,8 @@ const Reports = () => {
             const totalPages = Math.ceil(filteredRecentActivity.length / tripsItemsPerPage);
             if (totalPages <= 1) return null;
             return (
-              <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
-                <p className="text-white/50 text-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 pt-4 border-t border-white/10 gap-3">
+                <p className="text-white/50 text-xs sm:text-sm">
                   Showing {((tripsCurrentPage - 1) * tripsItemsPerPage) + 1}–{Math.min(tripsCurrentPage * tripsItemsPerPage, filteredRecentActivity.length)} of {filteredRecentActivity.length} trips
                 </p>
                 <div className="flex items-center gap-2">
@@ -1230,7 +1230,7 @@ const Reports = () => {
                     className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                     <ChevronLeft size={16} />
                   </button>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 overflow-x-auto">
                     {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
                       let p;
                       if (totalPages <= 5) p = i + 1;
@@ -1239,7 +1239,7 @@ const Reports = () => {
                       else p = tripsCurrentPage - 2 + i;
                       return (
                         <button key={p} onClick={() => setTripsCurrentPage(p)}
-                          className={`w-8 h-8 rounded-lg text-sm transition-colors ${tripsCurrentPage === p ? 'bg-orange-500 text-white' : 'bg-white/10 hover:bg-white/20 text-white/70'}`}>
+                          className={`min-w-[32px] w-8 h-8 rounded-lg text-xs sm:text-sm transition-colors ${tripsCurrentPage === p ? 'bg-orange-500 text-white' : 'bg-white/10 hover:bg-white/20 text-white/70'}`}>
                           {p}
                         </button>
                       );
@@ -1258,15 +1258,15 @@ const Reports = () => {
 
       {/* Transactions Tab */}
       {activeTab === 'transactions' && (
-        <div className="glass-card p-6">
+        <div className="glass-card p-4 sm:p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-white text-xl font-bold flex items-center gap-2">
+            <h2 className="text-white text-lg sm:text-xl font-bold flex items-center gap-2">
               <ArrowLeftRight className="text-orange-400" />
               Transactions
             </h2>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
                   <input
@@ -1274,13 +1274,13 @@ const Reports = () => {
                     placeholder="Search..."
                     value={transactionSearchTerm}
                     onChange={(e) => setTransactionSearchTerm(e.target.value)}
-                    className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-3 sm:pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500 text-sm"
                   />
                 </div>
                 <select
                   value={transactionFilterType}
                   onChange={(e) => setTransactionFilterType(e.target.value)}
-                  className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  className="bg-gray-800 border border-white/20 rounded-xl px-3 sm:px-4 py-2 text-white focus:outline-none focus:border-orange-500 text-sm"
                 >
                   <option value="all" className="bg-gray-800 text-white">All Types</option>
                   <option value="fare_validation" className="bg-gray-800 text-white">Fare Validation</option>
@@ -1290,7 +1290,7 @@ const Reports = () => {
                 <select
                   value={transactionFilterStatus}
                   onChange={(e) => setTransactionFilterStatus(e.target.value)}
-                  className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  className="bg-gray-800 border border-white/20 rounded-xl px-3 sm:px-4 py-2 text-white focus:outline-none focus:border-orange-500 text-sm"
                 >
                   <option value="all" className="bg-gray-800 text-white">All Status</option>
                   <option value="completed" className="bg-gray-800 text-white">Completed</option>
@@ -1301,7 +1301,7 @@ const Reports = () => {
                   type="date"
                   value={transactionDateRange.start}
                   onChange={(e) => setTransactionDateRange({ ...transactionDateRange, start: e.target.value })}
-                  className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                  className="bg-white/10 border border-white/20 rounded-xl px-3 sm:px-4 py-2 text-white focus:outline-none focus:border-orange-500 text-sm"
                   placeholder="Start Date"
                 />
               </div>
@@ -1435,8 +1435,8 @@ const Reports = () => {
                   </tbody>
                 </table>
                 {transactionsTotalPages > 1 && (
-                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
-                    <p className="text-white/60 text-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 pt-4 border-t border-white/10 gap-3">
+                    <p className="text-white/60 text-xs sm:text-sm">
                       Showing {((transactionsCurrentPage - 1) * itemsPerPage) + 1} to {Math.min(transactionsCurrentPage * itemsPerPage, filteredTransactions.length)} of {filteredTransactions.length} transactions
                     </p>
                     <div className="flex items-center gap-2">
@@ -1447,7 +1447,7 @@ const Reports = () => {
                       >
                         <ChevronLeft size={16} />
                       </button>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 overflow-x-auto">
                         {Array.from({ length: Math.min(transactionsTotalPages, 5) }, (_, i) => {
                           let pageNum;
                           if (transactionsTotalPages <= 5) {
@@ -1463,7 +1463,7 @@ const Reports = () => {
                             <button
                               key={pageNum}
                               onClick={() => setTransactionsCurrentPage(pageNum)}
-                              className={`w-8 h-8 rounded-lg text-sm transition-colors ${
+                              className={`min-w-[32px] w-8 h-8 rounded-lg text-xs sm:text-sm transition-colors ${
                                 transactionsCurrentPage === pageNum
                                   ? 'bg-orange-500 text-white'
                                   : 'bg-white/10 hover:bg-white/20 text-white/70'
@@ -1616,8 +1616,8 @@ const Reports = () => {
                   </tbody>
                 </table>
                 {gcashTotalPages > 1 && (
-                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
-                    <p className="text-white/60 text-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 pt-4 border-t border-white/10 gap-3">
+                    <p className="text-white/60 text-xs sm:text-sm">
                       Showing {((gcashCurrentPage - 1) * itemsPerPage) + 1} to {Math.min(gcashCurrentPage * itemsPerPage, filteredGcashTransactions.length)} of {filteredGcashTransactions.length} transactions
                     </p>
                     <div className="flex items-center gap-2">
@@ -1628,7 +1628,7 @@ const Reports = () => {
                       >
                         <ChevronLeft size={16} />
                       </button>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 overflow-x-auto">
                         {Array.from({ length: Math.min(gcashTotalPages, 5) }, (_, i) => {
                           let pageNum;
                           if (gcashTotalPages <= 5) {
@@ -1644,7 +1644,7 @@ const Reports = () => {
                             <button
                               key={pageNum}
                               onClick={() => setGcashCurrentPage(pageNum)}
-                              className={`w-8 h-8 rounded-lg text-sm transition-colors ${
+                              className={`min-w-[32px] w-8 h-8 rounded-lg text-xs sm:text-sm transition-colors ${
                                 gcashCurrentPage === pageNum
                                   ? 'bg-orange-500 text-white'
                                   : 'bg-white/10 hover:bg-white/20 text-white/70'
@@ -2119,8 +2119,8 @@ const Reports = () => {
 
                   {/* Pagination */}
                   {totalPages > 1 && (
-                    <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
-                      <p className="text-white/50 text-sm">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 pt-4 border-t border-white/10 gap-3">
+                      <p className="text-white/50 text-xs sm:text-sm">
                         Showing {((previewCurrentPage - 1) * previewItemsPerPage) + 1}–{Math.min(previewCurrentPage * previewItemsPerPage, filtered.length)} of {filtered.length}
                       </p>
                       <div className="flex items-center gap-2">
@@ -2131,7 +2131,7 @@ const Reports = () => {
                         >
                           <ChevronLeft size={16} />
                         </button>
-                        <div className="flex gap-1">
+                        <div className="flex gap-1 overflow-x-auto">
                           {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
                             let p;
                             if (totalPages <= 5) p = i + 1;
@@ -2142,7 +2142,7 @@ const Reports = () => {
                               <button
                                 key={p}
                                 onClick={() => setPreviewCurrentPage(p)}
-                                className={`w-8 h-8 rounded-lg text-sm transition-colors ${
+                                className={`min-w-[32px] w-8 h-8 rounded-lg text-xs sm:text-sm transition-colors ${
                                   previewCurrentPage === p
                                     ? 'bg-orange-500 text-white'
                                     : 'bg-white/10 hover:bg-white/20 text-white/70'

@@ -436,8 +436,8 @@ const ManageUsers = () => {
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
-            <p className="text-white/60 text-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 pt-4 border-t border-white/10 gap-3">
+            <p className="text-white/60 text-xs sm:text-sm">
               Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredUsers.length)} of {filteredUsers.length} users
             </p>
             <div className="flex items-center gap-2">
@@ -448,20 +448,27 @@ const ManageUsers = () => {
               >
                 <ChevronLeft size={16} />
               </button>
-              <div className="flex items-center gap-1">
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
-                  <button
-                    key={page}
-                    onClick={() => setCurrentPage(page)}
-                    className={`w-8 h-8 rounded-lg text-sm transition-colors ${
-                      currentPage === page
-                        ? 'bg-orange-500 text-white'
-                        : 'bg-white/10 hover:bg-white/20 text-white/70'
-                    }`}
-                  >
-                    {page}
-                  </button>
-                ))}
+              <div className="flex items-center gap-1 overflow-x-auto">
+                {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                  let p;
+                  if (totalPages <= 5) p = i + 1;
+                  else if (currentPage <= 3) p = i + 1;
+                  else if (currentPage >= totalPages - 2) p = totalPages - 4 + i;
+                  else p = currentPage - 2 + i;
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => setCurrentPage(p)}
+                      className={`min-w-[32px] w-8 h-8 rounded-lg text-xs sm:text-sm transition-colors ${
+                        currentPage === p
+                          ? 'bg-orange-500 text-white'
+                          : 'bg-white/10 hover:bg-white/20 text-white/70'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
               </div>
               <button
                 onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
