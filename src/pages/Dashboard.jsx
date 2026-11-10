@@ -627,7 +627,14 @@ const Dashboard = () => {
       setLoading(true);
 
       const today = new Date();
-      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString(); // Start of day in ISO format
+      // Use Philippine time (UTC+8) for "today" boundary so it's consistent
+      // regardless of the browser's local timezone
+      const phOffset = 8 * 60; // minutes
+      const utcMinutes = today.getTime() / 60000 + today.getTimezoneOffset();
+      const phMidnight = new Date((utcMinutes - (utcMinutes % 1440) + (phOffset % 1440 === 0 ? 0 : 1440 - (phOffset % 1440)) % 1440 - phOffset) * 60000);
+      // Simpler approach: format today's date in PH time then parse as UTC+8 midnight
+      const phDateStr = today.toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' }); // 'YYYY-MM-DD'
+      const todayStart = new Date(`${phDateStr}T00:00:00+08:00`).toISOString();
 
       // Parallelize all independent queries for significant performance improvement
       const [
@@ -672,11 +679,12 @@ const Dashboard = () => {
       const activeConductorsCount = staffUsers?.filter(u => u.role === 'conductor').length || 0;
       const activeDriversCount = staffUsers?.filter(u => u.role === 'driver').length || 0;
 
-      // Calculate all-time revenue from completed transactions
+      // Calculate today's revenue from completed transactions (Philippine time)
       const { data: todayTransactions } = await supabase
         .from('transactions')
         .select('final_amount, fare_amount, baggage_fee, status')
-        .eq('status', 'completed');
+        .eq('status', 'completed')
+        .gte('created_at', todayStart);
 
       const totalRevenue = (todayTransactions || []).reduce((sum, t) => sum + parseFloat(t.final_amount || t.fare_amount || 0), 0);
       const busFareRevenue = (todayTransactions || []).reduce((sum, t) => sum + parseFloat(t.fare_amount || 0), 0);
@@ -685,8 +693,8 @@ const Dashboard = () => {
       setKpis([
         { title: "Today's Passengers", value: totalPassengers.toLocaleString(), change: 8.5, icon: Users, color: 'bg-blue-500' },
         { title: 'Total Revenue', value: `₱${totalRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 12.3, icon: DollarSign, color: 'bg-green-500' },
-        { title: 'Total Fare Revenue', value: `₱${busFareRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 10.1, icon: Bus, color: 'bg-purple-500' },
-        { title: 'Total Baggage Revenue', value: `₱${baggageFeeRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 15.2, icon: DollarSign, color: 'bg-orange-500' },
+        { title: 'Bus Fare Revenue', value: `₱${busFareRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 10.1, icon: Bus, color: 'bg-purple-500' },
+        { title: 'Baggage Fee Revenue', value: `₱${baggageFeeRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, change: 15.2, icon: DollarSign, color: 'bg-orange-500' },
       ]);
 
       // Transform irregularities to alerts
