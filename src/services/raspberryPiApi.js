@@ -16,11 +16,10 @@ const BUS_NUMBER      = 1; // this dashboard manages bus 001
 
 // ── URL cache ────────────────────────────────────────────────────────────────
 // Pre-seed with the env-var so the first WebSocket attempt is instant.
-// resolvePiUrl() will upgrade this to the live DB value immediately.
 let _resolvedUrl  = FALLBACK_URL;
 let _resolving    = null;
-let _lastResolved = 0;            // 0 forces a Supabase lookup on the first call
-const REDISCOVER_INTERVAL = 10_000; // re-check every 10 seconds for faster IP detection
+let _lastResolved = 0;
+const REDISCOVER_INTERVAL = 10_000;
 
 /**
  * Resolve the Pi's base HTTP URL.
@@ -95,6 +94,11 @@ export function invalidatePiUrl() {
  * Returns an unsubscribe function.
  */
 export function subscribePiDeviceChanges(onIpChange) {
+  // On HTTPS, ignore local IP updates from pi_devices — always use the ngrok URL
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return () => {};
+  }
+
   const channel = supabase
     .channel('pi-device-watch')
     .on(

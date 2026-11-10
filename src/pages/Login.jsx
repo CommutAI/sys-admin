@@ -71,19 +71,19 @@ const Login = () => {
 
       console.log('User found in staff_users, is_active:', staffUser.is_active);
 
-      // Sign in with Supabase auth to create a session
+      // Sign in with Supabase auth to create a session (best-effort — not all
+      // staff users have a Supabase Auth account; fallback to localStorage is fine)
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: email,
         password: password,
       });
 
       if (authError) {
-        console.error('Supabase auth sign-in failed:', authError);
+        // Expected for users who only exist in staff_users (no Supabase Auth account)
         // Store session info in localStorage as fallback
         localStorage.setItem('staff_user_id', staffUser.id);
         localStorage.setItem('staff_user_email', staffUser.email);
         localStorage.setItem('staff_user_role', staffUser.role);
-        console.log('Stored session in localStorage as fallback');
       } else {
         console.log('Supabase auth sign-in successful');
       }
