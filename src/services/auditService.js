@@ -19,28 +19,29 @@ const AuditService = {
       // Skip VIEW actions — page views are too noisy for audit logs
       if (action === 'VIEW') return;
 
-      // Get current user info
+      // Get current user info — try Supabase auth first, fall back to localStorage
       const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        console.warn('No authenticated user for audit log');
-        return;
+
+      let username, userRole, fullName;
+
+      if (user) {
+        username = user.email || 'unknown';
+
+        const { data: staffData } = await supabase
+          .from('staff_users')
+          .select('role, full_name')
+          .eq('id', user.id)
+          .single();
+
+        userRole = staffData?.role || 'unknown';
+        fullName = staffData?.full_name || username;
+      } else {
+        // localStorage fallback (admin users without a Supabase Auth account)
+        username = localStorage.getItem('staff_user_email') || 'unknown';
+        userRole = localStorage.getItem('staff_user_role') || 'unknown';
+        fullName = username;
       }
 
-      // Get user email from auth metadata
-      const username = user.email || 'unknown';
-
-      // Get user's role from staff_users
-      const { data: staffData } = await supabase
-        .from('staff_users')
-        .select('role, full_name')
-        .eq('id', user.id)
-        .single();
-
-      const userRole = staffData?.role || 'unknown';
-      const fullName = staffData?.full_name || username;
-
-      // Construct detailed log message
       const detailedMessage = `${fullName} (${userRole}): ${details}`;
 
       // Try SECURITY DEFINER RPC first (bypasses RLS regardless of session state)
