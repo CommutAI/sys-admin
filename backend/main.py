@@ -31,7 +31,6 @@ async def anomaly_detection_scheduler():
     while True:
         try:
             print("Running scheduled anomaly detection...")
-            # Import and call the function
             from routers.anomaly_detection import run_anomaly_detection
             result = await run_anomaly_detection()
             print(f"Anomaly detection completed: {result.total_anomalies_detected} anomalies detected, {result.total_irregularities_created} irregularities created")
@@ -50,7 +49,7 @@ async def anomaly_detection_scheduler():
                         'ai_count': r.ai_count,
                         'boarded_count': r.boarded_count,
                         'discrepancy': r.discrepancy,
-                        'anomaly_detected': r.anomaly_detected
+                        'anomaly_detected': r.total_anomalies > 0
                     }
                     for r in result.results
                 ]

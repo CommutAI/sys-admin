@@ -663,45 +663,76 @@ def detect_boarding_rate(trip_id: str) -> AnomalyResult:
 
 def create_irregularity(trip_id: str, anomaly: AnomalyResult) -> Optional[str]:
     """Create an irregularity record with full details if one doesn't exist in the last 10 minutes"""
-    recent_time = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
-    
-    existing_result = supabase.table('fare_irregularities').select('id').eq('trip_id', trip_id).eq('anomaly_type', anomaly.anomaly_type).eq('resolved', False).gte('detected_at', recent_time).execute()
-    
-    if existing_result.data:
-        return None  # Already exists
-    
-    now = datetime.now(timezone.utc).isoformat()
-    irregularity_data = {
-        'trip_id': trip_id,
-        'type': anomaly.anomaly_type,
-        'anomaly_type': anomaly.anomaly_type,
-        'severity': anomaly.severity,
-        'description': anomaly.description,
-        'detected_at': now,
-        'first_detected_at': now,
-        'last_updated_at': now,
-        'status': 'new',
-        'resolved': False
+
+    # Map anomaly types to valid irregularity_type enum values.
+    # Falls back to 'other' for any type not yet added to the DB enum.
+    VALID_IRREGULARITY_TYPES = {
+        'count_mismatch':     'count_mismatch',
+        'fare_evasion':       'fare_evasion',
+        'double_scan':        'double_scan',
+        'hardware_error':     'hardware_error',
+        'other':              'other',
+        # Extended types — only work after migration 014 is applied
+        'overcrowding':       'overcrowding',
+        'staff_absence':      'staff_absence',
+        'camera_malfunction': 'camera_malfunction',
+        'passenger_spike':    'passenger_spike',
+        'trip_duration':      'trip_duration',
+        'route_deviation':    'route_deviation',
+        'boarding_rate':      'boarding_rate',
     }
-    
-    irregularity_result = supabase.table('fare_irregularities').insert(irregularity_data).execute()
-    if irregularity_result.data:
-        irregularity_id = irregularity_result.data[0]['id']
-        
-        # Create history entry
-        history_data = {
-            'irregularity_id': irregularity_id,
-            'changed_at': now,
-            'old_status': None,
-            'new_status': 'new',
-            'old_severity': None,
-            'new_severity': anomaly.severity,
-            'change_type': 'created',
-            'notes': f"Automatically created by anomaly detection system. Type: {anomaly.anomaly_type}, Severity: {anomaly.severity}"
+
+    db_type = VALID_IRREGULARITY_TYPES.get(anomaly.anomaly_type, 'other')
+
+    try:
+        recent_time = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+
+        existing_result = supabase.table('fare_irregularities').select('id').eq('trip_id', trip_id).eq('type', db_type).eq('resolved', False).gte('detected_at', recent_time).execute()
+
+        if existing_result.data:
+            return None  # Already exists
+
+        now = datetime.now(timezone.utc).isoformat()
+        irregularity_data = {
+            'trip_id': trip_id,
+            'type': db_type,
+            'anomaly_type': anomaly.anomaly_type,
+            'severity': anomaly.severity,
+            'description': anomaly.description,
+            'detected_at': now,
+            'first_detected_at': now,
+            'last_updated_at': now,
+            'status': 'new',
+            'resolved': False
         }
-        supabase.table('irregularity_history').insert(history_data).execute()
-        
-        return irregularity_id
+
+        irregularity_result = supabase.table('fare_irregularities').insert(irregularity_data).execute()
+        if irregularity_result.data:
+            irregularity_id = irregularity_result.data[0]['id']
+
+            # Create history entry
+            history_data = {
+                'irregularity_id': irregularity_id,
+                'changed_at': now,
+                'old_status': None,
+                'new_status': 'new',
+                'old_severity': None,
+                'new_severity': anomaly.severity,
+                'change_type': 'created',
+                'notes': f"Automatically created by anomaly detection system. Type: {anomaly.anomaly_type}, Severity: {anomaly.severity}"
+            }
+            try:
+                supabase.table('irregularity_history').insert(history_data).execute()
+            except Exception as hist_err:
+                print(f"[Anomaly] Warning: could not write irregularity history: {hist_err}")
+
+            return irregularity_id
+
+    except Exception as e:
+        # Log but don't crash the scheduler — the enum value may not exist yet in production.
+        # Run migration 014 on the database to add all extended irregularity types.
+        print(f"[Anomaly] Warning: could not create irregularity for type '{anomaly.anomaly_type}' (db_type='{db_type}'): {e}")
+
     return None
 
 

@@ -43,7 +43,7 @@ const Reports = () => {
   const [itemsPerPage] = useState(10);
   const [transactionSort, setTransactionSort] = useState({ field: 'created_at', direction: 'desc' });
   const [visibleTransactionColumns, setVisibleTransactionColumns] = useState([
-    'type', 'fare', 'baggage', 'amount', 'channel', 'staff', 'created_at'
+    'type', 'fare_amount', 'baggage_fee', 'amount', 'channel', 'staff', 'created_at'
   ]);
 
   // GCash transaction state
@@ -54,13 +54,15 @@ const Reports = () => {
   const [showGcashTransactions, setShowGcashTransactions] = useState(false);
   const [gcashSort, setGcashSort] = useState({ field: 'created_at', direction: 'desc' });
   const [visibleGcashColumns, setVisibleGcashColumns] = useState([
-    'created_at', 'phone_number', 'amount', 'status', 'stripe_payment_id'
+    'created_at', 'card_uid', 'fare_amount', 'baggage_fee', 'final_amount', 'status', 'staff'
   ]);
 
   // Recent trips state
   const [tripsSort, setTripsSort] = useState({ field: 'started_at', direction: 'desc' });
   const [tripsFilterStatus, setTripsFilterStatus] = useState('all');
   const [tripsFilterRoute, setTripsFilterRoute] = useState('');
+  const [tripsCurrentPage, setTripsCurrentPage] = useState(1);
+  const [tripsItemsPerPage] = useState(10);
   const [visibleTripsColumns, setVisibleTripsColumns] = useState([
     'plate_number', 'route', 'conductor', 'status', 'started_at'
   ]);
@@ -105,9 +107,13 @@ const Reports = () => {
       { id: 'id', label: 'Transaction ID' },
       { id: 'type', label: 'Type' },
       { id: 'amount', label: 'Amount' },
-      { id: 'fare', label: 'Fare' },
-      { id: 'baggage', label: 'Baggage' },
+      { id: 'fare_amount', label: 'Fare Amount' },
+      { id: 'discount_amount', label: 'Discount' },
+      { id: 'final_amount', label: 'Final Amount' },
+      { id: 'baggage_fee', label: 'Baggage Fee' },
+      { id: 'baggage_category', label: 'Baggage Category' },
       { id: 'channel', label: 'Channel' },
+      { id: 'payment_method', label: 'Payment Method' },
       { id: 'plate_number', label: 'Bus Plate' },
       { id: 'route', label: 'Route' },
       { id: 'staff', label: 'Staff' },
@@ -124,18 +130,49 @@ const Reports = () => {
     irregularities: [
       { id: 'id', label: 'Irregularity ID' },
       { id: 'type', label: 'Type' },
+      { id: 'severity', label: 'Severity' },
+      { id: 'description', label: 'Description' },
+      { id: 'plate_number', label: 'Bus Plate' },
+      { id: 'route', label: 'Route' },
+      { id: 'conductor', label: 'Conductor' },
+      { id: 'card_uid', label: 'Card UID' },
+      { id: 'boarding_stop', label: 'Boarding Stop' },
+      { id: 'destination_stop', label: 'Destination Stop' },
+      { id: 'notes', label: 'Notes' },
+      { id: 'detected_at', label: 'Detected At' },
+      { id: 'resolved', label: 'Resolved' },
+      { id: 'resolved_at', label: 'Resolved At' },
+      { id: 'status', label: 'Status' },
+    ],
+    anomalies: [
+      { id: 'id', label: 'Anomaly ID' },
+      { id: 'anomaly_type', label: 'Anomaly Type' },
+      { id: 'severity', label: 'Severity' },
       { id: 'description', label: 'Description' },
       { id: 'plate_number', label: 'Bus Plate' },
       { id: 'route', label: 'Route' },
       { id: 'detected_at', label: 'Detected At' },
       { id: 'resolved', label: 'Resolved' },
       { id: 'resolved_at', label: 'Resolved At' },
+      { id: 'status', label: 'Status' },
+    ],
+    card_reloads: [
+      { id: 'id', label: 'Reload ID' },
+      { id: 'card_uid', label: 'Card UID' },
+      { id: 'amount', label: 'Amount' },
+      { id: 'reload_method', label: 'Method' },
+      { id: 'reference_number', label: 'Reference #' },
+      { id: 'reload_location', label: 'Location' },
+      { id: 'status', label: 'Status' },
+      { id: 'recorded_at', label: 'Recorded At' },
     ],
   };
 
   useEffect(() => {
     fetchStats();
     fetchRecentActivity();
+    fetchTransactions();
+    fetchGcashTransactions();
     // Log page view to audit logs
     AuditService.logPageView('Reports');
   }, []);
@@ -205,8 +242,7 @@ const Reports = () => {
       const { data } = await supabase
         .from('trips')
         .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*)')
-        .order('started_at', { ascending: false })
-        .limit(5);
+        .order('started_at', { ascending: false });
 
       setRecentActivity(data || []);
     } catch (error) {
@@ -273,12 +309,41 @@ const Reports = () => {
           break;
         }
         case 'irregularities': {
+          // Manual conductor-reported irregularities only
+          // These have a conductor_id set (submitted from the app) and types that are human-reported
+          const MANUAL_TYPES = ['passenger_dispute', 'wrong_route', 'overshooting', 'underpayment', 'card_sharing', 'unauthorized_passenger', 'fare_evasion', 'double_scan', 'other'];
           const { data: rows, error } = await supabase
             .from('fare_irregularities')
-            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*)), conductor:staff_users!fare_irregularities_conductor_id_fkey(full_name)')
+            .in('type', MANUAL_TYPES)
             .gte('detected_at', start)
             .lte('detected_at', end)
             .order('detected_at', { ascending: false });
+          if (error) throw error;
+          data = rows || [];
+          break;
+        }
+        case 'anomalies': {
+          // Auto-detected anomalies only — identified by anomaly_type being set
+          const ANOMALY_TYPES = ['trip_duration', 'camera_malfunction', 'count_mismatch', 'overcrowding', 'staff_absence', 'passenger_spike', 'route_deviation', 'boarding_rate'];
+          const { data: rows, error } = await supabase
+            .from('fare_irregularities')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .in('anomaly_type', ANOMALY_TYPES)
+            .gte('detected_at', start)
+            .lte('detected_at', end)
+            .order('detected_at', { ascending: false });
+          if (error) throw error;
+          data = rows || [];
+          break;
+        }
+        case 'card_reloads': {
+          const { data: rows, error } = await supabase
+            .from('card_reloads')
+            .select('*, card:qr_cards!card_reloads_card_id_fkey(card_uid, owner_name)')
+            .gte('recorded_at', start)
+            .lte('recorded_at', end)
+            .order('recorded_at', { ascending: false });
           if (error) throw error;
           data = rows || [];
           break;
@@ -325,8 +390,9 @@ const Reports = () => {
     return transactions.filter(transaction => {
       const matchesSearch = transaction.channel?.toLowerCase().includes(transactionSearchTerm.toLowerCase()) ||
                            transaction.staff?.full_name?.toLowerCase().includes(transactionSearchTerm.toLowerCase()) ||
-                           transaction.fare?.toString().includes(transactionSearchTerm) ||
-                           transaction.baggage?.toString().includes(transactionSearchTerm) ||
+                           transaction.fare_amount?.toString().includes(transactionSearchTerm) ||
+                           transaction.baggage_fee?.toString().includes(transactionSearchTerm) ||
+                           transaction.payment_method?.toLowerCase().includes(transactionSearchTerm.toLowerCase()) ||
                            transaction.id?.toLowerCase().includes(transactionSearchTerm.toLowerCase());
       const matchesType = transactionFilterType === 'all' || transaction.type === transactionFilterType;
       const matchesStatus = transactionFilterStatus === 'all' || transaction.status === transactionFilterStatus;
@@ -359,9 +425,11 @@ const Reports = () => {
 
   const fetchGcashTransactions = async () => {
     try {
+      // GCash payments live in the transactions table with channel = 'gcash'
       const { data, error } = await supabase
-        .from('gcash_transactions')
-        .select('*')
+        .from('transactions')
+        .select('*, staff:staff_users!transactions_staff_id_fkey(full_name), card:qr_cards!transactions_card_id_fkey(card_uid, owner_name)')
+        .eq('channel', 'gcash')
         .order('created_at', { ascending: false });
       if (error) throw error;
       setGcashTransactions(data || []);
@@ -378,9 +446,12 @@ const Reports = () => {
 
   const filteredGcashTransactions = useMemo(() => {
     return gcashTransactions.filter(transaction => {
-      const matchesSearch = transaction.phone_number?.includes(gcashSearchTerm) ||
-                           transaction.stripe_payment_id?.toLowerCase().includes(gcashSearchTerm.toLowerCase()) ||
-                           transaction.id?.toLowerCase().includes(gcashSearchTerm.toLowerCase());
+      const matchesSearch = !gcashSearchTerm ||
+                           transaction.card?.card_uid?.toLowerCase().includes(gcashSearchTerm.toLowerCase()) ||
+                           transaction.card?.owner_name?.toLowerCase().includes(gcashSearchTerm.toLowerCase()) ||
+                           transaction.staff?.full_name?.toLowerCase().includes(gcashSearchTerm.toLowerCase()) ||
+                           transaction.fare_amount?.toString().includes(gcashSearchTerm) ||
+                           transaction.final_amount?.toString().includes(gcashSearchTerm);
       const matchesStatus = gcashFilterStatus === 'all' || transaction.status === gcashFilterStatus;
       const matchesDateRange = (!gcashDateRange.start || new Date(transaction.created_at) >= new Date(gcashDateRange.start)) &&
                                (!gcashDateRange.end || new Date(transaction.created_at) <= new Date(gcashDateRange.end));
@@ -519,18 +590,46 @@ const Reports = () => {
             const row = {};
             if (selectedExportColumns.includes('id')) row['Transaction ID'] = tx.id;
             if (selectedExportColumns.includes('type')) row['Type'] = tx.type;
-            if (selectedExportColumns.includes('amount')) row['Amount'] = tx.amount;
-            if (selectedExportColumns.includes('fare')) row['Fare'] = tx.fare || 0;
-            if (selectedExportColumns.includes('baggage')) row['Baggage'] = tx.baggage || 0;
+            if (selectedExportColumns.includes('amount')) row['Amount'] = tx.final_amount || tx.amount || 0;
+            if (selectedExportColumns.includes('fare_amount')) row['Fare Amount'] = tx.fare_amount || 0;
+            if (selectedExportColumns.includes('discount_amount')) row['Discount'] = tx.discount_amount || 0;
+            if (selectedExportColumns.includes('final_amount')) row['Final Amount'] = tx.final_amount || 0;
+            if (selectedExportColumns.includes('baggage_fee')) row['Baggage Fee'] = tx.baggage_fee || 0;
+            if (selectedExportColumns.includes('baggage_category')) row['Baggage Category'] = tx.baggage_category || 'N/A';
             if (selectedExportColumns.includes('channel')) row['Channel'] = tx.channel;
-            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = tx.trips?.bus_id?.plate_number;
-            if (selectedExportColumns.includes('route')) row['Route'] = tx.trips?.bus_id?.route;
+            if (selectedExportColumns.includes('payment_method')) row['Payment Method'] = tx.payment_method || 'N/A';
+            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = tx.trips?.bus_id?.plate_number || 'N/A';
+            if (selectedExportColumns.includes('route')) row['Route'] = tx.trips?.bus_id?.route || 'N/A';
             if (selectedExportColumns.includes('staff')) row['Staff'] = tx.staff?.full_name || 'N/A';
             if (selectedExportColumns.includes('created_at')) row['Created At'] = new Date(tx.created_at).toLocaleString();
             return row;
           });
           fileName = 'revenue_report';
           break;
+
+        case 'card_reloads': {
+          const { data: reloads } = await supabase
+            .from('card_reloads')
+            .select('*, card:qr_cards!card_reloads_card_id_fkey(card_uid, owner_name)')
+            .gte('recorded_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+            .lte('recorded_at', dateRange.end || new Date().toISOString())
+            .order('recorded_at', { ascending: false });
+
+          data = (reloads || []).map(r => {
+            const row = {};
+            if (selectedExportColumns.includes('id')) row['Reload ID'] = r.id;
+            if (selectedExportColumns.includes('card_uid')) row['Card UID'] = r.card?.card_uid || 'N/A';
+            if (selectedExportColumns.includes('amount')) row['Amount'] = r.amount || 0;
+            if (selectedExportColumns.includes('reload_method')) row['Method'] = r.reload_method || 'N/A';
+            if (selectedExportColumns.includes('reference_number')) row['Reference #'] = r.reference_number || 'N/A';
+            if (selectedExportColumns.includes('reload_location')) row['Location'] = r.reload_location || 'N/A';
+            if (selectedExportColumns.includes('status')) row['Status'] = r.status || 'N/A';
+            if (selectedExportColumns.includes('recorded_at')) row['Recorded At'] = r.recorded_at ? new Date(r.recorded_at).toLocaleString() : 'N/A';
+            return row;
+          });
+          fileName = 'card_reloads_report';
+          break;
+        }
 
         case 'buses':
           const { data: buses } = await supabase
@@ -554,7 +653,7 @@ const Reports = () => {
         case 'irregularities':
           const { data: irregularities } = await supabase
             .from('fare_irregularities')
-            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*)), conductor:staff_users!fare_irregularities_conductor_id_fkey(full_name)')
             .gte('detected_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('detected_at', dateRange.end || new Date().toISOString())
             .order('detected_at', { ascending: false });
@@ -562,20 +661,54 @@ const Reports = () => {
           data = (irregularities || []).map(irr => {
             const row = {};
             if (selectedExportColumns.includes('id')) row['Irregularity ID'] = irr.id;
-            if (selectedExportColumns.includes('type')) row['Type'] = irr.type;
+            if (selectedExportColumns.includes('type')) row['Type'] = irr.type?.replace(/_/g, ' ');
+            if (selectedExportColumns.includes('severity')) row['Severity'] = irr.severity || 'N/A';
             if (selectedExportColumns.includes('description')) row['Description'] = irr.description;
-            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = irr.trips?.bus_id?.plate_number;
-            if (selectedExportColumns.includes('route')) row['Route'] = irr.trips?.bus_id?.route;
-            if (selectedExportColumns.includes('detected_at')) row['Detected At'] = new Date(irr.detected_at).toLocaleString();
+            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = irr.trips?.bus_id?.plate_number || 'N/A';
+            if (selectedExportColumns.includes('route')) row['Route'] = irr.trips?.bus_id?.route || 'N/A';
+            if (selectedExportColumns.includes('conductor')) row['Conductor'] = irr.conductor?.full_name || 'N/A';
+            if (selectedExportColumns.includes('card_uid')) row['Card UID'] = irr.card_uid || 'N/A';
+            if (selectedExportColumns.includes('boarding_stop')) row['Boarding Stop'] = irr.boarding_stop || 'N/A';
+            if (selectedExportColumns.includes('destination_stop')) row['Destination Stop'] = irr.destination_stop || 'N/A';
+            if (selectedExportColumns.includes('notes')) row['Notes'] = irr.notes || 'N/A';
+            if (selectedExportColumns.includes('detected_at')) row['Detected At'] = irr.detected_at ? new Date(irr.detected_at).toLocaleString() : 'N/A';
             if (selectedExportColumns.includes('resolved')) row['Resolved'] = irr.resolved ? 'Yes' : 'No';
             if (selectedExportColumns.includes('resolved_at')) row['Resolved At'] = irr.resolved_at ? new Date(irr.resolved_at).toLocaleString() : 'N/A';
+            if (selectedExportColumns.includes('status')) row['Status'] = irr.status || 'N/A';
             return row;
           });
           fileName = 'fare_irregularities_report';
           break;
+
+        case 'anomalies': {
+          const ANOMALY_TYPES = ['trip_duration', 'camera_malfunction', 'count_mismatch', 'overcrowding', 'staff_absence', 'passenger_spike', 'route_deviation', 'boarding_rate'];
+          const { data: anomalyRows } = await supabase
+            .from('fare_irregularities')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .in('anomaly_type', ANOMALY_TYPES)
+            .gte('detected_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+            .lte('detected_at', dateRange.end || new Date().toISOString())
+            .order('detected_at', { ascending: false });
+
+          data = (anomalyRows || []).map(row => {
+            const r = {};
+            if (selectedExportColumns.includes('id')) r['Anomaly ID'] = row.id;
+            if (selectedExportColumns.includes('anomaly_type')) r['Anomaly Type'] = row.anomaly_type?.replace(/_/g, ' ') || 'N/A';
+            if (selectedExportColumns.includes('severity')) r['Severity'] = row.severity || 'N/A';
+            if (selectedExportColumns.includes('description')) r['Description'] = row.description || 'N/A';
+            if (selectedExportColumns.includes('plate_number')) r['Bus Plate'] = row.trips?.bus_id?.plate_number || 'N/A';
+            if (selectedExportColumns.includes('route')) r['Route'] = row.trips?.bus_id?.route || 'N/A';
+            if (selectedExportColumns.includes('detected_at')) r['Detected At'] = row.detected_at ? new Date(row.detected_at).toLocaleString() : 'N/A';
+            if (selectedExportColumns.includes('resolved')) r['Resolved'] = row.resolved ? 'Yes' : 'No';
+            if (selectedExportColumns.includes('resolved_at')) r['Resolved At'] = row.resolved_at ? new Date(row.resolved_at).toLocaleString() : 'N/A';
+            if (selectedExportColumns.includes('status')) r['Status'] = row.status || 'N/A';
+            return r;
+          });
+          fileName = 'anomaly_detection_report';
+          break;
+        }
       }
 
-      const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Report');
       XLSX.writeFile(wb, `${fileName}_${new Date().toISOString().split('T')[0]}.xlsx`);
@@ -681,10 +814,14 @@ const Reports = () => {
             const row = [];
             if (selectedExportColumns.includes('id')) row.push(tx.id);
             if (selectedExportColumns.includes('type')) row.push(tx.type);
-            if (selectedExportColumns.includes('amount')) row.push('₱' + parseFloat(tx.amount).toFixed(2));
-            if (selectedExportColumns.includes('fare')) row.push('₱' + parseFloat(tx.fare || 0).toFixed(2));
-            if (selectedExportColumns.includes('baggage')) row.push('₱' + parseFloat(tx.baggage || 0).toFixed(2));
+            if (selectedExportColumns.includes('amount')) row.push('₱' + parseFloat(tx.final_amount || tx.amount || 0).toFixed(2));
+            if (selectedExportColumns.includes('fare_amount')) row.push('₱' + parseFloat(tx.fare_amount || 0).toFixed(2));
+            if (selectedExportColumns.includes('discount_amount')) row.push('₱' + parseFloat(tx.discount_amount || 0).toFixed(2));
+            if (selectedExportColumns.includes('final_amount')) row.push('₱' + parseFloat(tx.final_amount || 0).toFixed(2));
+            if (selectedExportColumns.includes('baggage_fee')) row.push(tx.baggage_fee ? '₱' + parseFloat(tx.baggage_fee).toFixed(2) : '—');
+            if (selectedExportColumns.includes('baggage_category')) row.push(tx.baggage_category || '—');
             if (selectedExportColumns.includes('channel')) row.push(tx.channel);
+            if (selectedExportColumns.includes('payment_method')) row.push(tx.payment_method || '—');
             if (selectedExportColumns.includes('plate_number')) row.push(tx.trips?.bus_id?.plate_number || 'N/A');
             if (selectedExportColumns.includes('route')) row.push(tx.trips?.bus_id?.route || 'N/A');
             if (selectedExportColumns.includes('staff')) row.push(tx.staff?.full_name || 'N/A');
@@ -693,6 +830,35 @@ const Reports = () => {
           });
           fileName = 'revenue_report';
           break;
+
+        case 'card_reloads': {
+          const { data: reloads } = await supabase
+            .from('card_reloads')
+            .select('*, card:qr_cards!card_reloads_card_id_fkey(card_uid, owner_name)')
+            .gte('recorded_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+            .lte('recorded_at', dateRange.end || new Date().toISOString())
+            .order('recorded_at', { ascending: false });
+
+          columns = selectedExportColumns.map(colId => {
+            const col = availableColumns.card_reloads.find(c => c.id === colId);
+            return col ? col.label : colId;
+          });
+
+          data = (reloads || []).map(r => {
+            const row = [];
+            if (selectedExportColumns.includes('id')) row.push(r.id);
+            if (selectedExportColumns.includes('card_uid')) row.push(r.card?.card_uid || 'N/A');
+            if (selectedExportColumns.includes('amount')) row.push('₱' + parseFloat(r.amount || 0).toFixed(2));
+            if (selectedExportColumns.includes('reload_method')) row.push(r.reload_method || 'N/A');
+            if (selectedExportColumns.includes('reference_number')) row.push(r.reference_number || 'N/A');
+            if (selectedExportColumns.includes('reload_location')) row.push(r.reload_location || 'N/A');
+            if (selectedExportColumns.includes('status')) row.push(r.status || 'N/A');
+            if (selectedExportColumns.includes('recorded_at')) row.push(r.recorded_at ? new Date(r.recorded_at).toLocaleString() : 'N/A');
+            return row;
+          });
+          fileName = 'card_reloads_report';
+          break;
+        }
 
         case 'buses':
           const { data: buses } = await supabase
@@ -721,7 +887,7 @@ const Reports = () => {
         case 'irregularities':
           const { data: irregularities } = await supabase
             .from('fare_irregularities')
-            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*)), conductor:staff_users!fare_irregularities_conductor_id_fkey(full_name)')
             .gte('detected_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('detected_at', dateRange.end || new Date().toISOString())
             .order('detected_at', { ascending: false });
@@ -734,17 +900,57 @@ const Reports = () => {
           data = (irregularities || []).map(irr => {
             const row = [];
             if (selectedExportColumns.includes('id')) row.push(irr.id);
-            if (selectedExportColumns.includes('type')) row.push(irr.type);
-            if (selectedExportColumns.includes('description')) row.push(irr.description);
+            if (selectedExportColumns.includes('type')) row.push(irr.type?.replace(/_/g, ' ') || 'N/A');
+            if (selectedExportColumns.includes('severity')) row.push(irr.severity || 'N/A');
+            if (selectedExportColumns.includes('description')) row.push(irr.description || 'N/A');
             if (selectedExportColumns.includes('plate_number')) row.push(irr.trips?.bus_id?.plate_number || 'N/A');
             if (selectedExportColumns.includes('route')) row.push(irr.trips?.bus_id?.route || 'N/A');
-            if (selectedExportColumns.includes('detected_at')) row.push(new Date(irr.detected_at).toLocaleString());
+            if (selectedExportColumns.includes('conductor')) row.push(irr.conductor?.full_name || 'N/A');
+            if (selectedExportColumns.includes('card_uid')) row.push(irr.card_uid || 'N/A');
+            if (selectedExportColumns.includes('boarding_stop')) row.push(irr.boarding_stop || 'N/A');
+            if (selectedExportColumns.includes('destination_stop')) row.push(irr.destination_stop || 'N/A');
+            if (selectedExportColumns.includes('notes')) row.push(irr.notes || 'N/A');
+            if (selectedExportColumns.includes('detected_at')) row.push(irr.detected_at ? new Date(irr.detected_at).toLocaleString() : 'N/A');
             if (selectedExportColumns.includes('resolved')) row.push(irr.resolved ? 'Yes' : 'No');
             if (selectedExportColumns.includes('resolved_at')) row.push(irr.resolved_at ? new Date(irr.resolved_at).toLocaleString() : 'N/A');
+            if (selectedExportColumns.includes('status')) row.push(irr.status || 'N/A');
             return row;
           });
           fileName = 'fare_irregularities_report';
           break;
+
+        case 'anomalies': {
+          const ANOMALY_TYPES = ['trip_duration', 'camera_malfunction', 'count_mismatch', 'overcrowding', 'staff_absence', 'passenger_spike', 'route_deviation', 'boarding_rate'];
+          const { data: anomalyRows } = await supabase
+            .from('fare_irregularities')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .in('anomaly_type', ANOMALY_TYPES)
+            .gte('detected_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+            .lte('detected_at', dateRange.end || new Date().toISOString())
+            .order('detected_at', { ascending: false });
+
+          columns = selectedExportColumns.map(colId => {
+            const col = availableColumns.anomalies.find(c => c.id === colId);
+            return col ? col.label : colId;
+          });
+
+          data = (anomalyRows || []).map(row => {
+            const r = [];
+            if (selectedExportColumns.includes('id')) r.push(row.id);
+            if (selectedExportColumns.includes('anomaly_type')) r.push(row.anomaly_type?.replace(/_/g, ' ') || 'N/A');
+            if (selectedExportColumns.includes('severity')) r.push(row.severity || 'N/A');
+            if (selectedExportColumns.includes('description')) r.push(row.description || 'N/A');
+            if (selectedExportColumns.includes('plate_number')) r.push(row.trips?.bus_id?.plate_number || 'N/A');
+            if (selectedExportColumns.includes('route')) r.push(row.trips?.bus_id?.route || 'N/A');
+            if (selectedExportColumns.includes('detected_at')) r.push(row.detected_at ? new Date(row.detected_at).toLocaleString() : 'N/A');
+            if (selectedExportColumns.includes('resolved')) r.push(row.resolved ? 'Yes' : 'No');
+            if (selectedExportColumns.includes('resolved_at')) r.push(row.resolved_at ? new Date(row.resolved_at).toLocaleString() : 'N/A');
+            if (selectedExportColumns.includes('status')) r.push(row.status || 'N/A');
+            return r;
+          });
+          fileName = 'anomaly_detection_report';
+          break;
+        }
       }
 
       const doc = new jsPDF();
@@ -782,8 +988,10 @@ const Reports = () => {
     { id: 'trips', label: 'Trips', icon: Bus, description: 'Trip records with bus and conductor info' },
     { id: 'passengers', label: 'Passenger Counts', icon: Users, description: 'Passenger count snapshots' },
     { id: 'revenue', label: 'Revenue', icon: DollarSign, description: 'Financial transactions' },
+    { id: 'card_reloads', label: 'Card Reloads', icon: TrendingUp, description: 'Card top-up / reload history' },
     { id: 'buses', label: 'Buses', icon: Bus, description: 'Bus fleet information' },
-    { id: 'irregularities', label: 'Fare Irregularities', icon: Activity, description: 'Fare compliance issues' },
+    { id: 'irregularities', label: 'Fare Irregularities', icon: Activity, description: 'Manually reported fare issues by conductors' },
+    { id: 'anomalies', label: 'Anomaly Detection', icon: AlertCircle, description: 'Auto-detected anomalies (trip duration, camera, crowding, etc.)' },
   ];
 
   const tabs = [
@@ -903,7 +1111,7 @@ const Reports = () => {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-white text-xl font-bold flex items-center gap-2">
               <Activity className="text-blue-400" />
-              Recent Trips
+              Trip History
             </h2>
             <button
               onClick={() => setVisibleTripsColumns(
@@ -918,11 +1126,11 @@ const Reports = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <select
               value={tripsFilterStatus}
-              onChange={(e) => setTripsFilterStatus(e.target.value)}
+              onChange={(e) => { setTripsFilterStatus(e.target.value); setTripsCurrentPage(1); }}
               className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-blue-500"
             >
               <option value="all" className="bg-gray-800 text-white">All Status</option>
-              <option value="active" className="bg-gray-800 text-white">Active</option>
+              <option value="in_progress" className="bg-gray-800 text-white">In Progress</option>
               <option value="completed" className="bg-gray-800 text-white">Completed</option>
               <option value="cancelled" className="bg-gray-800 text-white">Cancelled</option>
             </select>
@@ -932,7 +1140,7 @@ const Reports = () => {
                 type="text"
                 placeholder="Search by route..."
                 value={tripsFilterRoute}
-                onChange={(e) => setTripsFilterRoute(e.target.value)}
+                onChange={(e) => { setTripsFilterRoute(e.target.value); setTripsCurrentPage(1); }}
                 className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-blue-500"
               />
             </div>
@@ -942,90 +1150,109 @@ const Reports = () => {
               <thead>
                 <tr className="text-left text-white/60 border-b border-white/10">
                   {visibleTripsColumns.includes('plate_number') && (
-                    <th
-                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                      onClick={() => handleSort('buses', tripsSort, setTripsSort)}
-                    >
-                      <div className="flex items-center gap-1">
-                        Bus {renderSortIcon('buses', tripsSort)}
-                      </div>
+                    <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('buses', tripsSort, setTripsSort)}>
+                      <div className="flex items-center gap-1">Bus {renderSortIcon('buses', tripsSort)}</div>
                     </th>
                   )}
                   {visibleTripsColumns.includes('route') && (
-                    <th
-                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                      onClick={() => handleSort('buses', tripsSort, setTripsSort)}
-                    >
-                      <div className="flex items-center gap-1">
-                        Route {renderSortIcon('buses', tripsSort)}
-                      </div>
+                    <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('buses', tripsSort, setTripsSort)}>
+                      <div className="flex items-center gap-1">Route {renderSortIcon('buses', tripsSort)}</div>
                     </th>
                   )}
                   {visibleTripsColumns.includes('conductor') && (
-                    <th
-                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                      onClick={() => handleSort('conductor_staff', tripsSort, setTripsSort)}
-                    >
-                      <div className="flex items-center gap-1">
-                        Conductor {renderSortIcon('conductor_staff', tripsSort)}
-                      </div>
+                    <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('conductor_staff', tripsSort, setTripsSort)}>
+                      <div className="flex items-center gap-1">Conductor {renderSortIcon('conductor_staff', tripsSort)}</div>
                     </th>
                   )}
                   {visibleTripsColumns.includes('status') && (
-                    <th
-                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                      onClick={() => handleSort('status', tripsSort, setTripsSort)}
-                    >
-                      <div className="flex items-center gap-1">
-                        Status {renderSortIcon('status', tripsSort)}
-                      </div>
+                    <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('status', tripsSort, setTripsSort)}>
+                      <div className="flex items-center gap-1">Status {renderSortIcon('status', tripsSort)}</div>
                     </th>
                   )}
                   {visibleTripsColumns.includes('started_at') && (
-                    <th
-                      className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                      onClick={() => handleSort('started_at', tripsSort, setTripsSort)}
-                    >
-                      <div className="flex items-center gap-1">
-                        Started {renderSortIcon('started_at', tripsSort)}
-                      </div>
+                    <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('started_at', tripsSort, setTripsSort)}>
+                      <div className="flex items-center gap-1">Started {renderSortIcon('started_at', tripsSort)}</div>
                     </th>
                   )}
                 </tr>
               </thead>
               <tbody>
-                {filteredRecentActivity.slice(0, 10).map((trip) => (
-                  <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
-                    {visibleTripsColumns.includes('plate_number') && (
-                      <td className="py-4 text-white">{trip.bus_id?.plate_number || 'N/A'}</td>
-                    )}
-                    {visibleTripsColumns.includes('route') && (
-                      <td className="py-4 text-white/70">{trip.bus_id?.route || 'N/A'}</td>
-                    )}
-                    {visibleTripsColumns.includes('conductor') && (
-                      <td className="py-4 text-white/70">{trip.conductor_staff?.full_name || 'N/A'}</td>
-                    )}
-                    {visibleTripsColumns.includes('status') && (
-                      <td className="py-4">
-                        <span className={`px-3 py-1 rounded-full text-xs ${
-                          trip.status === 'completed' ? 'bg-green-500/20 text-green-400' :
-                          trip.status === 'active' ? 'bg-blue-500/20 text-blue-400' :
-                          'bg-yellow-500/20 text-yellow-400'
-                        }`}>
-                          {trip.status}
-                        </span>
-                      </td>
-                    )}
-                    {visibleTripsColumns.includes('started_at') && (
-                      <td className="py-4 text-white/60 text-sm">
-                        {new Date(trip.started_at).toLocaleString()}
-                      </td>
-                    )}
-                  </tr>
-                ))}
+                {(() => {
+                  const totalPages = Math.ceil(filteredRecentActivity.length / tripsItemsPerPage);
+                  const paginated = filteredRecentActivity.slice(
+                    (tripsCurrentPage - 1) * tripsItemsPerPage,
+                    tripsCurrentPage * tripsItemsPerPage
+                  );
+                  return paginated.map((trip) => (
+                    <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
+                      {visibleTripsColumns.includes('plate_number') && (
+                        <td className="py-4 text-white">{trip.bus_id?.plate_number || 'N/A'}</td>
+                      )}
+                      {visibleTripsColumns.includes('route') && (
+                        <td className="py-4 text-white/70">{trip.bus_id?.route || 'N/A'}</td>
+                      )}
+                      {visibleTripsColumns.includes('conductor') && (
+                        <td className="py-4 text-white/70">{trip.conductor_staff?.full_name || 'N/A'}</td>
+                      )}
+                      {visibleTripsColumns.includes('status') && (
+                        <td className="py-4">
+                          <span className={`px-3 py-1 rounded-full text-xs ${
+                            trip.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                            trip.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400' :
+                            'bg-red-500/20 text-red-400'
+                          }`}>
+                            {trip.status?.replace('_', ' ')}
+                          </span>
+                        </td>
+                      )}
+                      {visibleTripsColumns.includes('started_at') && (
+                        <td className="py-4 text-white/60 text-sm">
+                          {trip.started_at ? new Date(trip.started_at).toLocaleString() : 'N/A'}
+                        </td>
+                      )}
+                    </tr>
+                  ));
+                })()}
               </tbody>
             </table>
           </div>
+          {/* Trips Pagination */}
+          {(() => {
+            const totalPages = Math.ceil(filteredRecentActivity.length / tripsItemsPerPage);
+            if (totalPages <= 1) return null;
+            return (
+              <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
+                <p className="text-white/50 text-sm">
+                  Showing {((tripsCurrentPage - 1) * tripsItemsPerPage) + 1}–{Math.min(tripsCurrentPage * tripsItemsPerPage, filteredRecentActivity.length)} of {filteredRecentActivity.length} trips
+                </p>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setTripsCurrentPage(p => Math.max(p - 1, 1))} disabled={tripsCurrentPage === 1}
+                    className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                    <ChevronLeft size={16} />
+                  </button>
+                  <div className="flex gap-1">
+                    {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                      let p;
+                      if (totalPages <= 5) p = i + 1;
+                      else if (tripsCurrentPage <= 3) p = i + 1;
+                      else if (tripsCurrentPage >= totalPages - 2) p = totalPages - 4 + i;
+                      else p = tripsCurrentPage - 2 + i;
+                      return (
+                        <button key={p} onClick={() => setTripsCurrentPage(p)}
+                          className={`w-8 h-8 rounded-lg text-sm transition-colors ${tripsCurrentPage === p ? 'bg-orange-500 text-white' : 'bg-white/10 hover:bg-white/20 text-white/70'}`}>
+                          {p}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button onClick={() => setTripsCurrentPage(p => Math.min(p + 1, totalPages))} disabled={tripsCurrentPage === totalPages}
+                    className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1037,20 +1264,9 @@ const Reports = () => {
               <ArrowLeftRight className="text-orange-400" />
               Transactions
             </h2>
-            <button
-              onClick={() => {
-                setShowTransactions(!showTransactions);
-                if (!showTransactions) fetchTransactions();
-              }}
-              className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors"
-            >
-              {showTransactions ? 'Hide' : 'Show Transactions'}
-            </button>
           </div>
 
-          {showTransactions && (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
                   <input
@@ -1104,23 +1320,23 @@ const Reports = () => {
                           </div>
                         </th>
                       )}
-                      {visibleTransactionColumns.includes('fare') && (
+                      {visibleTransactionColumns.includes('fare_amount') && (
                         <th
                           className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('fare', transactionSort, setTransactionSort)}
+                          onClick={() => handleSort('fare_amount', transactionSort, setTransactionSort)}
                         >
                           <div className="flex items-center gap-1">
-                            Fare {renderSortIcon('fare', transactionSort)}
+                            Fare {renderSortIcon('fare_amount', transactionSort)}
                           </div>
                         </th>
                       )}
-                      {visibleTransactionColumns.includes('baggage') && (
+                      {visibleTransactionColumns.includes('baggage_fee') && (
                         <th
                           className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('baggage', transactionSort, setTransactionSort)}
+                          onClick={() => handleSort('baggage_fee', transactionSort, setTransactionSort)}
                         >
                           <div className="flex items-center gap-1">
-                            Baggage {renderSortIcon('baggage', transactionSort)}
+                            Baggage Fee {renderSortIcon('baggage_fee', transactionSort)}
                           </div>
                         </th>
                       )}
@@ -1178,17 +1394,21 @@ const Reports = () => {
                               </span>
                             </td>
                           )}
-                          {visibleTransactionColumns.includes('fare') && (
-                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.fare || 0).toFixed(2)}</td>
+                          {visibleTransactionColumns.includes('fare_amount') && (
+                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.fare_amount || 0).toFixed(2)}</td>
                           )}
-                          {visibleTransactionColumns.includes('baggage') && (
-                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.baggage || 0).toFixed(2)}</td>
+                          {visibleTransactionColumns.includes('baggage_fee') && (
+                            <td className="py-4 text-white/70">
+                              {transaction.baggage_fee
+                                ? `₱${parseFloat(transaction.baggage_fee).toFixed(2)}${transaction.baggage_category ? ` (${transaction.baggage_category})` : ''}`
+                                : '—'}
+                            </td>
                           )}
                           {visibleTransactionColumns.includes('amount') && (
-                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.amount).toFixed(2)}</td>
+                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.final_amount || transaction.amount || 0).toFixed(2)}</td>
                           )}
                           {visibleTransactionColumns.includes('channel') && (
-                            <td className="py-4 text-white/70">{transaction.channel}</td>
+                            <td className="py-4 text-white/70 capitalize">{transaction.channel}</td>
                           )}
                           {visibleTransactionColumns.includes('staff') && (
                             <td className="py-4 text-white/70">{transaction.staff?.full_name || 'N/A'}</td>
@@ -1265,8 +1485,6 @@ const Reports = () => {
                   </div>
                 )}
               </div>
-            </>
-          )}
         </div>
       )}
 
@@ -1278,20 +1496,9 @@ const Reports = () => {
               <DollarSign className="text-green-400" />
               GCash Transactions
             </h2>
-            <button
-              onClick={() => {
-                setShowGcashTransactions(!showGcashTransactions);
-                if (!showGcashTransactions) fetchGcashTransactions();
-              }}
-              className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors"
-            >
-              {showGcashTransactions ? 'Hide' : 'Show GCash Transactions'}
-            </button>
           </div>
 
-          {showGcashTransactions && (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
                   <input
@@ -1326,54 +1533,33 @@ const Reports = () => {
                   <thead>
                     <tr className="text-left text-white/60 border-b border-white/10">
                       {visibleGcashColumns.includes('created_at') && (
-                        <th
-                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('created_at', gcashSort, setGcashSort)}
-                        >
-                          <div className="flex items-center gap-1">
-                            Date {renderSortIcon('created_at', gcashSort)}
-                          </div>
+                        <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('created_at', gcashSort, setGcashSort)}>
+                          <div className="flex items-center gap-1">Date {renderSortIcon('created_at', gcashSort)}</div>
                         </th>
                       )}
-                      {visibleGcashColumns.includes('phone_number') && (
-                        <th
-                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('phone_number', gcashSort, setGcashSort)}
-                        >
-                          <div className="flex items-center gap-1">
-                            Phone Number {renderSortIcon('phone_number', gcashSort)}
-                          </div>
+                      {visibleGcashColumns.includes('card_uid') && (
+                        <th className="pb-3 font-medium">Card UID</th>
+                      )}
+                      {visibleGcashColumns.includes('fare_amount') && (
+                        <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('fare_amount', gcashSort, setGcashSort)}>
+                          <div className="flex items-center gap-1">Fare {renderSortIcon('fare_amount', gcashSort)}</div>
                         </th>
                       )}
-                      {visibleGcashColumns.includes('amount') && (
-                        <th
-                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('amount', gcashSort, setGcashSort)}
-                        >
-                          <div className="flex items-center gap-1">
-                            Amount {renderSortIcon('amount', gcashSort)}
-                          </div>
+                      {visibleGcashColumns.includes('baggage_fee') && (
+                        <th className="pb-3 font-medium">Baggage Fee</th>
+                      )}
+                      {visibleGcashColumns.includes('final_amount') && (
+                        <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('final_amount', gcashSort, setGcashSort)}>
+                          <div className="flex items-center gap-1">Total {renderSortIcon('final_amount', gcashSort)}</div>
                         </th>
                       )}
                       {visibleGcashColumns.includes('status') && (
-                        <th
-                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('status', gcashSort, setGcashSort)}
-                        >
-                          <div className="flex items-center gap-1">
-                            Status {renderSortIcon('status', gcashSort)}
-                          </div>
+                        <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('status', gcashSort, setGcashSort)}>
+                          <div className="flex items-center gap-1">Status {renderSortIcon('status', gcashSort)}</div>
                         </th>
                       )}
-                      {visibleGcashColumns.includes('stripe_payment_id') && (
-                        <th
-                          className="pb-3 font-medium cursor-pointer hover:text-white transition-colors"
-                          onClick={() => handleSort('stripe_payment_id', gcashSort, setGcashSort)}
-                        >
-                          <div className="flex items-center gap-1">
-                            Payment ID {renderSortIcon('stripe_payment_id', gcashSort)}
-                          </div>
-                        </th>
+                      {visibleGcashColumns.includes('staff') && (
+                        <th className="pb-3 font-medium">Staff</th>
                       )}
                       <th className="pb-3 font-medium">Actions</th>
                     </tr>
@@ -1383,25 +1569,35 @@ const Reports = () => {
                       paginatedGcashTransactions.map((transaction) => (
                         <tr key={transaction.id} className="border-b border-white/5 hover:bg-white/5">
                           {visibleGcashColumns.includes('created_at') && (
-                            <td className="py-4 text-white/70 text-sm">
+                            <td className="py-4 text-white/70 text-sm whitespace-nowrap">
                               {new Date(transaction.created_at).toLocaleString()}
                             </td>
                           )}
-                          {visibleGcashColumns.includes('phone_number') && (
-                            <td className="py-4 text-white font-medium">{transaction.phone_number}</td>
+                          {visibleGcashColumns.includes('card_uid') && (
+                            <td className="py-4 text-white font-mono text-xs">{transaction.card?.card_uid || 'N/A'}</td>
                           )}
-                          {visibleGcashColumns.includes('amount') && (
-                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.amount).toFixed(2)}</td>
+                          {visibleGcashColumns.includes('fare_amount') && (
+                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.fare_amount || 0).toFixed(2)}</td>
+                          )}
+                          {visibleGcashColumns.includes('baggage_fee') && (
+                            <td className="py-4 text-white/70">
+                              {transaction.baggage_fee
+                                ? `₱${parseFloat(transaction.baggage_fee).toFixed(2)}${transaction.baggage_category ? ` · ${transaction.baggage_category}` : ''}`
+                                : '—'}
+                            </td>
+                          )}
+                          {visibleGcashColumns.includes('final_amount') && (
+                            <td className="py-4 text-white font-medium">₱{parseFloat(transaction.final_amount || transaction.amount || 0).toFixed(2)}</td>
                           )}
                           {visibleGcashColumns.includes('status') && (
                             <td className="py-4">
-                              <span className={`px-3 py-1 rounded-full text-xs border ${gcashStatusColors[transaction.status]}`}>
+                              <span className={`px-3 py-1 rounded-full text-xs border ${gcashStatusColors[transaction.status] || 'bg-gray-500/20 text-gray-400 border-gray-500/30'}`}>
                                 {transaction.status}
                               </span>
                             </td>
                           )}
-                          {visibleGcashColumns.includes('stripe_payment_id') && (
-                            <td className="py-4 text-white/70 text-sm">{transaction.stripe_payment_id || 'N/A'}</td>
+                          {visibleGcashColumns.includes('staff') && (
+                            <td className="py-4 text-white/70 text-sm">{transaction.staff?.full_name || 'N/A'}</td>
                           )}
                           <td className="py-4">
                             <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
@@ -1470,8 +1666,6 @@ const Reports = () => {
                   </div>
                 )}
               </div>
-            </>
-          )}
         </div>
       )}
 
@@ -1544,17 +1738,24 @@ const Reports = () => {
                     className="bg-white/10 border border-white/20 rounded-xl pl-9 pr-4 py-2 text-white text-sm placeholder-white/40 focus:outline-none focus:border-orange-500 w-48"
                   />
                 </div>
-                {(reportType === 'irregularities' || reportType === 'trips' || reportType === 'revenue') && (
+                {(reportType === 'irregularities' || reportType === 'anomalies' || reportType === 'trips' || reportType === 'revenue' || reportType === 'card_reloads') && (
                   <select
                     value={previewStatusFilter}
                     onChange={(e) => { setPreviewStatusFilter(e.target.value); setPreviewCurrentPage(1); }}
                     className="bg-gray-800 border border-white/20 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-orange-500"
                   >
                     <option value="all">All</option>
-                    {reportType === 'irregularities' && (
+                    {(reportType === 'irregularities' || reportType === 'anomalies') && (
                       <>
                         <option value="unresolved">Unresolved</option>
                         <option value="resolved">Resolved</option>
+                      </>
+                    )}
+                    {reportType === 'card_reloads' && (
+                      <>
+                        <option value="completed">Completed</option>
+                        <option value="pending">Pending</option>
+                        <option value="failed">Failed</option>
                       </>
                     )}
                     {reportType === 'trips' && (
@@ -1592,6 +1793,18 @@ const Reports = () => {
                   if (reportType === 'irregularities') {
                     matchesSearch = row.type?.toLowerCase().includes(q) ||
                       row.description?.toLowerCase().includes(q) ||
+                      row.severity?.toLowerCase().includes(q) ||
+                      row.card_uid?.toLowerCase().includes(q) ||
+                      row.boarding_stop?.toLowerCase().includes(q) ||
+                      row.destination_stop?.toLowerCase().includes(q) ||
+                      row.notes?.toLowerCase().includes(q) ||
+                      row.conductor?.full_name?.toLowerCase().includes(q) ||
+                      row.trips?.bus_id?.plate_number?.toLowerCase().includes(q) ||
+                      row.trips?.bus_id?.route?.toLowerCase().includes(q);
+                  } else if (reportType === 'anomalies') {
+                    matchesSearch = row.anomaly_type?.toLowerCase().includes(q) ||
+                      row.description?.toLowerCase().includes(q) ||
+                      row.severity?.toLowerCase().includes(q) ||
                       row.trips?.bus_id?.plate_number?.toLowerCase().includes(q) ||
                       row.trips?.bus_id?.route?.toLowerCase().includes(q);
                   } else if (reportType === 'trips') {
@@ -1610,17 +1823,23 @@ const Reports = () => {
                     matchesSearch = row.plate_number?.toLowerCase().includes(q) ||
                       row.route?.toLowerCase().includes(q) ||
                       row.status?.toLowerCase().includes(q);
+                  } else if (reportType === 'card_reloads') {
+                    matchesSearch = row.card?.card_uid?.toLowerCase().includes(q) ||
+                      row.card?.owner_name?.toLowerCase().includes(q) ||
+                      row.reload_method?.toLowerCase().includes(q) ||
+                      row.reload_location?.toLowerCase().includes(q) ||
+                      row.reference_number?.toLowerCase().includes(q) ||
+                      row.amount?.toString().includes(q);
                   }
                 }
 
                 if (previewStatusFilter !== 'all') {
-                  if (reportType === 'irregularities') {
+                  if (reportType === 'irregularities' || reportType === 'anomalies') {
                     matchesStatus = previewStatusFilter === 'resolved' ? row.resolved : !row.resolved;
                   } else {
                     matchesStatus = row.status === previewStatusFilter;
                   }
                 }
-
                 return matchesSearch && matchesStatus;
               });
 
@@ -1648,12 +1867,27 @@ const Reports = () => {
                           {reportType === 'irregularities' && (
                             <>
                               <th className="pb-3 px-2 font-medium">Type</th>
+                              <th className="pb-3 px-2 font-medium">Severity</th>
+                              <th className="pb-3 px-2 font-medium">Description</th>
+                              <th className="pb-3 px-2 font-medium">Bus Plate</th>
+                              <th className="pb-3 px-2 font-medium">Route</th>
+                              <th className="pb-3 px-2 font-medium">Conductor</th>
+                              <th className="pb-3 px-2 font-medium">Card UID</th>
+                              <th className="pb-3 px-2 font-medium">Boarding Stop</th>
+                              <th className="pb-3 px-2 font-medium">Destination</th>
+                              <th className="pb-3 px-2 font-medium">Notes</th>
+                              <th className="pb-3 px-2 font-medium">Detected At</th>
+                              <th className="pb-3 px-2 font-medium">Status</th>
+                            </>
+                          )}
+                          {reportType === 'anomalies' && (
+                            <>
+                              <th className="pb-3 px-2 font-medium">Anomaly Type</th>
+                              <th className="pb-3 px-2 font-medium">Severity</th>
                               <th className="pb-3 px-2 font-medium">Description</th>
                               <th className="pb-3 px-2 font-medium">Bus Plate</th>
                               <th className="pb-3 px-2 font-medium">Route</th>
                               <th className="pb-3 px-2 font-medium">Detected At</th>
-                              <th className="pb-3 px-2 font-medium">Resolved</th>
-                              <th className="pb-3 px-2 font-medium">Resolved At</th>
                               <th className="pb-3 px-2 font-medium">Status</th>
                             </>
                           )}
@@ -1681,12 +1915,25 @@ const Reports = () => {
                             <>
                               <th className="pb-3 px-2 font-medium">Type</th>
                               <th className="pb-3 px-2 font-medium">Fare</th>
-                              <th className="pb-3 px-2 font-medium">Baggage</th>
-                              <th className="pb-3 px-2 font-medium">Amount</th>
+                              <th className="pb-3 px-2 font-medium">Baggage Fee</th>
+                              <th className="pb-3 px-2 font-medium">Total</th>
                               <th className="pb-3 px-2 font-medium">Channel</th>
+                              <th className="pb-3 px-2 font-medium">Payment</th>
                               <th className="pb-3 px-2 font-medium">Staff</th>
                               <th className="pb-3 px-2 font-medium">Date</th>
                               <th className="pb-3 px-2 font-medium">Status</th>
+                            </>
+                          )}
+                          {reportType === 'card_reloads' && (
+                            <>
+                              <th className="pb-3 px-2 font-medium">Card UID</th>
+                              <th className="pb-3 px-2 font-medium">Owner</th>
+                              <th className="pb-3 px-2 font-medium">Amount</th>
+                              <th className="pb-3 px-2 font-medium">Method</th>
+                              <th className="pb-3 px-2 font-medium">Reference #</th>
+                              <th className="pb-3 px-2 font-medium">Location</th>
+                              <th className="pb-3 px-2 font-medium">Status</th>
+                              <th className="pb-3 px-2 font-medium">Recorded At</th>
                             </>
                           )}
                           {reportType === 'buses' && (
@@ -1707,18 +1954,60 @@ const Reports = () => {
                           <tr key={row.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                             {reportType === 'irregularities' && (
                               <>
-                                <td className="py-3 px-2 text-white font-medium">{row.type?.replace(/_/g, ' ') || 'N/A'}</td>
-                                <td className="py-3 px-2 text-white/70 max-w-xs truncate" title={row.description}>{row.description || 'N/A'}</td>
+                                <td className="py-3 px-2">
+                                  <span className="px-2 py-1 rounded-full text-xs border bg-orange-500/20 text-orange-400 border-orange-500/30 capitalize">
+                                    {row.type?.replace(/_/g, ' ') || 'N/A'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-2">
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${
+                                    row.severity === 'emergency' ? 'bg-red-700/30 text-red-300 border-red-700/40' :
+                                    row.severity === 'critical' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                                    row.severity === 'high' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' :
+                                    row.severity === 'medium' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
+                                    'bg-gray-500/20 text-gray-400 border-gray-500/30'
+                                  }`}>
+                                    {row.severity || 'N/A'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-2 text-white/70 text-xs max-w-[200px] truncate" title={row.description}>{row.description || 'N/A'}</td>
                                 <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.plate_number || 'N/A'}</td>
                                 <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.route || 'N/A'}</td>
-                                <td className="py-3 px-2 text-white/60">{row.detected_at ? new Date(row.detected_at).toLocaleString() : 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.conductor?.full_name || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs font-mono">{row.card_uid || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs">{row.boarding_stop || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs">{row.destination_stop || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs max-w-[160px] truncate" title={row.notes}>{row.notes || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs whitespace-nowrap">{row.detected_at ? new Date(row.detected_at).toLocaleString() : 'N/A'}</td>
                                 <td className="py-3 px-2">
-                                  {row.resolved
-                                    ? <CheckCircle size={16} className="text-green-400" />
-                                    : <AlertCircle size={16} className="text-yellow-400" />
-                                  }
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${row.resolved ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'}`}>
+                                    {row.resolved ? 'Resolved' : 'Unresolved'}
+                                  </span>
                                 </td>
-                                <td className="py-3 px-2 text-white/60">{row.resolved_at ? new Date(row.resolved_at).toLocaleString() : '—'}</td>
+                              </>
+                            )}
+                            {reportType === 'anomalies' && (
+                              <>
+                                <td className="py-3 px-2">
+                                  <span className="px-2 py-1 rounded-full text-xs border bg-blue-500/20 text-blue-400 border-blue-500/30 capitalize">
+                                    {row.anomaly_type?.replace(/_/g, ' ') || 'N/A'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-2">
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${
+                                    row.severity === 'emergency' ? 'bg-red-700/30 text-red-300 border-red-700/40' :
+                                    row.severity === 'critical' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                                    row.severity === 'high' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' :
+                                    row.severity === 'medium' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
+                                    'bg-gray-500/20 text-gray-400 border-gray-500/30'
+                                  }`}>
+                                    {row.severity || 'N/A'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-2 text-white/70 text-xs max-w-[240px] truncate" title={row.description}>{row.description || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.plate_number || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.route || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs whitespace-nowrap">{row.detected_at ? new Date(row.detected_at).toLocaleString() : 'N/A'}</td>
                                 <td className="py-3 px-2">
                                   <span className={`px-2 py-1 rounded-full text-xs border ${row.resolved ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'}`}>
                                     {row.resolved ? 'Resolved' : 'Unresolved'}
@@ -1750,7 +2039,7 @@ const Reports = () => {
                                 <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.route || 'N/A'}</td>
                                 <td className="py-3 px-2 text-white">{row.count ?? 'N/A'}</td>
                                 <td className="py-3 px-2 text-white/70">{row.ai_count ?? '—'}</td>
-                                <td className="py-3 px-2 text-white/70">{row.source || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.source || 'manual'}</td>
                                 <td className="py-3 px-2 text-white/60">{row.recorded_at ? new Date(row.recorded_at).toLocaleString() : 'N/A'}</td>
                               </>
                             )}
@@ -1761,12 +2050,17 @@ const Reports = () => {
                                     {row.type?.replace(/_/g, ' ') || 'N/A'}
                                   </span>
                                 </td>
-                                <td className="py-3 px-2 text-white font-medium">₱{parseFloat(row.fare || 0).toFixed(2)}</td>
-                                <td className="py-3 px-2 text-white/70">₱{parseFloat(row.baggage || 0).toFixed(2)}</td>
-                                <td className="py-3 px-2 text-white font-medium">₱{parseFloat(row.amount || 0).toFixed(2)}</td>
+                                <td className="py-3 px-2 text-white font-medium">₱{parseFloat(row.fare_amount || 0).toFixed(2)}</td>
+                                <td className="py-3 px-2 text-white/70">
+                                  {row.baggage_fee
+                                    ? `₱${parseFloat(row.baggage_fee).toFixed(2)}${row.baggage_category ? ` · ${row.baggage_category}` : ''}`
+                                    : '—'}
+                                </td>
+                                <td className="py-3 px-2 text-white font-medium">₱{parseFloat(row.final_amount || row.amount || 0).toFixed(2)}</td>
                                 <td className="py-3 px-2 text-white/70 capitalize">{row.channel || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/70 capitalize">{row.payment_method || row.channel || 'N/A'}</td>
                                 <td className="py-3 px-2 text-white/70">{row.staff?.full_name || 'N/A'}</td>
-                                <td className="py-3 px-2 text-white/60">{row.created_at ? new Date(row.created_at).toLocaleString() : 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs whitespace-nowrap">{row.created_at ? new Date(row.created_at).toLocaleString() : 'N/A'}</td>
                                 <td className="py-3 px-2">
                                   <span className={`px-2 py-1 rounded-full text-xs border ${
                                     row.status === 'completed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
@@ -1776,6 +2070,26 @@ const Reports = () => {
                                     {row.status || 'N/A'}
                                   </span>
                                 </td>
+                              </>
+                            )}
+                            {reportType === 'card_reloads' && (
+                              <>
+                                <td className="py-3 px-2 text-white font-mono text-xs">{row.card?.card_uid || '—'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.card?.owner_name || '—'}</td>
+                                <td className="py-3 px-2 text-white font-medium">₱{parseFloat(row.amount || 0).toFixed(2)}</td>
+                                <td className="py-3 px-2 text-white/70 capitalize">{row.reload_method || 'N/A'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs font-mono">{row.reference_number || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs">{row.reload_location || '—'}</td>
+                                <td className="py-3 px-2">
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${
+                                    row.status === 'completed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                                    row.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
+                                    'bg-red-500/20 text-red-400 border-red-500/30'
+                                  }`}>
+                                    {row.status || 'N/A'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-2 text-white/60 text-xs whitespace-nowrap">{row.recorded_at ? new Date(row.recorded_at).toLocaleString() : 'N/A'}</td>
                               </>
                             )}
                             {reportType === 'buses' && (

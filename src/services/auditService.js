@@ -16,6 +16,9 @@ const AuditService = {
    */
   async logAuditEvent({ action, module, details, ipAddress }) {
     try {
+      // Skip VIEW actions — page views are too noisy for audit logs
+      if (action === 'VIEW') return;
+
       // Get current user info
       const { data: { user } } = await supabase.auth.getUser();
       
