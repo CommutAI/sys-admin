@@ -124,12 +124,20 @@ const Reports = () => {
     irregularities: [
       { id: 'id', label: 'Irregularity ID' },
       { id: 'type', label: 'Type' },
+      { id: 'anomaly_type', label: 'Anomaly Type' },
+      { id: 'severity', label: 'Severity' },
       { id: 'description', label: 'Description' },
       { id: 'plate_number', label: 'Bus Plate' },
       { id: 'route', label: 'Route' },
+      { id: 'conductor', label: 'Conductor' },
+      { id: 'card_uid', label: 'Card UID' },
+      { id: 'boarding_stop', label: 'Boarding Stop' },
+      { id: 'destination_stop', label: 'Destination Stop' },
+      { id: 'notes', label: 'Notes' },
       { id: 'detected_at', label: 'Detected At' },
       { id: 'resolved', label: 'Resolved' },
       { id: 'resolved_at', label: 'Resolved At' },
+      { id: 'status', label: 'Status' },
     ],
   };
 
@@ -275,7 +283,7 @@ const Reports = () => {
         case 'irregularities': {
           const { data: rows, error } = await supabase
             .from('fare_irregularities')
-            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*)), conductor:staff_users!fare_irregularities_conductor_id_fkey(full_name)')
             .gte('detected_at', start)
             .lte('detected_at', end)
             .order('detected_at', { ascending: false });
@@ -554,7 +562,7 @@ const Reports = () => {
         case 'irregularities':
           const { data: irregularities } = await supabase
             .from('fare_irregularities')
-            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*)), conductor:staff_users!fare_irregularities_conductor_id_fkey(full_name)')
             .gte('detected_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('detected_at', dateRange.end || new Date().toISOString())
             .order('detected_at', { ascending: false });
@@ -562,13 +570,21 @@ const Reports = () => {
           data = (irregularities || []).map(irr => {
             const row = {};
             if (selectedExportColumns.includes('id')) row['Irregularity ID'] = irr.id;
-            if (selectedExportColumns.includes('type')) row['Type'] = irr.type;
+            if (selectedExportColumns.includes('type')) row['Type'] = irr.type?.replace(/_/g, ' ');
+            if (selectedExportColumns.includes('anomaly_type')) row['Anomaly Type'] = irr.anomaly_type?.replace(/_/g, ' ') || 'N/A';
+            if (selectedExportColumns.includes('severity')) row['Severity'] = irr.severity || 'N/A';
             if (selectedExportColumns.includes('description')) row['Description'] = irr.description;
-            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = irr.trips?.bus_id?.plate_number;
-            if (selectedExportColumns.includes('route')) row['Route'] = irr.trips?.bus_id?.route;
-            if (selectedExportColumns.includes('detected_at')) row['Detected At'] = new Date(irr.detected_at).toLocaleString();
+            if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = irr.trips?.bus_id?.plate_number || 'N/A';
+            if (selectedExportColumns.includes('route')) row['Route'] = irr.trips?.bus_id?.route || 'N/A';
+            if (selectedExportColumns.includes('conductor')) row['Conductor'] = irr.conductor?.full_name || 'N/A';
+            if (selectedExportColumns.includes('card_uid')) row['Card UID'] = irr.card_uid || 'N/A';
+            if (selectedExportColumns.includes('boarding_stop')) row['Boarding Stop'] = irr.boarding_stop || 'N/A';
+            if (selectedExportColumns.includes('destination_stop')) row['Destination Stop'] = irr.destination_stop || 'N/A';
+            if (selectedExportColumns.includes('notes')) row['Notes'] = irr.notes || 'N/A';
+            if (selectedExportColumns.includes('detected_at')) row['Detected At'] = irr.detected_at ? new Date(irr.detected_at).toLocaleString() : 'N/A';
             if (selectedExportColumns.includes('resolved')) row['Resolved'] = irr.resolved ? 'Yes' : 'No';
             if (selectedExportColumns.includes('resolved_at')) row['Resolved At'] = irr.resolved_at ? new Date(irr.resolved_at).toLocaleString() : 'N/A';
+            if (selectedExportColumns.includes('status')) row['Status'] = irr.status || 'N/A';
             return row;
           });
           fileName = 'fare_irregularities_report';
@@ -721,7 +737,7 @@ const Reports = () => {
         case 'irregularities':
           const { data: irregularities } = await supabase
             .from('fare_irregularities')
-            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
+            .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*)), conductor:staff_users!fare_irregularities_conductor_id_fkey(full_name)')
             .gte('detected_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('detected_at', dateRange.end || new Date().toISOString())
             .order('detected_at', { ascending: false });
@@ -734,13 +750,21 @@ const Reports = () => {
           data = (irregularities || []).map(irr => {
             const row = [];
             if (selectedExportColumns.includes('id')) row.push(irr.id);
-            if (selectedExportColumns.includes('type')) row.push(irr.type);
-            if (selectedExportColumns.includes('description')) row.push(irr.description);
+            if (selectedExportColumns.includes('type')) row.push(irr.type?.replace(/_/g, ' ') || 'N/A');
+            if (selectedExportColumns.includes('anomaly_type')) row.push(irr.anomaly_type?.replace(/_/g, ' ') || 'N/A');
+            if (selectedExportColumns.includes('severity')) row.push(irr.severity || 'N/A');
+            if (selectedExportColumns.includes('description')) row.push(irr.description || 'N/A');
             if (selectedExportColumns.includes('plate_number')) row.push(irr.trips?.bus_id?.plate_number || 'N/A');
             if (selectedExportColumns.includes('route')) row.push(irr.trips?.bus_id?.route || 'N/A');
-            if (selectedExportColumns.includes('detected_at')) row.push(new Date(irr.detected_at).toLocaleString());
+            if (selectedExportColumns.includes('conductor')) row.push(irr.conductor?.full_name || 'N/A');
+            if (selectedExportColumns.includes('card_uid')) row.push(irr.card_uid || 'N/A');
+            if (selectedExportColumns.includes('boarding_stop')) row.push(irr.boarding_stop || 'N/A');
+            if (selectedExportColumns.includes('destination_stop')) row.push(irr.destination_stop || 'N/A');
+            if (selectedExportColumns.includes('notes')) row.push(irr.notes || 'N/A');
+            if (selectedExportColumns.includes('detected_at')) row.push(irr.detected_at ? new Date(irr.detected_at).toLocaleString() : 'N/A');
             if (selectedExportColumns.includes('resolved')) row.push(irr.resolved ? 'Yes' : 'No');
             if (selectedExportColumns.includes('resolved_at')) row.push(irr.resolved_at ? new Date(irr.resolved_at).toLocaleString() : 'N/A');
+            if (selectedExportColumns.includes('status')) row.push(irr.status || 'N/A');
             return row;
           });
           fileName = 'fare_irregularities_report';
@@ -1591,7 +1615,14 @@ const Reports = () => {
                   const q = previewSearchTerm.toLowerCase();
                   if (reportType === 'irregularities') {
                     matchesSearch = row.type?.toLowerCase().includes(q) ||
+                      row.anomaly_type?.toLowerCase().includes(q) ||
                       row.description?.toLowerCase().includes(q) ||
+                      row.severity?.toLowerCase().includes(q) ||
+                      row.card_uid?.toLowerCase().includes(q) ||
+                      row.boarding_stop?.toLowerCase().includes(q) ||
+                      row.destination_stop?.toLowerCase().includes(q) ||
+                      row.notes?.toLowerCase().includes(q) ||
+                      row.conductor?.full_name?.toLowerCase().includes(q) ||
                       row.trips?.bus_id?.plate_number?.toLowerCase().includes(q) ||
                       row.trips?.bus_id?.route?.toLowerCase().includes(q);
                   } else if (reportType === 'trips') {
@@ -1648,12 +1679,17 @@ const Reports = () => {
                           {reportType === 'irregularities' && (
                             <>
                               <th className="pb-3 px-2 font-medium">Type</th>
+                              <th className="pb-3 px-2 font-medium">Anomaly</th>
+                              <th className="pb-3 px-2 font-medium">Severity</th>
                               <th className="pb-3 px-2 font-medium">Description</th>
                               <th className="pb-3 px-2 font-medium">Bus Plate</th>
                               <th className="pb-3 px-2 font-medium">Route</th>
+                              <th className="pb-3 px-2 font-medium">Conductor</th>
+                              <th className="pb-3 px-2 font-medium">Card UID</th>
+                              <th className="pb-3 px-2 font-medium">Boarding Stop</th>
+                              <th className="pb-3 px-2 font-medium">Destination</th>
+                              <th className="pb-3 px-2 font-medium">Notes</th>
                               <th className="pb-3 px-2 font-medium">Detected At</th>
-                              <th className="pb-3 px-2 font-medium">Resolved</th>
-                              <th className="pb-3 px-2 font-medium">Resolved At</th>
                               <th className="pb-3 px-2 font-medium">Status</th>
                             </>
                           )}
@@ -1707,18 +1743,32 @@ const Reports = () => {
                           <tr key={row.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                             {reportType === 'irregularities' && (
                               <>
-                                <td className="py-3 px-2 text-white font-medium">{row.type?.replace(/_/g, ' ') || 'N/A'}</td>
-                                <td className="py-3 px-2 text-white/70 max-w-xs truncate" title={row.description}>{row.description || 'N/A'}</td>
+                                <td className="py-3 px-2">
+                                  <span className="px-2 py-1 rounded-full text-xs border bg-orange-500/20 text-orange-400 border-orange-500/30 capitalize">
+                                    {row.type?.replace(/_/g, ' ') || 'N/A'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-2 text-white/60 text-xs">{row.anomaly_type?.replace(/_/g, ' ') || '—'}</td>
+                                <td className="py-3 px-2">
+                                  <span className={`px-2 py-1 rounded-full text-xs border ${
+                                    row.severity === 'emergency' ? 'bg-red-700/30 text-red-300 border-red-700/40' :
+                                    row.severity === 'critical' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                                    row.severity === 'high' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' :
+                                    row.severity === 'medium' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
+                                    'bg-gray-500/20 text-gray-400 border-gray-500/30'
+                                  }`}>
+                                    {row.severity || 'N/A'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-2 text-white/70 text-xs max-w-[200px] truncate" title={row.description}>{row.description || 'N/A'}</td>
                                 <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.plate_number || 'N/A'}</td>
                                 <td className="py-3 px-2 text-white/70">{row.trips?.bus_id?.route || 'N/A'}</td>
-                                <td className="py-3 px-2 text-white/60">{row.detected_at ? new Date(row.detected_at).toLocaleString() : 'N/A'}</td>
-                                <td className="py-3 px-2">
-                                  {row.resolved
-                                    ? <CheckCircle size={16} className="text-green-400" />
-                                    : <AlertCircle size={16} className="text-yellow-400" />
-                                  }
-                                </td>
-                                <td className="py-3 px-2 text-white/60">{row.resolved_at ? new Date(row.resolved_at).toLocaleString() : '—'}</td>
+                                <td className="py-3 px-2 text-white/70">{row.conductor?.full_name || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs font-mono">{row.card_uid || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs">{row.boarding_stop || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs">{row.destination_stop || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs max-w-[160px] truncate" title={row.notes}>{row.notes || '—'}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs whitespace-nowrap">{row.detected_at ? new Date(row.detected_at).toLocaleString() : 'N/A'}</td>
                                 <td className="py-3 px-2">
                                   <span className={`px-2 py-1 rounded-full text-xs border ${row.resolved ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'}`}>
                                     {row.resolved ? 'Resolved' : 'Unresolved'}
