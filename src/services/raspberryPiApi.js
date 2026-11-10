@@ -9,7 +9,8 @@
 
 import { supabase } from '../lib/supabase';
 
-const FALLBACK_URL    = import.meta.env.VITE_RASPBERRY_PI_URL || 'http://commutai.local:5000';
+const NGROK_URL      = 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+const FALLBACK_URL   = import.meta.env.VITE_RASPBERRY_PI_URL || NGROK_URL;
 const DEFAULT_TIMEOUT = 8000;
 const BUS_NUMBER      = 1; // this dashboard manages bus 001
 
@@ -29,15 +30,15 @@ const REDISCOVER_INTERVAL = 10_000; // re-check every 10 seconds for faster IP d
 export async function resolvePiUrl() {
   const now = Date.now();
 
-  // On HTTPS origins, always use the env var URL (ngrok) and skip the Supabase
+  // On HTTPS origins, always use the ngrok URL and skip the Supabase
   // lookup — the pi_devices table stores local LAN IPs (192.168.x.x) which are
   // unreachable from the public internet and would cause Mixed Content errors.
   if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-    const secureUrl = import.meta.env.VITE_RASPBERRY_PI_URL;
+    const secureUrl = import.meta.env.VITE_RASPBERRY_PI_URL || NGROK_URL;
     if (secureUrl && secureUrl.startsWith('https://')) {
       return secureUrl;
     }
-    // No secure URL configured — stay in database mode
+    // No secure URL — stay in database mode
     return FALLBACK_URL;
   }
 
