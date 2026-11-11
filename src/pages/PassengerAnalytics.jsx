@@ -429,15 +429,15 @@ const PassengerAnalytics = () => {
           )}
           <div className="flex-1">
             <p className="text-white font-medium">
-              {backendStreaming ? 'Connected to Backend (YOLO AI)' : cameraActive === false ? 'Camera not connected' : online ? 'Connected to Raspberry Pi' : 'Connecting…'}
+              {backendStreaming ? 'Backend Stream Active' : cameraActive === false ? 'Camera Disabled (GPS Only Mode)' : online ? 'Raspberry Pi Connected' : 'Connecting…'}
             </p>
             <p className="text-white/60 text-sm">
               {backendStreaming
-                ? 'YOLOv8m AI Processing'
+                ? 'YOLOv8n AI Processing - Stream Status: Active'
                 : cameraActive === false
-                ? 'Please check camera connection'
+                ? 'Pi running in GPS-only mode. Camera disabled for stability.'
                 : online
-                ? `Status: ${connectionStatus.charAt(0).toUpperCase() + connectionStatus.slice(1)}`
+                ? `Stream Status: ${isStreaming ? 'Active' : 'Inactive'}`
                 : 'Connecting…'}
             </p>
           </div>
