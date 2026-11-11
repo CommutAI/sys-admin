@@ -22,6 +22,8 @@ const TripManagement = ({ userRole }) => {
   const [tripIrregularities, setTripIrregularities] = useState([]);
   const [tripAnomalies, setTripAnomalies] = useState([]);
   const [viewModalLoading, setViewModalLoading] = useState(false);
+  const [tripVideoUrl, setTripVideoUrl] = useState(null);
+  const [tripVideoStatus, setTripVideoStatus] = useState(null);
 
   // Trip history state
   const [showHistory, setShowHistory] = useState(false);
@@ -398,6 +400,8 @@ const TripManagement = ({ userRole }) => {
     setSelectedTrip(trip);
     setShowViewModal(true);
     setViewModalLoading(true);
+    setTripVideoUrl(null);
+    setTripVideoStatus(null);
 
     try {
       // Fetch transactions for this trip
@@ -420,6 +424,24 @@ const TripManagement = ({ userRole }) => {
       setTripTransactions(transactionsData || []);
       setTripIrregularities(irregularitiesData?.filter(irr => !irr.anomaly_type) || []);
       setTripAnomalies(anomalies);
+
+      // Fetch video recording info from backend
+      try {
+        const piIp = localStorage.getItem('raspberryPiIp');
+        const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+        const response = await fetch(`${backendUrl}/api/video-processing/trip-video/${trip.id}`);
+        const videoData = await response.json();
+
+        if (videoData.status === 'success' && videoData.video_url) {
+          setTripVideoUrl(videoData.video_url);
+          setTripVideoStatus(videoData.status);
+        } else {
+          setTripVideoStatus('not_available');
+        }
+      } catch (videoError) {
+        console.error('Error fetching video info:', videoError);
+        setTripVideoStatus('error');
+      }
     } catch (error) {
       console.error('Error fetching trip details:', error);
     } finally {
@@ -1395,6 +1417,8 @@ const TripManagement = ({ userRole }) => {
                   setTripTransactions([]);
                   setTripIrregularities([]);
                   setTripAnomalies([]);
+                  setTripVideoUrl(null);
+                  setTripVideoStatus(null);
                 }}
                 className="text-white/60 hover:text-white"
               >
@@ -1411,13 +1435,39 @@ const TripManagement = ({ userRole }) => {
                 {/* Left Side - Camera Feed */}
                 <div className="space-y-4">
                   <div className="bg-black/30 rounded-xl overflow-hidden aspect-video relative">
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="text-center px-6">
-                        <Activity className="w-16 h-16 text-white/30 mx-auto mb-4" />
-                        <p className="text-white/50">Recorded Camera Feed</p>
-                        <p className="text-white/40 text-sm mt-2">Video recording for this trip</p>
+                    {tripVideoUrl ? (
+                      <video
+                        controls
+                        className="w-full h-full object-contain"
+                        src={tripVideoUrl}
+                      >
+                        Your browser does not support the video tag.
+                      </video>
+                    ) : tripVideoStatus === 'not_available' ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <Activity className="w-16 h-16 text-yellow-400 mx-auto mb-4" />
+                          <p className="text-yellow-400">No Recording Available</p>
+                          <p className="text-white/40 text-sm mt-2">Video recording not available for this trip</p>
+                        </div>
                       </div>
-                    </div>
+                    ) : tripVideoStatus === 'error' ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <Activity className="w-16 h-16 text-red-400 mx-auto mb-4" />
+                          <p className="text-red-400">Error Loading Video</p>
+                          <p className="text-white/40 text-sm mt-2">Could not fetch video information</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <Activity className="w-16 h-16 text-white/30 mx-auto mb-4" />
+                          <p className="text-white/50">Loading Video...</p>
+                          <p className="text-white/40 text-sm mt-2">Fetching recording information</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Trip Summary */}

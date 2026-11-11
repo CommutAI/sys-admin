@@ -229,6 +229,50 @@ async def get_status():
     }
 
 
+@router.get("/api/video-processing/trip-video/{trip_id}")
+async def get_trip_video(trip_id: str):
+    """
+    Get video recording information for a specific trip
+    Returns the video URL and metadata if available
+    """
+    from supabase import create_client
+    import os
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_KEY", ""))
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return {'status': 'error', 'message': 'Supabase not configured'}
+
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+        # Fetch trip with video recording info
+        result = supabase.table('trips').select(
+            'id, video_recording_url, video_recording_duration, video_recording_status, video_recording_file_size, video_recording_uploaded_at'
+        ).eq('id', trip_id).single()
+
+        if not result.data:
+            return {'status': 'error', 'message': 'Trip not found'}
+
+        trip = result.data
+
+        return {
+            'status': 'success',
+            'video_url': trip.get('video_recording_url'),
+            'duration': trip.get('video_recording_duration'),
+            'status': trip.get('video_recording_status'),
+            'file_size': trip.get('video_recording_file_size'),
+            'uploaded_at': trip.get('video_recording_uploaded_at')
+        }
+
+    except Exception as e:
+        print(f"[Video Router] Error fetching trip video: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+
 @router.websocket("/ws/video-feed")
 async def video_feed_endpoint(websocket: WebSocket):
     """
