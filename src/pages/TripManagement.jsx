@@ -1503,13 +1503,32 @@ const TripManagement = ({ userRole }) => {
                   <div className="bg-black/30 rounded-xl overflow-hidden aspect-video relative">
                     {tripVideoUrl ? (
                       <>
-                        <video
-                          controls
-                          className="w-full h-full object-contain"
-                          src={tripVideoUrl}
-                        >
-                          Your browser does not support the video tag.
-                        </video>
+                        {tripVideoUrl.endsWith('.avi') ? (
+                          // AVI files aren't playable directly in browsers — show download link
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="text-center px-6">
+                              <Activity className="w-16 h-16 text-green-400 mx-auto mb-4" />
+                              <p className="text-green-400 font-medium mb-2">Recording Available</p>
+                              <p className="text-white/40 text-sm mb-4">AVI files must be downloaded to play</p>
+                              <a
+                                href={tripVideoUrl}
+                                download
+                                className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-sm transition-colors inline-flex items-center gap-2"
+                              >
+                                <Download size={16} />
+                                Download Recording
+                              </a>
+                            </div>
+                          </div>
+                        ) : (
+                          <video
+                            controls
+                            className="w-full h-full object-contain"
+                            src={tripVideoUrl}
+                          >
+                            Your browser does not support the video tag.
+                          </video>
+                        )}
                         {/* Timestamp overlay */}
                         {tripVideoRecordings[0]?.metadata?.recorded_at && (
                           <div className="absolute top-2 left-2 bg-black/70 px-2 py-1 rounded text-xs text-white/80 font-mono">

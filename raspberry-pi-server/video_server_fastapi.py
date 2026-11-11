@@ -1384,11 +1384,13 @@ class VideoProcessor:
             # Generate filename with timestamp
             timestamp = time.strftime('%Y%m%d_%H%M%S')
             trip_suffix = f"_trip_{self.current_trip_id}" if self.current_trip_id else ""
-            filename = f"video_{timestamp}{trip_suffix}.{VIDEO_FORMAT}"
+            # Use AVI/MJPEG — works on all Pi builds without extra codec libraries.
+            # mp4/H264 requires libx264 which is not always available on Pi.
+            filename = f"video_{timestamp}{trip_suffix}.avi"
             self.current_video_path = os.path.join(VIDEO_STORAGE_PATH, filename)
-            
-            # Initialize video writer
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v') if VIDEO_FORMAT == 'mp4' else cv2.VideoWriter_fourcc(*'XVID')
+
+            # Initialize video writer with MJPEG codec
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
             self.video_writer = cv2.VideoWriter(
                 self.current_video_path,
                 fourcc,
@@ -1468,7 +1470,7 @@ class VideoProcessor:
                 'file_path': self.current_video_path,
                 'file_size': file_size,
                 'duration': duration,
-                'format': VIDEO_FORMAT,
+                'format': 'avi',
                 'storage_type': 'local',
                 'status': 'completed',
                 'metadata': {
