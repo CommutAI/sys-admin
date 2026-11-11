@@ -88,16 +88,25 @@ const LiveMap = () => {
       const latestGpsByTripId = {};
       let latestGpsAny = null;
       (gpsRows || []).forEach(row => {
+        const lat = parseFloat(row.latitude);
+        const lng = parseFloat(row.longitude);
+
+        // Skip invalid coordinates — 0,0 means no GPS fix yet
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        if (lat === 0 && lng === 0) return;
+
         const gps = {
-          lat: parseFloat(row.latitude),
-          lng: parseFloat(row.longitude),
+          lat,
+          lng,
           source: row.source || 'gps',
           recordedAt: row.recorded_at,
           tripId: row.trip_id || null
         };
 
-        if (!Number.isFinite(gps.lat) || !Number.isFinite(gps.lng)) return;
+        // Track the single latest valid GPS reading (regardless of trip)
         if (!latestGpsAny) latestGpsAny = gps;
+
+        // Track latest per trip_id
         if (row.trip_id && !latestGpsByTripId[row.trip_id]) {
           latestGpsByTripId[row.trip_id] = gps;
         }
@@ -119,8 +128,27 @@ const LiveMap = () => {
           } else if (trip.current_lat != null && trip.current_lng != null) {
             lat = parseFloat(trip.current_lat);
             lng = parseFloat(trip.current_lng);
-            locationSource = 'trip record';
-            locationUpdatedAt = trip.gps_updated_at || trip.started_at;
+            if (lat === 0 && lng === 0) {
+              // Invalid stored GPS, try latestGpsAny
+              if (latestGpsAny) {
+                lat = latestGpsAny.lat;
+                lng = latestGpsAny.lng;
+                locationSource = `${latestGpsAny.source} (unlinked)`;
+                locationUpdatedAt = latestGpsAny.recordedAt;
+              } else {
+                return null;
+              }
+            } else {
+              locationSource = 'trip record';
+              locationUpdatedAt = trip.gps_updated_at || trip.started_at;
+            }
+          } else if (latestGpsAny) {
+            // GPS rows exist but trip_id is null — Pi is sending location
+            // without an active trip linked. Use the latest valid fix.
+            lat = latestGpsAny.lat;
+            lng = latestGpsAny.lng;
+            locationSource = `${latestGpsAny.source} (unlinked)`;
+            locationUpdatedAt = latestGpsAny.recordedAt;
           } else {
             return null; // No GPS data at all
           }
