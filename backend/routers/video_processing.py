@@ -7,12 +7,14 @@ Processes frames with YOLOv8 and streams results back
 import asyncio
 import json
 import base64
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import FileResponse
 from typing import Dict, Set
 import cv2
 import numpy as np
 import os
 from dotenv import load_dotenv
+from fastapi.responses import JSONResponse
 
 from video_processor import video_processor
 
@@ -121,12 +123,21 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
                     if frame is None:
                         continue
 
+                    # Start recording if not started and trip is active
+                    if video_processor.current_trip_id and video_processor.video_writer is None:
+                        height, width = frame.shape[:2]
+                        video_processor.start_recording(width, height)
+
                     # Detect passengers (async for Roboflow support)
                     detections = await video_processor.detect_passengers(frame)
                     passenger_count = len(detections)
 
                     # Draw detection boxes on frame
                     frame_with_boxes = video_processor.draw_detections(frame, detections)
+
+                    # Write frame to recording if recording is active
+                    if video_processor.video_writer is not None:
+                        video_processor.write_frame_to_recording(frame_with_boxes)
 
                     # Encode frame with detections - very low quality for maximum speed
                     _, buffer = cv2.imencode('.jpg', frame_with_boxes, [cv2.IMWRITE_JPEG_QUALITY, 40])
@@ -177,11 +188,46 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
                     if trip_id:
                         video_processor.set_current_trip(trip_id)
                         await websocket.send_json({'type': 'trip_set', 'trip_id': trip_id})
-                
+
+                elif message.get('type') == 'start_recording':
+                    # Start video recording for current trip
+                    trip_id = message.get('trip_id')
+                    frame_data = message.get('frame')
+                    if trip_id and frame_data:
+                        video_processor.set_current_trip(trip_id)
+                        frame = video_processor.decode_frame(frame_data)
+                        if frame:
+                            height, width = frame.shape[:2]
+                            success = video_processor.start_recording(width, height)
+                            await websocket.send_json({
+                                'type': 'recording_started',
+                                'success': success
+                            })
+                    else:
+                        await websocket.send_json({
+                            'type': 'recording_started',
+                            'success': False,
+                            'error': 'Missing trip_id or frame'
+                        })
+
+                elif message.get('type') == 'stop_recording':
+                    # Stop video recording
+                    video_info = video_processor.stop_recording()
+                    response = {'type': 'recording_stopped'}
+                    if video_info:
+                        response['video_info'] = video_info
+                    await websocket.send_json(response)
+
                 elif message.get('type') == 'clear_trip':
-                    # Clear current trip ID
+                    # Clear current trip ID and stop recording
+                    video_info = video_processor.stop_recording()
                     video_processor.clear_current_trip()
-                    await websocket.send_json({'type': 'trip_cleared'})
+
+                    response = {'type': 'trip_cleared'}
+                    if video_info:
+                        response['video_info'] = video_info
+
+                    await websocket.send_json(response)
                 
                 elif message.get('type') == 'ping':
                     # Keep-alive ping
@@ -229,6 +275,50 @@ async def get_status():
     }
 
 
+@router.get("/api/video-processing/trip-video/{trip_id}")
+async def get_trip_video(trip_id: str):
+    """
+    Get video recording information for a specific trip
+    Returns the video URL and metadata if available
+    """
+    from supabase import create_client
+    import os
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_KEY", ""))
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return {'status': 'error', 'message': 'Supabase not configured'}
+
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+        # Fetch trip with video recording info
+        result = supabase.table('trips').select(
+            'id, video_recording_url, video_recording_duration, video_recording_status, video_recording_file_size, video_recording_uploaded_at'
+        ).eq('id', trip_id).single()
+
+        if not result.data:
+            return {'status': 'error', 'message': 'Trip not found'}
+
+        trip = result.data
+
+        return {
+            'status': 'success',
+            'video_url': trip.get('video_recording_url'),
+            'duration': trip.get('video_recording_duration'),
+            'status': trip.get('video_recording_status'),
+            'file_size': trip.get('video_recording_file_size'),
+            'uploaded_at': trip.get('video_recording_uploaded_at')
+        }
+
+    except Exception as e:
+        print(f"[Video Router] Error fetching trip video: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+
 @router.websocket("/ws/video-feed")
 async def video_feed_endpoint(websocket: WebSocket):
     """
@@ -251,3 +341,67 @@ async def video_feed_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"[Video Router] Frontend error: {e}")
         manager.disconnect_frontend(websocket)
+
+
+@router.get("/api/video-processing/download-video/{filename}")
+async def download_video(filename: str):
+    """
+    Download a video file from the backend's recordings directory
+    """
+    VIDEO_OUTPUT_DIR = os.getenv('VIDEO_OUTPUT_DIR', './recordings')
+    file_path = os.path.join(VIDEO_OUTPUT_DIR, filename)
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail='File not found')
+
+    try:
+        return FileResponse(
+            file_path,
+            media_type='video/mp4',
+            filename=filename
+        )
+    except Exception as e:
+        print(f"[Video Router] Error serving video file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/video-processing/recordings")
+async def get_recordings(trip_id: str = None, limit: int = 50, offset: int = 0):
+    """
+    Get list of video recordings from video_recordings table
+    Optionally filter by trip_id
+    """
+    from supabase import create_client
+    import os
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_KEY", ""))
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return {'status': 'error', 'message': 'Supabase not configured'}
+
+    try:
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+        query = supabase_client.table('video_recordings').select('*')
+
+        if trip_id:
+            query = query.eq('trip_id', trip_id)
+
+        query = query.order('recorded_at', {'ascending': False}).range(offset, offset + limit - 1)
+
+        result = query.execute()
+
+        if not result.data:
+            return {'status': 'success', 'data': []}
+
+        return {
+            'status': 'success',
+            'data': result.data
+        }
+
+    except Exception as e:
+        print(f"[Video Router] Error fetching recordings: {e}")
+        return {'status': 'error', 'message': str(e)}

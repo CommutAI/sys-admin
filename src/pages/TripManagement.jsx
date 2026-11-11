@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft, Download, CheckCircle, Activity } from 'lucide-react';
+import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft, Download, CheckCircle, Activity, AlertTriangle, Download as DownloadIcon } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -18,6 +18,33 @@ const TripManagement = ({ userRole }) => {
   const [selectedTrip, setSelectedTrip] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
+  const [tripTransactions, setTripTransactions] = useState([]);
+  const [tripIrregularities, setTripIrregularities] = useState([]);
+  const [tripAnomalies, setTripAnomalies] = useState([]);
+  const [viewModalLoading, setViewModalLoading] = useState(false);
+  const [tripVideoUrl, setTripVideoUrl] = useState(null);
+  const [tripVideoStatus, setTripVideoStatus] = useState(null);
+  const [tripVideoRecordings, setTripVideoRecordings] = useState([]);
+
+  const handleDownloadVideo = async (recording) => {
+    try {
+      const piIp = localStorage.getItem('raspberryPiIp');
+      const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+
+      // Try backend first
+      let downloadUrl = `${backendUrl}/api/video-processing/download-video/${recording.file_name}`;
+
+      // If it's from Pi, use Pi's download endpoint
+      if (recording.metadata?.source === 'pi_server' || recording.storage_type === 'local') {
+        downloadUrl = `${backendUrl}/download-video/${recording.file_name}`;
+      }
+
+      window.open(downloadUrl, '_blank');
+    } catch (error) {
+      console.error('Error downloading video:', error);
+      alert('Error downloading video: ' + error.message);
+    }
+  };
 
   // Trip history state
   const [showHistory, setShowHistory] = useState(false);
@@ -116,7 +143,7 @@ const TripManagement = ({ userRole }) => {
       setLoading(true);
       const { data, error } = await supabase
         .from('trips')
-        .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor:staff_users!trips_conductor_id_fkey(*), driver:staff_users!trips_driver_id_fkey(*)')
+        .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor:staff_users!trips_conductor_id_fkey(*), driver:staff_users!trips_driver_id_fkey(*), video_recording_url, video_recording_duration, video_recording_status, video_recording_file_size, video_recording_uploaded_at')
         .order('started_at', { ascending: false });
 
       if (error) throw error;
@@ -229,6 +256,15 @@ const TripManagement = ({ userRole }) => {
       // Tell the Pi the trip is over so it stops linking counts to this trip
       await clearPiTrip();
 
+      // Stop video recording on backend
+      try {
+        const piIp = localStorage.getItem('raspberryPiIp');
+        const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+        await fetch(`${backendUrl}/api/video-processing/clear-trip`, { method: 'POST' });
+      } catch (videoError) {
+        console.error('Error stopping video recording:', videoError);
+      }
+
       fetchTrips();
     } catch (error) {
       console.error('Error ending trip:', error);
@@ -255,6 +291,15 @@ const TripManagement = ({ userRole }) => {
 
       // Tell the Pi the trip is cancelled
       await clearPiTrip();
+
+      // Stop video recording on backend
+      try {
+        const piIp = localStorage.getItem('raspberryPiIp');
+        const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+        await fetch(`${backendUrl}/api/video-processing/clear-trip`, { method: 'POST' });
+      } catch (videoError) {
+        console.error('Error stopping video recording:', videoError);
+      }
 
       fetchTrips();
     } catch (error) {
@@ -287,6 +332,15 @@ const TripManagement = ({ userRole }) => {
       // Tell the Pi the trip is over if cancelled or completed
       if (newStatus === 'completed' || newStatus === 'cancelled') {
         await clearPiTrip();
+
+        // Stop video recording on backend
+        try {
+          const piIp = localStorage.getItem('raspberryPiIp');
+          const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+          await fetch(`${backendUrl}/api/video-processing/clear-trip`, { method: 'POST' });
+        } catch (videoError) {
+          console.error('Error stopping video recording:', videoError);
+        }
       }
 
       fetchTrips();
@@ -390,9 +444,61 @@ const TripManagement = ({ userRole }) => {
     setShowEditModal(true);
   };
 
-  const openViewModal = (trip) => {
+  const openViewModal = async (trip) => {
     setSelectedTrip(trip);
     setShowViewModal(true);
+    setViewModalLoading(true);
+    setTripVideoUrl(null);
+    setTripVideoStatus(null);
+    setTripVideoRecordings([]);
+
+    try {
+      // Fetch transactions for this trip
+      const { data: transactionsData } = await supabase
+        .from('transactions')
+        .select('*, staff:staff_users!transactions_staff_id_fkey(*)')
+        .eq('trip_id', trip.id)
+        .order('created_at', { ascending: false });
+
+      // Fetch irregularities for this trip
+      const { data: irregularitiesData } = await supabase
+        .from('fare_irregularities')
+        .select('*')
+        .eq('trip_id', trip.id)
+        .order('detected_at', { ascending: false });
+
+      // Filter anomalies (auto-detected irregularities)
+      const anomalies = irregularitiesData?.filter(irr => irr.anomaly_type) || [];
+
+      setTripTransactions(transactionsData || []);
+      setTripIrregularities(irregularitiesData?.filter(irr => !irr.anomaly_type) || []);
+      setTripAnomalies(anomalies);
+
+      // Fetch video recordings from video_recordings table
+      const { data: recordingsData } = await supabase
+        .from('video_recordings')
+        .select('*')
+        .eq('trip_id', trip.id)
+        .order('recorded_at', { ascending: false });
+
+      setTripVideoRecordings(recordingsData || []);
+
+      // Use video recording data from trip object directly
+      if (trip.video_recording_url && trip.video_recording_status === 'available') {
+        setTripVideoUrl(trip.video_recording_url);
+        setTripVideoStatus('available');
+      } else if (trip.video_recording_status === 'not_recorded') {
+        setTripVideoStatus('not_available');
+      } else if (trip.video_recording_status === 'error') {
+        setTripVideoStatus('error');
+      } else {
+        setTripVideoStatus('not_available');
+      }
+    } catch (error) {
+      console.error('Error fetching trip details:', error);
+    } finally {
+      setViewModalLoading(false);
+    }
   };
 
   const fetchTripPassengers = async (tripId) => {
@@ -1352,79 +1458,302 @@ const TripManagement = ({ userRole }) => {
 
       {/* View Trip Modal */}
       {showViewModal && selectedTrip && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999]">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-lg relative z-[1000000]">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-white text-xl font-bold">Trip Details</h2>
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999] p-4">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-7xl relative z-[1000000] max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-white text-2xl font-bold">Trip Details & Analytics</h2>
               <button
                 onClick={() => {
                   setShowViewModal(false);
                   setSelectedTrip(null);
+                  setTripTransactions([]);
+                  setTripIrregularities([]);
+                  setTripAnomalies([]);
+                  setTripVideoUrl(null);
+                  setTripVideoStatus(null);
                 }}
                 className="text-white/60 hover:text-white"
               >
                 <X size={24} />
               </button>
             </div>
-            <div className="space-y-4">
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <Bus className="text-orange-400" />
-                <div>
-                  <p className="text-white/60 text-sm">Bus</p>
-                  <p className="text-white font-medium">{selectedTrip.bus_id?.plate_number}</p>
-                </div>
+
+            {viewModalLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <div className="text-white/60">Loading trip data...</div>
               </div>
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <User className="text-orange-400" />
-                <div>
-                  <p className="text-white/60 text-sm">Conductor</p>
-                  <p className="text-white font-medium">{selectedTrip.conductor?.full_name || 'N/A'}</p>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Left Side - Camera Feed */}
+                <div className="space-y-4">
+                  <div className="bg-black/30 rounded-xl overflow-hidden aspect-video relative">
+                    {tripVideoUrl ? (
+                      <video
+                        controls
+                        className="w-full h-full object-contain"
+                        src={tripVideoUrl}
+                      >
+                        Your browser does not support the video tag.
+                      </video>
+                    ) : tripVideoStatus === 'available' ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <Activity className="w-16 h-16 text-green-400 mx-auto mb-4" />
+                          <p className="text-green-400">Recording Available</p>
+                          <p className="text-white/40 text-sm mt-2">Video recording metadata is available but file may be missing</p>
+                        </div>
+                      </div>
+                    ) : tripVideoStatus === 'not_available' ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <Activity className="w-16 h-16 text-yellow-400 mx-auto mb-4" />
+                          <p className="text-yellow-400">No Recording Available</p>
+                          <p className="text-white/40 text-sm mt-2">Video recording not available for this trip</p>
+                        </div>
+                      </div>
+                    ) : tripVideoStatus === 'error' ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <Activity className="w-16 h-16 text-red-400 mx-auto mb-4" />
+                          <p className="text-red-400">Error Loading Video</p>
+                          <p className="text-white/40 text-sm mt-2">Could not fetch video information</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <Activity className="w-16 h-16 text-white/30 mx-auto mb-4" />
+                          <p className="text-white/50">Loading Video...</p>
+                          <p className="text-white/40 text-sm mt-2">Fetching recording information</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Trip Summary */}
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <Bus className="text-orange-400" />
+                      Trip Summary
+                    </h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Bus</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.plate_number}</p>
+                      </div>
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Status</p>
+                        <p className="text-white font-medium text-sm capitalize">{selectedTrip.status.replace('_', ' ')}</p>
+                      </div>
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Conductor</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.conductor?.full_name || 'N/A'}</p>
+                      </div>
+                      {selectedTrip.driver && (
+                        <div className="bg-white/5 p-3 rounded-lg">
+                          <p className="text-white/60 text-xs">Driver</p>
+                          <p className="text-white font-medium text-sm">{selectedTrip.driver.full_name}</p>
+                        </div>
+                      )}
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Start Time</p>
+                        <p className="text-white font-medium text-sm">{new Date(selectedTrip.started_at).toLocaleString()}</p>
+                      </div>
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">End Time</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.ended_at ? new Date(selectedTrip.ended_at).toLocaleString() : 'In Progress'}</p>
+                      </div>
+                      {selectedTrip.video_recording_duration && (
+                        <div className="bg-white/5 p-3 rounded-lg">
+                          <p className="text-white/60 text-xs">Video Duration</p>
+                          <p className="text-white font-medium text-sm">{Math.floor(selectedTrip.video_recording_duration / 60)}m {selectedTrip.video_recording_duration % 60}s</p>
+                        </div>
+                      )}
+                      {selectedTrip.video_recording_file_size && (
+                        <div className="bg-white/5 p-3 rounded-lg">
+                          <p className="text-white/60 text-xs">File Size</p>
+                          <p className="text-white font-medium text-sm">{(selectedTrip.video_recording_file_size / (1024 * 1024)).toFixed(2)} MB</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Video Recordings List */}
+                  {tripVideoRecordings.length > 0 && (
+                    <div className="glass-card p-4 rounded-xl">
+                      <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                        <Activity className="text-orange-400" />
+                        Video Recordings ({tripVideoRecordings.length})
+                      </h3>
+                      <div className="space-y-2 max-h-60 overflow-y-auto">
+                        {tripVideoRecordings.map((recording) => (
+                          <div key={recording.id} className="bg-white/5 p-3 rounded-lg">
+                            <div className="flex justify-between items-start mb-2">
+                              <div className="flex-1">
+                                <p className="text-white font-medium text-sm">{recording.file_name}</p>
+                                <p className="text-white/40 text-xs">{recording.storage_type} storage</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs px-2 py-1 rounded ${
+                                  recording.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                                  recording.status === 'recording' ? 'bg-yellow-500/20 text-yellow-400' :
+                                  'bg-red-500/20 text-red-400'
+                                }`}>
+                                  {recording.status}
+                                </span>
+                                {recording.status === 'completed' && (
+                                  <button
+                                    onClick={() => handleDownloadVideo(recording)}
+                                    className="text-blue-400 hover:text-blue-300 transition-colors"
+                                    title="Download video"
+                                  >
+                                    <DownloadIcon size={16} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-xs">
+                              <div>
+                                <p className="text-white/40">Duration</p>
+                                <p className="text-white">{recording.duration ? `${Math.floor(recording.duration / 60)}m ${recording.duration % 60}s` : 'N/A'}</p>
+                              </div>
+                              <div>
+                                <p className="text-white/40">Size</p>
+                                <p className="text-white">{recording.file_size ? `${(recording.file_size / (1024 * 1024)).toFixed(2)} MB` : 'N/A'}</p>
+                              </div>
+                              <div>
+                                <p className="text-white/40">Format</p>
+                                <p className="text-white">{recording.format}</p>
+                              </div>
+                            </div>
+                            {recording.metadata && (
+                              <div className="mt-2 text-xs text-white/40">
+                                <p>Source: {recording.metadata.source || 'unknown'}</p>
+                                {recording.metadata.resolution && <p>Resolution: {recording.metadata.resolution}</p>}
+                                {recording.metadata.fps && <p>FPS: {recording.metadata.fps}</p>}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-              {selectedTrip.driver && (
-                <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                  <User className="text-orange-400" />
-                  <div>
-                    <p className="text-white/60 text-sm">Driver</p>
-                    <p className="text-white font-medium">{selectedTrip.driver.full_name}</p>
+
+                {/* Right Side - Analytics */}
+                <div className="space-y-4">
+                  {/* Fare Statistics */}
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <TrendingUp className="text-orange-400" />
+                      Fare Statistics
+                    </h3>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="bg-green-500/10 border border-green-500/20 p-3 rounded-lg text-center">
+                        <p className="text-green-400 text-xs mb-1">Total Fare</p>
+                        <p className="text-white font-bold text-lg">
+                          ₱{tripTransactions.reduce((sum, t) => sum + (t.fare_amount || 0), 0).toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="bg-blue-500/10 border border-blue-500/20 p-3 rounded-lg text-center">
+                        <p className="text-blue-400 text-xs mb-1">Baggage Fare</p>
+                        <p className="text-white font-bold text-lg">
+                          ₱{tripTransactions.reduce((sum, t) => sum + (t.baggage_fee || 0), 0).toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="bg-purple-500/10 border border-purple-500/20 p-3 rounded-lg text-center">
+                        <p className="text-purple-400 text-xs mb-1">Total Revenue</p>
+                        <p className="text-white font-bold text-lg">
+                          ₱{tripTransactions.reduce((sum, t) => sum + (t.fare_amount || 0) + (t.baggage_fee || 0), 0).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Transactions */}
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <BarChart3 className="text-orange-400" />
+                      Transactions ({tripTransactions.length})
+                    </h3>
+                    <div className="max-h-40 overflow-y-auto space-y-2">
+                      {tripTransactions.length === 0 ? (
+                        <p className="text-white/40 text-sm text-center py-4">No transactions recorded</p>
+                      ) : (
+                        tripTransactions.slice(0, 5).map((tx) => (
+                          <div key={tx.id} className="bg-white/5 p-3 rounded-lg flex justify-between items-center">
+                            <div>
+                              <p className="text-white text-sm font-medium">{tx.card_id || 'Cash'}</p>
+                              <p className="text-white/40 text-xs">{new Date(tx.created_at).toLocaleString()}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-green-400 font-medium">₱{(tx.fare_amount || 0).toFixed(2)}</p>
+                              {tx.baggage_fee > 0 && <p className="text-blue-400 text-xs">+₱{tx.baggage_fee.toFixed(2)} baggage</p>}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Anomalies */}
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <Activity className="text-red-400" />
+                      Anomalies ({tripAnomalies.length})
+                    </h3>
+                    <div className="max-h-32 overflow-y-auto space-y-2">
+                      {tripAnomalies.length === 0 ? (
+                        <p className="text-white/40 text-sm text-center py-4">No anomalies detected</p>
+                      ) : (
+                        tripAnomalies.map((anomaly) => (
+                          <div key={anomaly.id} className="bg-red-500/10 border border-red-500/20 p-3 rounded-lg">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <p className="text-red-400 text-sm font-medium">{anomaly.anomaly_type || 'Unknown Anomaly'}</p>
+                                <p className="text-white/40 text-xs">{new Date(anomaly.detected_at).toLocaleString()}</p>
+                              </div>
+                              <span className="px-2 py-0.5 bg-red-500/20 text-red-300 text-xs rounded">
+                                AI Detected
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Irregularities */}
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <AlertTriangle className="text-yellow-400" />
+                      Fare Irregularities ({tripIrregularities.length})
+                    </h3>
+                    <div className="max-h-32 overflow-y-auto space-y-2">
+                      {tripIrregularities.length === 0 ? (
+                        <p className="text-white/40 text-sm text-center py-4">No irregularities reported</p>
+                      ) : (
+                        tripIrregularities.map((irr) => (
+                          <div key={irr.id} className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-lg">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <p className="text-yellow-400 text-sm font-medium">{irr.irregularity_type || 'Unknown'}</p>
+                                <p className="text-white/40 text-xs">{new Date(irr.detected_at).toLocaleString()}</p>
+                              </div>
+                              <span className={`px-2 py-0.5 text-xs rounded ${
+                                irr.resolved ? 'bg-green-500/20 text-green-300' : 'bg-orange-500/20 text-orange-300'
+                              }`}>
+                                {irr.resolved ? 'Resolved' : 'Pending'}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
-              )}
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <Clock className="text-orange-400" />
-                <div>
-                  <p className="text-white/60 text-sm">Start Time</p>
-                  <p className="text-white font-medium">{new Date(selectedTrip.started_at).toLocaleString()}</p>
-                </div>
               </div>
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <Clock className="text-orange-400" />
-                <div>
-                  <p className="text-white/60 text-sm">End Time</p>
-                  <p className="text-white font-medium">{selectedTrip.ended_at ? new Date(selectedTrip.ended_at).toLocaleString() : 'Not ended'}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <MapPin className="text-orange-400" />
-                <div>
-                  <p className="text-white/60 text-sm">GPS Location</p>
-                  <p className="text-white font-medium">
-                    {selectedTrip.current_lat && selectedTrip.current_lng
-                      ? `${selectedTrip.current_lat.toFixed(4)}, ${selectedTrip.current_lng.toFixed(4)}`
-                      : 'No GPS data'}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <div className="w-8 h-8 rounded-full bg-orange-500/20 flex items-center justify-center">
-                  <span className="text-orange-400 text-sm">S</span>
-                </div>
-                <div>
-                  <p className="text-white/60 text-sm">Status</p>
-                  <p className="text-white font-medium">{selectedTrip.status.replace('_', ' ')}</p>
-                </div>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       )}
