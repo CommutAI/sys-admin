@@ -24,6 +24,7 @@ from supabase import create_client, Client
 from hardware_integration import HardwareManager
 import socket
 import httpx
+import websockets
 
 # Optional AI imports - allow server to run without them
 try:
@@ -251,6 +252,72 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(poll_active_trips())
     print("[Trip Poll] Started automatic trip ID polling (every 10s)")
+
+    # Stream frames to backend for recording
+    async def stream_frames_to_backend():
+        """Send video frames to backend WebSocket for recording"""
+        client_id = f"pi-{BUS_NUMBER}"
+        print(f"[Backend Stream] Starting frame streaming to backend")
+
+        while True:
+            try:
+                # Only connect if there's an active trip
+                if not video_processor.current_trip_id:
+                    await asyncio.sleep(1)
+                    continue
+
+                # Build backend WebSocket URL
+                backend_url = get_backend_url()
+                backend_ws_url = backend_url.replace('http://', 'ws://').replace('https://', 'wss://')
+                backend_ws_url = f"{backend_ws_url}/ws/video-stream/{client_id}"
+
+                print(f"[Backend Stream] Connecting to: {backend_ws_url}")
+
+                try:
+                    async with websockets.connect(backend_ws_url) as ws:
+                        print(f"[Backend Stream] Connected to backend")
+
+                        # Send trip info
+                        await ws.send(json.dumps({
+                            'type': 'set_trip',
+                            'trip_id': video_processor.current_trip_id
+                        }))
+
+                        # Stream frames
+                        last_frame_time = time.time()
+                        while video_processor.current_trip_id:
+                            try:
+                                if not video_processor.frame_queue.empty():
+                                    frame_base64 = video_processor.frame_queue.get_nowait()
+
+                                    await ws.send(json.dumps({
+                                        'type': 'frame',
+                                        'frame': frame_base64,
+                                        'trip_id': video_processor.current_trip_id,
+                                        'timestamp': time.time()
+                                    }))
+
+                                    # Limit to 10 FPS for backend recording
+                                    await asyncio.sleep(0.1)
+                                else:
+                                    await asyncio.sleep(0.01)
+                            except Exception as e:
+                                print(f"[Backend Stream] Error sending frame: {e}")
+                                break
+
+                except websockets.exceptions.WebSocketException as e:
+                    print(f"[Backend Stream] WebSocket error: {e}")
+                    await asyncio.sleep(5)  # Wait before reconnecting
+                except Exception as e:
+                    print(f"[Backend Stream] Connection error: {e}")
+                    await asyncio.sleep(5)
+
+            except Exception as e:
+                print(f"[Backend Stream] Unexpected error: {e}")
+                await asyncio.sleep(5)
+
+    asyncio.create_task(stream_frames_to_backend())
+    print("[Backend Stream] Started frame streaming to backend")
 
     yield
 
