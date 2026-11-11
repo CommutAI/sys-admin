@@ -213,7 +213,7 @@ class NEO6M:
                     if lat_dir == 'S':
                         latitude = -latitude
                 else:
-                    latitude = 0.0
+                    return None  # No latitude data — skip this reading
 
                 # Convert longitude
                 if lon_str:
@@ -223,7 +223,7 @@ class NEO6M:
                     if lon_dir == 'W':
                         longitude = -longitude
                 else:
-                    longitude = 0.0
+                    return None  # No longitude data — skip this reading
                 
                 return {
                     'latitude': latitude,
@@ -299,8 +299,13 @@ class NEO6M:
 
     def _log_location_to_db(self, location: GPSLocation, trip_id: Optional[int],
                            parsed_data: dict, db_client):
-        """Log GPS location to database"""
+        """Log GPS location to database — only valid non-zero coordinates"""
         try:
+            # Skip invalid GPS fixes (0,0 means no fix acquired yet)
+            if location.latitude == 0.0 and location.longitude == 0.0:
+                logger.debug("Skipping GPS log — no fix (0,0 coordinates)")
+                return
+
             data = {
                 'latitude': location.latitude,
                 'longitude': location.longitude,

@@ -88,16 +88,25 @@ const LiveMap = () => {
       const latestGpsByTripId = {};
       let latestGpsAny = null;
       (gpsRows || []).forEach(row => {
+        const lat = parseFloat(row.latitude);
+        const lng = parseFloat(row.longitude);
+
+        // Skip invalid coordinates — 0,0 means no GPS fix yet
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        if (lat === 0 && lng === 0) return;
+
         const gps = {
-          lat: parseFloat(row.latitude),
-          lng: parseFloat(row.longitude),
+          lat,
+          lng,
           source: row.source || 'gps',
           recordedAt: row.recorded_at,
           tripId: row.trip_id || null
         };
 
-        if (!Number.isFinite(gps.lat) || !Number.isFinite(gps.lng)) return;
+        // Track the single latest valid GPS reading (regardless of trip)
         if (!latestGpsAny) latestGpsAny = gps;
+
+        // Track latest per trip_id
         if (row.trip_id && !latestGpsByTripId[row.trip_id]) {
           latestGpsByTripId[row.trip_id] = gps;
         }
@@ -119,8 +128,27 @@ const LiveMap = () => {
           } else if (trip.current_lat != null && trip.current_lng != null) {
             lat = parseFloat(trip.current_lat);
             lng = parseFloat(trip.current_lng);
-            locationSource = 'trip record';
-            locationUpdatedAt = trip.gps_updated_at || trip.started_at;
+            if (lat === 0 && lng === 0) {
+              // Invalid stored GPS, try latestGpsAny
+              if (latestGpsAny) {
+                lat = latestGpsAny.lat;
+                lng = latestGpsAny.lng;
+                locationSource = `${latestGpsAny.source} (unlinked)`;
+                locationUpdatedAt = latestGpsAny.recordedAt;
+              } else {
+                return null;
+              }
+            } else {
+              locationSource = 'trip record';
+              locationUpdatedAt = trip.gps_updated_at || trip.started_at;
+            }
+          } else if (latestGpsAny) {
+            // GPS rows exist but trip_id is null — Pi is sending location
+            // without an active trip linked. Use the latest valid fix.
+            lat = latestGpsAny.lat;
+            lng = latestGpsAny.lng;
+            locationSource = `${latestGpsAny.source} (unlinked)`;
+            locationUpdatedAt = latestGpsAny.recordedAt;
           } else {
             return null; // No GPS data at all
           }
@@ -143,16 +171,33 @@ const LiveMap = () => {
         })
         .filter(Boolean);
 
-      // Add inactive buses (only those not already in active trips) - only if they have GPS data
+      // Show buses with recent GPS data even without an active trip
       const activeBusIds = new Set((activeTrips || []).map(t => t.bus_id));
       const inactiveBuses = (allBuses || [])
-        .filter(bus => !activeBusIds.has(bus.id)) // Ensure no duplicates
+        .filter(bus => !activeBusIds.has(bus.id))
         .map((bus) => {
-          // Only include inactive buses if they have actual GPS data
-          // We don't show inactive buses without GPS on the map
-          return null;
+          // Show this bus if we have any valid unlinked GPS fix
+          if (!latestGpsAny) return null;
+
+          return {
+            id: `inactive-${bus.id}`,
+            plate: bus.plate_number || 'Unknown',
+            route: bus.route || 'Unknown',
+            lat: latestGpsAny.lat,
+            lng: latestGpsAny.lng,
+            passengers: 0,
+            status: 'idle',
+            locationSource: `${latestGpsAny.source} (no active trip)`,
+            locationUpdatedAt: latestGpsAny.recordedAt,
+            busId: bus.id,
+            tripId: null
+          };
         })
-        .filter(Boolean);
+        .filter(Boolean)
+        // Only show one pin per unique lat/lng to avoid stacking
+        .filter((bus, index, arr) =>
+          arr.findIndex(b => b.lat === bus.lat && b.lng === bus.lng) === index
+        );
 
       // Fetch passenger counts for active trips
       const tripIds = (activeTrips || []).map(t => t.id);
@@ -231,8 +276,12 @@ const LiveMap = () => {
             <Users size={16} className="text-orange-500" />
             <span className="text-sm">{bus.passengers} passengers</span>
           </div>
-          <span className={`inline-block px-2 py-1 rounded text-xs mt-2 ${bus.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
-            {bus.status}
+          <span className={`inline-block px-2 py-1 rounded text-xs mt-2 ${
+            bus.status === 'active' ? 'bg-green-100 text-green-800' :
+            bus.status === 'idle' ? 'bg-yellow-100 text-yellow-800' :
+            'bg-gray-100 text-gray-800'
+          }`}>
+            {bus.status === 'idle' ? 'No active trip' : bus.status}
           </span>
         </div>
       </Popup>
@@ -330,7 +379,11 @@ const LiveMap = () => {
                         <p className="text-white font-medium text-sm">{bus.plate}</p>
                         <p className="text-white/60 text-xs">{bus.route}</p>
                       </div>
-                      <span className={`w-2 h-2 rounded-full ${bus.status === 'active' ? 'bg-green-400' : 'bg-gray-400'}`} />
+                      <span className={`w-2 h-2 rounded-full ${
+                        bus.status === 'active' ? 'bg-green-400' :
+                        bus.status === 'idle' ? 'bg-yellow-400' :
+                        'bg-gray-400'
+                      }`} />
                     </div>
                     <div className="flex items-center gap-2 text-white/70 text-xs">
                       <Users size={14} />
@@ -341,41 +394,6 @@ const LiveMap = () => {
               ) : (
                 <p className="text-white/60 text-sm">No active buses</p>
               )}
-            </div>
-          </div>
-
-          <div className="glass-card p-6">
-            <h3 className="text-white text-lg font-bold mb-4 flex items-center gap-2">
-              <Navigation className="text-orange-400" />
-              Routes
-            </h3>
-            <div className="space-y-3">
-              {routes.map((route) => (
-                <div key={route.id} className="flex items-center gap-3">
-                  <div className="w-4 h-4 rounded-full" style={{ backgroundColor: route.color }} />
-                  <span className="text-white/70 text-sm">{route.name}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="glass-card p-6">
-            <h3 className="text-white text-lg font-bold mb-4">Map Legend</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-green-400" />
-                <span className="text-white/70">Active Bus</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-gray-400" />
-                <span className="text-white/70">Idle Bus</span>
-              </div>
-              {routes.map((route) => (
-                <div key={route.id} className="flex items-center gap-2">
-                  <div className="w-6 h-1 rounded" style={{ backgroundColor: route.color }} />
-                  <span className="text-white/70">{route.name}</span>
-                </div>
-              ))}
             </div>
           </div>
         </div>

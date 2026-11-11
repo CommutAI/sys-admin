@@ -483,10 +483,28 @@ const TripManagement = ({ userRole }) => {
 
       setTripVideoRecordings(recordingsData || []);
 
-      // Use video recording data from trip object directly
+      // Build video URL — priority:
+      // 1. trip.video_recording_url if set and available
+      // 2. First completed recording from video_recordings table served via Pi URL
+      const piBaseUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+      const completedRecording = (recordingsData || []).find(r => r.status === 'completed' && r.file_name);
+
       if (trip.video_recording_url && trip.video_recording_status === 'available') {
-        setTripVideoUrl(trip.video_recording_url);
+        // If the URL is a local path, convert to Pi URL
+        if (trip.video_recording_url.startsWith('./') || trip.video_recording_url.startsWith('/')) {
+          const fileName = trip.video_recording_url.split('/').pop();
+          setTripVideoUrl(`${piBaseUrl}/download-video/${fileName}`);
+        } else {
+          setTripVideoUrl(trip.video_recording_url);
+        }
         setTripVideoStatus('available');
+      } else if (completedRecording) {
+        // Serve via Pi's /download-video/:filename endpoint
+        setTripVideoUrl(`${piBaseUrl}/download-video/${completedRecording.file_name}`);
+        setTripVideoStatus('available');
+      } else if ((recordingsData || []).length > 0) {
+        // Recordings exist but none completed yet
+        setTripVideoStatus('processing');
       } else if (trip.video_recording_status === 'not_recorded') {
         setTripVideoStatus('not_available');
       } else if (trip.video_recording_status === 'error') {
@@ -1155,37 +1173,39 @@ const TripManagement = ({ userRole }) => {
                         <th className="text-left text-white/60 text-sm py-3 px-4">Route</th>
                         <th className="text-left text-white/60 text-sm py-3 px-4">Conductor</th>
                         <th className="text-left text-white/60 text-sm py-3 px-4">Driver</th>
+                        <th className="text-left text-white/60 text-sm py-3 px-4">Passengers</th>
                         <th className="text-left text-white/60 text-sm py-3 px-4">Start Time</th>
+                        <th className="text-left text-white/60 text-sm py-3 px-4">Duration</th>
                         <th className="text-left text-white/60 text-sm py-3 px-4">Status</th>
-                        <th className="text-left text-white/60 text-sm py-3 px-4">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {historyPaginatedData.map((trip) => (
-                        <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
-                          <td className="text-white py-3 px-4 text-sm">{trip.bus_id?.plate_number || 'N/A'}</td>
+                        <tr
+                          key={trip.id}
+                          className="border-b border-white/5 hover:bg-white/10 cursor-pointer transition-colors"
+                          onClick={() => openViewModal(trip)}
+                          title="Click to view trip details"
+                        >
+                          <td className="text-white py-3 px-4 text-sm font-medium">{trip.bus_id?.plate_number || 'N/A'}</td>
                           <td className="text-white/70 py-3 px-4 text-sm">{trip.bus_id?.route || 'N/A'}</td>
                           <td className="text-white/70 py-3 px-4 text-sm">{trip.conductor?.full_name || 'N/A'}</td>
                           <td className="text-white/70 py-3 px-4 text-sm">{trip.driver?.full_name || 'N/A'}</td>
+                          <td className="text-white/70 py-3 px-4 text-sm">{trip.total_passengers || 0}</td>
                           <td className="text-white/60 py-3 px-4 text-sm">{new Date(trip.started_at).toLocaleString()}</td>
-                          <td className="py-3 px-4 text-sm">
-                            <select
-                              value={trip.status}
-                              onChange={(e) => handleUpdateTripStatus(trip.id, e.target.value)}
-                              className="bg-gray-800 border border-white/20 rounded-lg px-2 py-1 text-white text-xs focus:outline-none focus:border-orange-500"
-                            >
-                              <option value="in_progress" className="bg-gray-800 text-white">In Progress</option>
-                              <option value="completed" className="bg-gray-800 text-white">Completed</option>
-                              <option value="cancelled" className="bg-gray-800 text-white">Cancelled</option>
-                            </select>
+                          <td className="text-white/60 py-3 px-4 text-sm">
+                            {trip.ended_at
+                              ? `${Math.round((new Date(trip.ended_at) - new Date(trip.started_at)) / 60000)} min`
+                              : '—'}
                           </td>
                           <td className="py-3 px-4 text-sm">
-                            <button
-                              onClick={() => openViewModal(trip)}
-                              className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-white text-xs transition-colors"
-                            >
-                              View
-                            </button>
+                            <span className={`px-2 py-1 rounded-full text-xs border ${
+                              trip.status === 'completed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                              trip.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                              'bg-red-500/20 text-red-400 border-red-500/30'
+                            }`}>
+                              {trip.status?.replace('_', ' ')}
+                            </span>
                           </td>
                         </tr>
                       ))}
@@ -1488,27 +1508,54 @@ const TripManagement = ({ userRole }) => {
                 <div className="space-y-4">
                   <div className="bg-black/30 rounded-xl overflow-hidden aspect-video relative">
                     {tripVideoUrl ? (
-                      <video
-                        controls
-                        className="w-full h-full object-contain"
-                        src={tripVideoUrl}
-                      >
-                        Your browser does not support the video tag.
-                      </video>
-                    ) : tripVideoStatus === 'available' ? (
+                      <>
+                        {tripVideoUrl.endsWith('.avi') ? (
+                          // AVI files aren't playable directly in browsers — show download link
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="text-center px-6">
+                              <Activity className="w-16 h-16 text-green-400 mx-auto mb-4" />
+                              <p className="text-green-400 font-medium mb-2">Recording Available</p>
+                              <p className="text-white/40 text-sm mb-4">AVI files must be downloaded to play</p>
+                              <a
+                                href={tripVideoUrl}
+                                download
+                                className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-sm transition-colors inline-flex items-center gap-2"
+                              >
+                                <Download size={16} />
+                                Download Recording
+                              </a>
+                            </div>
+                          </div>
+                        ) : (
+                          <video
+                            controls
+                            className="w-full h-full object-contain"
+                            src={tripVideoUrl}
+                          >
+                            Your browser does not support the video tag.
+                          </video>
+                        )}
+                        {/* Timestamp overlay */}
+                        {tripVideoRecordings[0]?.metadata?.recorded_at && (
+                          <div className="absolute top-2 left-2 bg-black/70 px-2 py-1 rounded text-xs text-white/80 font-mono">
+                            {new Date(tripVideoRecordings[0].metadata.recorded_at).toLocaleString()}
+                          </div>
+                        )}
+                      </>
+                    ) : tripVideoStatus === 'processing' ? (
                       <div className="absolute inset-0 flex items-center justify-center">
                         <div className="text-center px-6">
-                          <Activity className="w-16 h-16 text-green-400 mx-auto mb-4" />
-                          <p className="text-green-400">Recording Available</p>
-                          <p className="text-white/40 text-sm mt-2">Video recording metadata is available but file may be missing</p>
+                          <div className="w-12 h-12 border-2 border-orange-500/30 border-t-orange-500 rounded-full animate-spin mx-auto mb-4" />
+                          <p className="text-orange-400">Recording Processing</p>
+                          <p className="text-white/40 text-sm mt-2">Video is being processed, check back shortly</p>
                         </div>
                       </div>
                     ) : tripVideoStatus === 'not_available' ? (
                       <div className="absolute inset-0 flex items-center justify-center">
                         <div className="text-center px-6">
-                          <Activity className="w-16 h-16 text-yellow-400 mx-auto mb-4" />
-                          <p className="text-yellow-400">No Recording Available</p>
-                          <p className="text-white/40 text-sm mt-2">Video recording not available for this trip</p>
+                          <Activity className="w-16 h-16 text-white/20 mx-auto mb-4" />
+                          <p className="text-white/50">No Recording Available</p>
+                          <p className="text-white/30 text-sm mt-2">Video recording was not enabled for this trip</p>
                         </div>
                       </div>
                     ) : tripVideoStatus === 'error' ? (
@@ -1523,12 +1570,30 @@ const TripManagement = ({ userRole }) => {
                       <div className="absolute inset-0 flex items-center justify-center">
                         <div className="text-center px-6">
                           <Activity className="w-16 h-16 text-white/30 mx-auto mb-4" />
-                          <p className="text-white/50">Loading Video...</p>
-                          <p className="text-white/40 text-sm mt-2">Fetching recording information</p>
+                          <p className="text-white/50">Loading...</p>
                         </div>
                       </div>
                     )}
                   </div>
+
+                  {/* Recording info bar */}
+                  {tripVideoRecordings.length > 0 && (
+                    <div className="flex items-center gap-3 text-xs text-white/50 px-1">
+                      <span className="flex items-center gap-1">
+                        <Clock size={12} />
+                        {new Date(tripVideoRecordings[0].recorded_at).toLocaleString()}
+                      </span>
+                      {tripVideoRecordings[0].duration && (
+                        <span>{Math.floor(tripVideoRecordings[0].duration / 60)}m {tripVideoRecordings[0].duration % 60}s</span>
+                      )}
+                      {tripVideoRecordings[0].file_size && (
+                        <span>{(tripVideoRecordings[0].file_size / (1024 * 1024)).toFixed(1)} MB</span>
+                      )}
+                      <span className={`px-2 py-0.5 rounded-full ${
+                        tripVideoRecordings[0].status === 'completed' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+                      }`}>{tripVideoRecordings[0].status}</span>
+                    </div>
+                  )}
 
                   {/* Trip Summary */}
                   <div className="glass-card p-4 rounded-xl">
