@@ -480,8 +480,8 @@ class VideoProcessor:
             if self.camera is not None:
                 self.camera.release()
 
-            # Open by device path string — works on this Pi/OpenCV combination.
-            self.camera = cv2.VideoCapture(CAMERA_DEVICE)
+            # Open with explicit V4L2 backend — required for USB cameras on this Pi/OpenCV build.
+            self.camera = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)
 
             if not self.camera.isOpened():
                 print(f"Error: Could not open camera at {CAMERA_DEVICE}")
@@ -534,7 +534,7 @@ class VideoProcessor:
         for i in range(4):
             path = f'/dev/video{i}'
             try:
-                test_cam = cv2.VideoCapture(path)
+                test_cam = cv2.VideoCapture(path, cv2.CAP_V4L2)
                 if test_cam.isOpened():
                     ret, frame = test_cam.read()
                     if ret and frame is not None:
@@ -1351,9 +1351,15 @@ class VideoProcessor:
         self.current_trip_id = trip_id
         self.current_bus_id = bus_id
         print(f"Current trip ID set to: {trip_id}, bus_id: {bus_id}")
-    
+        # Auto-start recording when a trip begins
+        if ENABLE_VIDEO_RECORDING and not self.recording:
+            self.start_recording()
+
     def clear_current_trip(self):
         """Clear the current trip ID"""
+        # Auto-stop recording when trip ends
+        if self.recording:
+            self.stop_recording()
         self.current_trip_id = None
         print("Current trip ID cleared")
     
@@ -1689,7 +1695,7 @@ class VideoProcessor:
                 path = f'/dev/video{idx}'
                 if path == CAMERA_DEVICE:
                     continue
-                self.camera = cv2.VideoCapture(path)
+                self.camera = cv2.VideoCapture(path, cv2.CAP_V4L2)
                 if self.camera.isOpened():
                     ret, _ = self.camera.read()
                     if ret:
