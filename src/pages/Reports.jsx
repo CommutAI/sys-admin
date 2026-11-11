@@ -569,9 +569,24 @@ const Reports = () => {
       setTripEmergencyAlerts(emergencyAlertsData || []);
       setTripVideoRecordings(recordingsData || []);
 
-      // Use video recording data from trip object directly
+      // Build video URL - check source to use correct endpoint
+      const piBaseUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+
       if (trip.video_recording_url && trip.video_recording_status === 'available') {
-        setTripVideoUrl(trip.video_recording_url);
+        // If the URL is a local path, convert to appropriate URL based on source
+        if (trip.video_recording_url.startsWith('./') || trip.video_recording_url.startsWith('/')) {
+          const fileName = trip.video_recording_url.split('/').pop();
+          // Check if recording is from backend
+          const backendRecording = (recordingsData || []).find(r => r.metadata?.source === 'backend_processor');
+          if (backendRecording) {
+            setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${fileName}`);
+          } else {
+            setTripVideoUrl(`${piBaseUrl}/download-video/${fileName}`);
+          }
+        } else {
+          setTripVideoUrl(trip.video_recording_url);
+        }
         setTripVideoStatus('available');
       } else if (trip.video_recording_status === 'not_recorded') {
         setTripVideoStatus('not_available');
