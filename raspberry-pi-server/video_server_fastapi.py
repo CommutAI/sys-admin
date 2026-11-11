@@ -1385,23 +1385,28 @@ class VideoProcessor:
             timestamp = time.strftime('%Y%m%d_%H%M%S')
             trip_suffix = f"_trip_{self.current_trip_id}" if self.current_trip_id else ""
             # Use AVI/MJPEG — works on all Pi builds without extra codec libraries.
-            # mp4/H264 requires libx264 which is not always available on Pi.
             filename = f"video_{timestamp}{trip_suffix}.avi"
             self.current_video_path = os.path.join(VIDEO_STORAGE_PATH, filename)
 
-            # Initialize video writer with MJPEG codec
+            # Read actual camera dimensions — they may differ from requested resolution
+            actual_w = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_h = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            actual_fps = self.camera.get(cv2.CAP_PROP_FPS) or FPS
+            print(f"[Recording] Using frame size: {actual_w}x{actual_h} @ {actual_fps}fps")
+
+            # Initialize video writer with actual camera dimensions
             fourcc = cv2.VideoWriter_fourcc(*'MJPG')
             self.video_writer = cv2.VideoWriter(
                 self.current_video_path,
                 fourcc,
-                FPS,
-                (CAMERA_WIDTH, CAMERA_HEIGHT)
+                actual_fps,
+                (actual_w, actual_h)
             )
-            
+
             if not self.video_writer.isOpened():
                 print("Failed to initialize video writer")
                 return False
-            
+
             self.recording = True
             self.recording_start_time = time.time()
             self.recording_frame_count = 0
@@ -1417,74 +1422,81 @@ class VideoProcessor:
         if not self.recording:
             print("No recording in progress")
             return None
-        
+
         try:
             self.recording = False
-            
+
             if self.video_writer:
                 self.video_writer.release()
                 self.video_writer = None
-            
+
+            # Capture these before clearing state
+            video_path = self.current_video_path
+            trip_id = self.current_trip_id
+            start_time = self.recording_start_time
+            frame_count = self.recording_frame_count
+
             # Calculate duration
-            duration = int(time.time() - self.recording_start_time) if self.recording_start_time else 0
-            
+            duration = int(time.time() - start_time) if start_time else 0
+
             # Get file size
             file_size = 0
-            if self.current_video_path and os.path.exists(self.current_video_path):
-                file_size = os.path.getsize(self.current_video_path)
-            
-            print(f"Recording stopped: {self.current_video_path}")
-            print(f"Duration: {duration}s, Frames: {self.recording_frame_count}, Size: {file_size} bytes")
-            
-            # Save metadata to database
-            recording_id = self.save_video_metadata(duration, file_size)
-            
-            result = {
-                'file_path': self.current_video_path,
-                'duration': duration,
-                'frame_count': self.recording_frame_count,
-                'file_size': file_size,
-                'recording_id': recording_id
-            }
-            
+            if video_path and os.path.exists(video_path):
+                file_size = os.path.getsize(video_path)
+
+            print(f"Recording stopped: {video_path}")
+            print(f"Duration: {duration}s, Frames: {frame_count}, Size: {file_size} bytes")
+
+            # Clear state before DB call so crashes don't leave stale state
             self.current_video_path = None
             self.recording_start_time = None
             self.recording_frame_count = 0
-            
-            return result
-            
+
+            # Save metadata to database
+            recording_id = self._save_video_metadata_internal(video_path, trip_id, start_time, frame_count, duration, file_size)
+
+            return {
+                'file_path': video_path,
+                'duration': duration,
+                'frame_count': frame_count,
+                'file_size': file_size,
+                'recording_id': recording_id
+            }
+
         except Exception as e:
             print(f"Error stopping recording: {e}")
             return None
-    
-    def save_video_metadata(self, duration, file_size):
-        """Save video recording metadata to Supabase database"""
+
+    def _save_video_metadata_internal(self, video_path, trip_id, start_time, frame_count, duration, file_size):
+        """Save video recording metadata to Supabase database (internal, uses explicit params)"""
         if not supabase:
             print("Database not available - skipping metadata save")
             return None
-        
+
         try:
+            actual_w = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)) if self.camera else CAMERA_WIDTH
+            actual_h = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)) if self.camera else CAMERA_HEIGHT
             data = {
-                'trip_id': self.current_trip_id,
-                'file_name': os.path.basename(self.current_video_path) if self.current_video_path else 'unknown',
-                'file_path': self.current_video_path,
+                'trip_id': trip_id,
+                'file_name': os.path.basename(video_path) if video_path else 'unknown',
+                'file_path': video_path,
                 'file_size': file_size,
                 'duration': duration,
                 'format': 'avi',
                 'storage_type': 'local',
                 'status': 'completed',
                 'metadata': {
-                    'resolution': f"{CAMERA_WIDTH}x{CAMERA_HEIGHT}",
+                    'resolution': f"{actual_w}x{actual_h}",
                     'fps': FPS,
-                    'frame_count': self.recording_frame_count,
-                    'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(self.recording_start_time)) if self.recording_start_time else None
+                    'frame_count': frame_count,
+                    'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(start_time)) if start_time else None
                 }
             }
-            
+
             result = supabase.table('video_recordings').insert(data).execute()
             if result and result.data:
                 recording_id = result.data[0].get('id')
-                print(f"[DB] Video metadata saved with ID: {recording_id}")
+                print(f"[DB] Video metadata saved: id={recording_id}, trip={trip_id}, size={file_size}b")
                 return str(recording_id) if recording_id else None
             else:
                 print("[DB] Video metadata save returned no data")
@@ -1492,6 +1504,18 @@ class VideoProcessor:
         except Exception as e:
             print(f"Error saving video metadata to database: {e}")
             return None
+            self.recording_start_time = None
+            self.recording_frame_count = 0
+            
+            return result
+
+    def save_video_metadata(self, duration, file_size):
+        """Deprecated — kept for backwards compatibility. Use _save_video_metadata_internal."""
+        return self._save_video_metadata_internal(
+            self.current_video_path, self.current_trip_id,
+            self.recording_start_time, self.recording_frame_count,
+            duration, file_size
+        )
     
     def write_frame_to_video(self, frame):
         """Write frame to video file if recording is active"""
