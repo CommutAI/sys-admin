@@ -24,6 +24,8 @@ from supabase import create_client, Client
 from hardware_integration import HardwareManager
 import socket
 import httpx
+import websockets
+import requests
 
 # Optional AI imports - allow server to run without them
 try:
@@ -251,6 +253,72 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(poll_active_trips())
     print("[Trip Poll] Started automatic trip ID polling (every 10s)")
+
+    # Stream frames to backend for recording
+    async def stream_frames_to_backend():
+        """Send video frames to backend WebSocket for recording"""
+        client_id = f"pi-{BUS_NUMBER}"
+        print(f"[Backend Stream] Starting frame streaming to backend")
+
+        while True:
+            try:
+                # Only connect if there's an active trip
+                if not video_processor.current_trip_id:
+                    await asyncio.sleep(1)
+                    continue
+
+                # Build backend WebSocket URL
+                backend_url = get_backend_url()
+                backend_ws_url = backend_url.replace('http://', 'ws://').replace('https://', 'wss://')
+                backend_ws_url = f"{backend_ws_url}/ws/video-stream/{client_id}"
+
+                print(f"[Backend Stream] Connecting to: {backend_ws_url}")
+
+                try:
+                    async with websockets.connect(backend_ws_url) as ws:
+                        print(f"[Backend Stream] Connected to backend")
+
+                        # Send trip info
+                        await ws.send(json.dumps({
+                            'type': 'set_trip',
+                            'trip_id': video_processor.current_trip_id
+                        }))
+
+                        # Stream frames
+                        last_frame_time = time.time()
+                        while video_processor.current_trip_id:
+                            try:
+                                if not video_processor.frame_queue.empty():
+                                    frame_base64 = video_processor.frame_queue.get_nowait()
+
+                                    await ws.send(json.dumps({
+                                        'type': 'frame',
+                                        'frame': frame_base64,
+                                        'trip_id': video_processor.current_trip_id,
+                                        'timestamp': time.time()
+                                    }))
+
+                                    # Limit to 10 FPS for backend recording
+                                    await asyncio.sleep(0.1)
+                                else:
+                                    await asyncio.sleep(0.01)
+                            except Exception as e:
+                                print(f"[Backend Stream] Error sending frame: {e}")
+                                break
+
+                except websockets.exceptions.WebSocketException as e:
+                    print(f"[Backend Stream] WebSocket error: {e}")
+                    await asyncio.sleep(5)  # Wait before reconnecting
+                except Exception as e:
+                    print(f"[Backend Stream] Connection error: {e}")
+                    await asyncio.sleep(5)
+
+            except Exception as e:
+                print(f"[Backend Stream] Unexpected error: {e}")
+                await asyncio.sleep(5)
+
+    asyncio.create_task(stream_frames_to_backend())
+    print("[Backend Stream] Started frame streaming to backend")
 
     yield
 
@@ -1467,6 +1535,61 @@ class VideoProcessor:
             print(f"Error stopping recording: {e}")
             return None
 
+    def _upload_to_cloudflare_stream(self, video_path, trip_id):
+        """Upload video to Cloudflare Stream and return playback URL"""
+        account_id = os.getenv('CLOUDFLARE_ACCOUNT_ID')
+        api_token = os.getenv('CLOUDFLARE_API_TOKEN')
+        cloudflare_enabled = os.getenv('CLOUDFLARE_ENABLED', 'false').lower() == 'true'
+
+        if not cloudflare_enabled or not account_id or not api_token:
+            print("[Cloudflare] Cloudflare Stream not configured - skipping upload")
+            return None
+
+        if not video_path or not os.path.exists(video_path):
+            print(f"[Cloudflare] Video file not found: {video_path}")
+            return None
+
+        try:
+            print(f"[Cloudflare] Uploading video to Cloudflare Stream: {video_path}")
+
+            # Cloudflare Stream Direct Upload API
+            url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/stream"
+            headers = {
+                'Authorization': f'Bearer {api_token}',
+            }
+
+            # Upload the file
+            with open(video_path, 'rb') as video_file:
+                files = {
+                    'file': (os.path.basename(video_path), video_file, 'video/mp4')
+                }
+                params = {
+                    'metadata': json.dumps({
+                        'trip_id': trip_id,
+                        'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())
+                    })
+                }
+
+                response = requests.post(url, headers=headers, files=files, params=params, timeout=300)
+
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('success'):
+                    video_uid = result['result']['uid']
+                    playback_url = f"https://watch.cloudflarestream.com/{video_uid}"
+                    print(f"[Cloudflare] Upload successful! Playback URL: {playback_url}")
+                    return playback_url
+                else:
+                    print(f"[Cloudflare] Upload failed: {result.get('errors')}")
+                    return None
+            else:
+                print(f"[Cloudflare] Upload failed with status {response.status_code}: {response.text}")
+                return None
+
+        except Exception as e:
+            print(f"[Cloudflare] Upload error: {e}")
+            return None
+
     def _save_video_metadata_internal(self, video_path, trip_id, start_time, frame_count, duration, file_size):
         """Save video recording metadata to Supabase database (internal, uses explicit params)"""
         if not supabase:
@@ -1474,29 +1597,47 @@ class VideoProcessor:
             return None
 
         try:
+            # Try to upload to Cloudflare Stream first
+            cloudflare_url = self._upload_to_cloudflare_stream(video_path, trip_id)
+            
             actual_w = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)) if self.camera else CAMERA_WIDTH
             actual_h = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)) if self.camera else CAMERA_HEIGHT
+            
             data = {
                 'trip_id': trip_id,
                 'file_name': os.path.basename(video_path) if video_path else 'unknown',
-                'file_path': video_path,
+                'file_path': cloudflare_url if cloudflare_url else video_path,
                 'file_size': file_size,
                 'duration': duration,
-                'format': 'avi',
-                'storage_type': 'local',
+                'format': 'mp4',
+                'storage_type': 'cloudflare' if cloudflare_url else 'local',
                 'status': 'completed',
                 'metadata': {
                     'resolution': f"{actual_w}x{actual_h}",
                     'fps': FPS,
                     'frame_count': frame_count,
-                    'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(start_time)) if start_time else None
+                    'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(start_time)) if start_time else None,
+                    'cloudflare_url': cloudflare_url
                 }
             }
 
             result = supabase.table('video_recordings').insert(data).execute()
             if result and result.data:
                 recording_id = result.data[0].get('id')
-                print(f"[DB] Video metadata saved: id={recording_id}, trip={trip_id}, size={file_size}b")
+                print(f"[DB] Video metadata saved: id={recording_id}, trip={trip_id}, size={file_size}b, storage={data['storage_type']}")
+                
+                # Also update trips table with Cloudflare URL
+                if cloudflare_url:
+                    trips_update = {
+                        'video_recording_url': cloudflare_url,
+                        'video_recording_duration': duration,
+                        'video_recording_status': 'available',
+                        'video_recording_file_size': file_size,
+                        'video_recording_uploaded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())
+                    }
+                    supabase.table('trips').update(trips_update).eq('id', trip_id).execute()
+                    print(f"[DB] Updated trips table with Cloudflare URL")
+                
                 return str(recording_id) if recording_id else None
             else:
                 print("[DB] Video metadata save returned no data")
@@ -1504,10 +1645,6 @@ class VideoProcessor:
         except Exception as e:
             print(f"Error saving video metadata to database: {e}")
             return None
-            self.recording_start_time = None
-            self.recording_frame_count = 0
-            
-            return result
 
     def save_video_metadata(self, duration, file_size):
         """Deprecated — kept for backwards compatibility. Use _save_video_metadata_internal."""
