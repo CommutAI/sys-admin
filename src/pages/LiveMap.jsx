@@ -171,16 +171,37 @@ const LiveMap = () => {
         })
         .filter(Boolean);
 
-      // Add inactive buses (only those not already in active trips) - only if they have GPS data
+      // Add inactive buses that have recent GPS data (Pi sending location without active trip)
       const activeBusIds = new Set((activeTrips || []).map(t => t.bus_id));
       const inactiveBuses = (allBuses || [])
-        .filter(bus => !activeBusIds.has(bus.id)) // Ensure no duplicates
+        .filter(bus => !activeBusIds.has(bus.id))
         .map((bus) => {
-          // Only include inactive buses if they have actual GPS data
-          // We don't show inactive buses without GPS on the map
-          return null;
+          // Show this bus if we have a recent unlinked GPS fix
+          if (!latestGpsAny) return null;
+
+          // Only show if GPS is recent (within last 10 minutes)
+          const gpsAge = Date.now() - new Date(latestGpsAny.recordedAt).getTime();
+          if (gpsAge > 10 * 60 * 1000) return null;
+
+          return {
+            id: `inactive-${bus.id}`,
+            plate: bus.plate_number || 'Unknown',
+            route: bus.route || 'Unknown',
+            lat: latestGpsAny.lat,
+            lng: latestGpsAny.lng,
+            passengers: 0,
+            status: 'idle',
+            locationSource: `${latestGpsAny.source} (no active trip)`,
+            locationUpdatedAt: latestGpsAny.recordedAt,
+            busId: bus.id,
+            tripId: null
+          };
         })
-        .filter(Boolean);
+        .filter(Boolean)
+        // Only show one pin per unique lat/lng to avoid stacking
+        .filter((bus, index, arr) =>
+          arr.findIndex(b => b.lat === bus.lat && b.lng === bus.lng) === index
+        );
 
       // Fetch passenger counts for active trips
       const tripIds = (activeTrips || []).map(t => t.id);
@@ -259,8 +280,12 @@ const LiveMap = () => {
             <Users size={16} className="text-orange-500" />
             <span className="text-sm">{bus.passengers} passengers</span>
           </div>
-          <span className={`inline-block px-2 py-1 rounded text-xs mt-2 ${bus.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
-            {bus.status}
+          <span className={`inline-block px-2 py-1 rounded text-xs mt-2 ${
+            bus.status === 'active' ? 'bg-green-100 text-green-800' :
+            bus.status === 'idle' ? 'bg-yellow-100 text-yellow-800' :
+            'bg-gray-100 text-gray-800'
+          }`}>
+            {bus.status === 'idle' ? 'No active trip' : bus.status}
           </span>
         </div>
       </Popup>
@@ -358,7 +383,11 @@ const LiveMap = () => {
                         <p className="text-white font-medium text-sm">{bus.plate}</p>
                         <p className="text-white/60 text-xs">{bus.route}</p>
                       </div>
-                      <span className={`w-2 h-2 rounded-full ${bus.status === 'active' ? 'bg-green-400' : 'bg-gray-400'}`} />
+                      <span className={`w-2 h-2 rounded-full ${
+                        bus.status === 'active' ? 'bg-green-400' :
+                        bus.status === 'idle' ? 'bg-yellow-400' :
+                        'bg-gray-400'
+                      }`} />
                     </div>
                     <div className="flex items-center gap-2 text-white/70 text-xs">
                       <Users size={14} />
