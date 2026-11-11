@@ -302,8 +302,20 @@ class NEO6M:
         """Log GPS location to database — only valid non-zero coordinates"""
         try:
             # Skip invalid GPS fixes (0,0 means no fix acquired yet)
+            # Validate GPS data - reject invalid coordinates
             if location.latitude == 0.0 and location.longitude == 0.0:
                 logger.debug("Skipping GPS log — no fix (0,0 coordinates)")
+                return
+            
+            # Also reject if coordinates are very close to 0 (likely invalid)
+            if abs(location.latitude) < 0.001 and abs(location.longitude) < 0.001:
+                logger.debug(f"Skipping GPS log — coordinates too close to zero: {location.latitude}, {location.longitude}")
+                return
+            
+            # Reject if no satellite data (indicates no GPS fix)
+            satellites = parsed_data.get('satellites', 0)
+            if satellites == 0 or satellites is None:
+                logger.debug(f"Skipping GPS log — no satellite fix (satellites: {satellites})")
                 return
 
             data = {
@@ -314,7 +326,7 @@ class NEO6M:
                 'accuracy': location.accuracy,
                 'source': location.source,
                 'trip_id': trip_id,
-                'satellite_count': parsed_data.get('satellites'),
+                'satellite_count': satellites,
                 'fix_quality': parsed_data.get('fix_quality')
             }
             # Run in thread to avoid blocking
@@ -826,6 +838,15 @@ class HardwareManager:
     def _log_location_to_db(self, location: GPSLocation, trip_id: Optional[int], db_client):
         """Log geolocation fallback to database"""
         try:
+            # Validate geolocation data - reject invalid coordinates
+            if location.latitude == 0.0 and location.longitude == 0.0:
+                logger.debug("Skipping geolocation log — no fix (0,0 coordinates)")
+                return
+            
+            if abs(location.latitude) < 0.001 and abs(location.longitude) < 0.001:
+                logger.debug(f"Skipping geolocation log — coordinates too close to zero: {location.latitude}, {location.longitude}")
+                return
+
             data = {
                 'latitude': location.latitude,
                 'longitude': location.longitude,
