@@ -485,15 +485,21 @@ const TripManagement = ({ userRole }) => {
 
       // Build video URL — priority:
       // 1. trip.video_recording_url if set and available
-      // 2. First completed recording from video_recordings table served via Pi ngrok URL
+      // 2. First completed recording from video_recordings table served via Pi URL
       const piBaseUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
       const completedRecording = (recordingsData || []).find(r => r.status === 'completed' && r.file_name);
 
       if (trip.video_recording_url && trip.video_recording_status === 'available') {
-        setTripVideoUrl(trip.video_recording_url);
+        // If the URL is a local path, convert to Pi URL
+        if (trip.video_recording_url.startsWith('./') || trip.video_recording_url.startsWith('/')) {
+          const fileName = trip.video_recording_url.split('/').pop();
+          setTripVideoUrl(`${piBaseUrl}/download-video/${fileName}`);
+        } else {
+          setTripVideoUrl(trip.video_recording_url);
+        }
         setTripVideoStatus('available');
       } else if (completedRecording) {
-        // Serve via Pi's /download-video/:filename endpoint through ngrok
+        // Serve via Pi's /download-video/:filename endpoint
         setTripVideoUrl(`${piBaseUrl}/download-video/${completedRecording.file_name}`);
         setTripVideoStatus('available');
       } else if ((recordingsData || []).length > 0) {

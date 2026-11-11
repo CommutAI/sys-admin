@@ -1384,8 +1384,8 @@ class VideoProcessor:
             # Generate filename with timestamp
             timestamp = time.strftime('%Y%m%d_%H%M%S')
             trip_suffix = f"_trip_{self.current_trip_id}" if self.current_trip_id else ""
-            # Use AVI/MJPEG — works on all Pi builds without extra codec libraries.
-            filename = f"video_{timestamp}{trip_suffix}.avi"
+            # Use MP4 format with mp4v codec - browser compatible
+            filename = f"video_{timestamp}{trip_suffix}.mp4"
             self.current_video_path = os.path.join(VIDEO_STORAGE_PATH, filename)
 
             # Read actual camera dimensions — they may differ from requested resolution
@@ -1394,8 +1394,8 @@ class VideoProcessor:
             actual_fps = self.camera.get(cv2.CAP_PROP_FPS) or FPS
             print(f"[Recording] Using frame size: {actual_w}x{actual_h} @ {actual_fps}fps")
 
-            # Initialize video writer with actual camera dimensions
-            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            # Initialize video writer with actual camera dimensions - use mp4v for browser compatibility
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             self.video_writer = cv2.VideoWriter(
                 self.current_video_path,
                 fourcc,
@@ -1889,13 +1889,17 @@ async def get_recording(recording_id: str):
 
 @app.get("/download-video/{filename}")
 async def download_video(filename: str):
-    """Download a video file"""
+    """Stream a video file - supports range requests for browser playback"""
     file_path = os.path.join(VIDEO_STORAGE_PATH, filename)
-    
+
     if not os.path.exists(file_path):
         return JSONResponse({'status': 'error', 'message': 'File not found'}, status_code=404)
-    
+
     try:
+        file_size = os.path.getsize(file_path)
+        if file_size < 1000:  # Less than 1KB means file is corrupted/empty
+            return JSONResponse({'status': 'error', 'message': 'Video file is corrupted or empty'}, status_code=500)
+
         return FileResponse(
             file_path,
             media_type='video/mp4',
