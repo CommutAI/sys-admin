@@ -144,26 +144,31 @@ async def send_gps_to_backend():
         try:
             if hardware_manager and hardware_manager.current_location:
                 loc = hardware_manager.current_location
-                gps_data = {
-                    'latitude': loc.latitude,
-                    'longitude': loc.longitude,
-                    'altitude': loc.altitude,
-                    'speed': loc.speed,
-                    'accuracy': loc.accuracy,
-                    'source': loc.source
-                }
 
-                message = {
-                    'type': 'gps_update',
-                    'gps': gps_data,
-                    'bus_number': BUS_NUMBER,
-                    'timestamp': time.time()
-                }
+                # Skip invalid GPS fix — 0,0 means no satellite lock yet
+                if loc.latitude == 0.0 and loc.longitude == 0.0:
+                    print("[GPS Upload] ⏳ Waiting for GPS fix (0,0 skipped)...")
+                else:
+                    gps_data = {
+                        'latitude': loc.latitude,
+                        'longitude': loc.longitude,
+                        'altitude': loc.altitude,
+                        'speed': loc.speed,
+                        'accuracy': loc.accuracy,
+                        'source': loc.source
+                    }
 
-                # Send GPS update
-                async with websockets.connect(backend_ws_url) as ws:
-                    await ws.send(json.dumps(message))
-                    print(f"[GPS Upload] ✓ Sent GPS: {loc.latitude:.6f}, {loc.longitude:.6f} (alt: {loc.altitude}m, speed: {loc.speed}km/h)")
+                    message = {
+                        'type': 'gps_update',
+                        'gps': gps_data,
+                        'bus_number': BUS_NUMBER,
+                        'timestamp': time.time()
+                    }
+
+                    # Send GPS update
+                    async with websockets.connect(backend_ws_url) as ws:
+                        await ws.send(json.dumps(message))
+                        print(f"[GPS Upload] ✓ Sent GPS: {loc.latitude:.6f}, {loc.longitude:.6f} (alt: {loc.altitude}m, speed: {loc.speed}km/h)")
             else:
                 print("[GPS Upload] ⏳ Waiting for GPS fix...")
 

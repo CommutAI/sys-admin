@@ -171,17 +171,13 @@ const LiveMap = () => {
         })
         .filter(Boolean);
 
-      // Add inactive buses that have recent GPS data (Pi sending location without active trip)
+      // Show buses with recent GPS data even without an active trip
       const activeBusIds = new Set((activeTrips || []).map(t => t.bus_id));
       const inactiveBuses = (allBuses || [])
         .filter(bus => !activeBusIds.has(bus.id))
         .map((bus) => {
-          // Show this bus if we have a recent unlinked GPS fix
+          // Show this bus if we have any valid unlinked GPS fix
           if (!latestGpsAny) return null;
-
-          // Only show if GPS is recent (within last 10 minutes)
-          const gpsAge = Date.now() - new Date(latestGpsAny.recordedAt).getTime();
-          if (gpsAge > 10 * 60 * 1000) return null;
 
           return {
             id: `inactive-${bus.id}`,
