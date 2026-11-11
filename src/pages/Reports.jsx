@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { FileText, Download, Calendar, TrendingUp, Users, DollarSign, Bus, Activity, ArrowUp, ArrowDown, ArrowLeftRight, Search, Filter, MoreHorizontal, ChevronLeft, ChevronRight, Eye, EyeOff, X, Settings, ChevronDown, SortAsc, SortDesc, BarChart3, Clock, MapPin, CheckCircle, AlertCircle } from 'lucide-react';
+import { FileText, Download, Calendar, TrendingUp, Users, DollarSign, Bus, Activity, ArrowUp, ArrowDown, ArrowLeftRight, Search, Filter, MoreHorizontal, ChevronLeft, ChevronRight, Eye, EyeOff, X, Settings, ChevronDown, SortAsc, SortDesc, BarChart3, Clock, MapPin, CheckCircle, AlertCircle, Download as DownloadIcon, AlertTriangle, Users as UsersIcon, Play } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -30,6 +30,18 @@ const Reports = () => {
     cashTransactions: 0,
   });
   const [recentActivity, setRecentActivity] = useState([]);
+
+  // Trip detail modal state
+  const [showTripDetailModal, setShowTripDetailModal] = useState(false);
+  const [selectedTrip, setSelectedTrip] = useState(null);
+  const [tripDetailLoading, setTripDetailLoading] = useState(false);
+  const [tripTransactions, setTripTransactions] = useState([]);
+  const [tripAnomalies, setTripAnomalies] = useState([]);
+  const [tripIrregularities, setTripIrregularities] = useState([]);
+  const [tripEmergencyAlerts, setTripEmergencyAlerts] = useState([]);
+  const [tripVideoUrl, setTripVideoUrl] = useState(null);
+  const [tripVideoStatus, setTripVideoStatus] = useState(null);
+  const [tripVideoRecordings, setTripVideoRecordings] = useState([]);
 
   // Transaction state
   const [transactions, setTransactions] = useState([]);
@@ -64,7 +76,7 @@ const Reports = () => {
   const [tripsCurrentPage, setTripsCurrentPage] = useState(1);
   const [tripsItemsPerPage] = useState(10);
   const [visibleTripsColumns, setVisibleTripsColumns] = useState([
-    'plate_number', 'route', 'conductor', 'status', 'started_at'
+    'plate_number', 'route', 'conductor', 'driver', 'status', 'started_at', 'video_recording_status'
   ]);
 
   // Report preview state
@@ -86,12 +98,16 @@ const Reports = () => {
       { id: 'plate_number', label: 'Bus Plate' },
       { id: 'route', label: 'Route' },
       { id: 'conductor', label: 'Conductor' },
+      { id: 'driver', label: 'Driver' },
       { id: 'started_at', label: 'Start Time' },
       { id: 'ended_at', label: 'End Time' },
       { id: 'status', label: 'Status' },
       { id: 'current_lat', label: 'GPS Latitude' },
       { id: 'current_lng', label: 'GPS Longitude' },
       { id: 'duration', label: 'Duration (min)' },
+      { id: 'video_recording_status', label: 'Video Status' },
+      { id: 'video_recording_duration', label: 'Video Duration' },
+      { id: 'video_recording_file_size', label: 'Video Size (MB)' },
     ],
     passengers: [
       { id: 'id', label: 'Count ID' },
@@ -241,7 +257,7 @@ const Reports = () => {
     try {
       const { data } = await supabase
         .from('trips')
-        .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*)')
+        .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*), driver_staff:staff_users!trips_driver_id_fkey(*), video_recording_url, video_recording_duration, video_recording_status, video_recording_file_size, video_recording_uploaded_at')
         .order('started_at', { ascending: false });
 
       setRecentActivity(data || []);
@@ -269,7 +285,7 @@ const Reports = () => {
         case 'trips': {
           const { data: rows, error } = await supabase
             .from('trips')
-            .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*)')
+            .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*), driver_staff:staff_users!trips_driver_id_fkey(*), video_recording_url, video_recording_duration, video_recording_status, video_recording_file_size, video_recording_uploaded_at')
             .gte('started_at', start)
             .lte('started_at', end)
             .order('started_at', { ascending: false });
@@ -507,6 +523,88 @@ const Reports = () => {
     }
   };
 
+  const handleTripRowClick = async (trip) => {
+    setSelectedTrip(trip);
+    setShowTripDetailModal(true);
+    setTripDetailLoading(true);
+    setTripVideoUrl(null);
+    setTripVideoStatus(null);
+    setTripVideoRecordings([]);
+
+    try {
+      // Fetch transactions for this trip
+      const { data: transactionsData } = await supabase
+        .from('transactions')
+        .select('*, staff:staff_users!transactions_staff_id_fkey(*)')
+        .eq('trip_id', trip.id)
+        .order('created_at', { ascending: false });
+
+      // Fetch irregularities for this trip
+      const { data: irregularitiesData } = await supabase
+        .from('fare_irregularities')
+        .select('*')
+        .eq('trip_id', trip.id)
+        .order('detected_at', { ascending: false });
+
+      // Filter anomalies (auto-detected irregularities)
+      const anomalies = irregularitiesData?.filter(irr => irr.anomaly_type) || [];
+
+      // Fetch emergency alerts for this trip
+      const { data: emergencyAlertsData } = await supabase
+        .from('emergency_alerts')
+        .select('*')
+        .eq('trip_id', trip.id)
+        .order('created_at', { ascending: false });
+
+      // Fetch video recordings from video_recordings table
+      const { data: recordingsData } = await supabase
+        .from('video_recordings')
+        .select('*')
+        .eq('trip_id', trip.id)
+        .order('recorded_at', { ascending: false });
+
+      setTripTransactions(transactionsData || []);
+      setTripIrregularities(irregularitiesData?.filter(irr => !irr.anomaly_type) || []);
+      setTripAnomalies(anomalies);
+      setTripEmergencyAlerts(emergencyAlertsData || []);
+      setTripVideoRecordings(recordingsData || []);
+
+      // Use video recording data from trip object directly
+      if (trip.video_recording_url && trip.video_recording_status === 'available') {
+        setTripVideoUrl(trip.video_recording_url);
+        setTripVideoStatus('available');
+      } else if (trip.video_recording_status === 'not_recorded') {
+        setTripVideoStatus('not_available');
+      } else if (trip.video_recording_status === 'error') {
+        setTripVideoStatus('error');
+      } else {
+        setTripVideoStatus('not_available');
+      }
+    } catch (error) {
+      console.error('Error fetching trip details:', error);
+    } finally {
+      setTripDetailLoading(false);
+    }
+  };
+
+  const handleDownloadVideo = async (recording) => {
+    try {
+      const piIp = localStorage.getItem('raspberryPiIp');
+      const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+
+      let downloadUrl = `${backendUrl}/api/video-processing/download-video/${recording.file_name}`;
+
+      if (recording.metadata?.source === 'pi_server' || recording.storage_type === 'local') {
+        downloadUrl = `${backendUrl}/download-video/${recording.file_name}`;
+      }
+
+      window.open(downloadUrl, '_blank');
+    } catch (error) {
+      console.error('Error downloading video:', error);
+      alert('Error downloading video: ' + error.message);
+    }
+  };
+
   const getNestedValue = (obj, path) => {
     return path.split('.').reduce((current, key) => current?.[key], obj);
   };
@@ -526,7 +624,7 @@ const Reports = () => {
         case 'trips':
           const { data: trips } = await supabase
             .from('trips')
-            .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*)')
+            .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*), driver_staff:staff_users!trips_driver_id_fkey(*)')
             .gte('started_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('started_at', dateRange.end || new Date().toISOString())
             .order('started_at', { ascending: false });
@@ -537,6 +635,7 @@ const Reports = () => {
             if (selectedExportColumns.includes('plate_number')) row['Bus Plate'] = trip.bus_id?.plate_number;
             if (selectedExportColumns.includes('route')) row['Route'] = trip.bus_id?.route;
             if (selectedExportColumns.includes('conductor')) row['Conductor'] = trip.conductor_staff?.full_name;
+            if (selectedExportColumns.includes('driver')) row['Driver'] = trip.driver_staff?.full_name;
             if (selectedExportColumns.includes('started_at')) row['Start Time'] = new Date(trip.started_at).toLocaleString();
             if (selectedExportColumns.includes('ended_at')) row['End Time'] = trip.ended_at ? new Date(trip.ended_at).toLocaleString() : 'N/A';
             if (selectedExportColumns.includes('status')) row['Status'] = trip.status;
@@ -735,7 +834,7 @@ const Reports = () => {
         case 'trips':
           const { data: trips } = await supabase
             .from('trips')
-            .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*)')
+            .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor_staff:staff_users!trips_conductor_id_fkey(*), driver_staff:staff_users!trips_driver_id_fkey(*)')
             .gte('started_at', dateRange.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
             .lte('started_at', dateRange.end || new Date().toISOString())
             .order('started_at', { ascending: false });
@@ -1002,6 +1101,7 @@ const Reports = () => {
   ];
 
   return (
+    <>
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
         <div>
@@ -1115,12 +1215,12 @@ const Reports = () => {
             </h2>
             <button
               onClick={() => setVisibleTripsColumns(
-                visibleTripsColumns.length === 5 ? ['plate_number', 'status', 'started_at'] : ['plate_number', 'route', 'conductor', 'status', 'started_at']
+                visibleTripsColumns.length === 7 ? ['plate_number', 'status', 'started_at', 'video_recording_status'] : ['plate_number', 'route', 'conductor', 'driver', 'status', 'started_at', 'video_recording_status']
               )}
               className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors self-start"
               title="Toggle column visibility"
             >
-              {visibleTripsColumns.length === 5 ? <EyeOff size={18} /> : <Eye size={18} />}
+              {visibleTripsColumns.length === 7 ? <EyeOff size={18} /> : <Eye size={18} />}
             </button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4">
@@ -1164,6 +1264,11 @@ const Reports = () => {
                       <div className="flex items-center gap-1">Conductor {renderSortIcon('conductor_staff', tripsSort)}</div>
                     </th>
                   )}
+                  {visibleTripsColumns.includes('driver') && (
+                    <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('driver_staff', tripsSort, setTripsSort)}>
+                      <div className="flex items-center gap-1">Driver {renderSortIcon('driver_staff', tripsSort)}</div>
+                    </th>
+                  )}
                   {visibleTripsColumns.includes('status') && (
                     <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('status', tripsSort, setTripsSort)}>
                       <div className="flex items-center gap-1">Status {renderSortIcon('status', tripsSort)}</div>
@@ -1172,6 +1277,11 @@ const Reports = () => {
                   {visibleTripsColumns.includes('started_at') && (
                     <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('started_at', tripsSort, setTripsSort)}>
                       <div className="flex items-center gap-1">Started {renderSortIcon('started_at', tripsSort)}</div>
+                    </th>
+                  )}
+                  {visibleTripsColumns.includes('video_recording_status') && (
+                    <th className="pb-3 font-medium cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('video_recording_status', tripsSort, setTripsSort)}>
+                      <div className="flex items-center gap-1">Video {renderSortIcon('video_recording_status', tripsSort)}</div>
                     </th>
                   )}
                 </tr>
@@ -1184,7 +1294,7 @@ const Reports = () => {
                     tripsCurrentPage * tripsItemsPerPage
                   );
                   return paginated.map((trip) => (
-                    <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
+                    <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5 cursor-pointer" onClick={() => handleTripRowClick(trip)}>
                       {visibleTripsColumns.includes('plate_number') && (
                         <td className="py-3 sm:py-4 text-white text-sm">{trip.bus_id?.plate_number || 'N/A'}</td>
                       )}
@@ -1193,6 +1303,9 @@ const Reports = () => {
                       )}
                       {visibleTripsColumns.includes('conductor') && (
                         <td className="py-3 sm:py-4 text-white/70 text-sm">{trip.conductor_staff?.full_name || 'N/A'}</td>
+                      )}
+                      {visibleTripsColumns.includes('driver') && (
+                        <td className="py-3 sm:py-4 text-white/70 text-sm">{trip.driver_staff?.full_name || 'N/A'}</td>
                       )}
                       {visibleTripsColumns.includes('status') && (
                         <td className="py-3 sm:py-4">
@@ -1208,6 +1321,31 @@ const Reports = () => {
                       {visibleTripsColumns.includes('started_at') && (
                         <td className="py-4 text-white/60 text-sm">
                           {trip.started_at ? new Date(trip.started_at).toLocaleString() : 'N/A'}
+                        </td>
+                      )}
+                      {visibleTripsColumns.includes('video_recording_status') && (
+                        <td className="py-3 sm:py-4">
+                          {trip.video_recording_status === 'available' ? (
+                            <span className="px-2 py-1 rounded-full text-xs bg-green-500/20 text-green-400">
+                              Available
+                            </span>
+                          ) : trip.video_recording_status === 'recording' ? (
+                            <span className="px-2 py-1 rounded-full text-xs bg-yellow-500/20 text-yellow-400">
+                              Recording
+                            </span>
+                          ) : trip.video_recording_status === 'processing' ? (
+                            <span className="px-2 py-1 rounded-full text-xs bg-blue-500/20 text-blue-400">
+                              Processing
+                            </span>
+                          ) : trip.video_recording_status === 'error' ? (
+                            <span className="px-2 py-1 rounded-full text-xs bg-red-500/20 text-red-400">
+                              Error
+                            </span>
+                          ) : (
+                            <span className="px-2 py-1 rounded-full text-xs bg-gray-500/20 text-gray-400">
+                              Not Recorded
+                            </span>
+                          )}
                         </td>
                       )}
                     </tr>
@@ -2170,6 +2308,322 @@ const Reports = () => {
         </>
       )}
     </div>
+
+    {/* Trip Detail Modal */}
+    {showTripDetailModal && selectedTrip && (
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-gray-900 rounded-2xl w-full max-w-7xl max-h-[90vh] overflow-hidden border border-white/10">
+          {/* Modal Header */}
+          <div className="flex items-center justify-between p-4 border-b border-white/10">
+            <h2 className="text-white text-xl font-bold flex items-center gap-2">
+              <Bus className="text-orange-400" />
+              Trip Details - {selectedTrip.bus_id?.plate_number || 'N/A'}
+            </h2>
+            <button
+              onClick={() => {
+                setShowTripDetailModal(false);
+                setSelectedTrip(null);
+              }}
+              className="text-white/60 hover:text-white transition-colors"
+            >
+              <X size={24} />
+            </button>
+          </div>
+
+          {tripDetailLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-white/60">Loading trip data...</div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 p-6 overflow-y-auto max-h-[calc(90vh-80px)]">
+              {/* Left Side - Camera Feed */}
+              <div className="space-y-4">
+                <div className="bg-black/30 rounded-xl overflow-hidden aspect-video relative">
+                  {tripVideoUrl ? (
+                    <video
+                      controls
+                      className="w-full h-full object-contain"
+                      src={tripVideoUrl}
+                    >
+                      Your browser does not support the video tag.
+                    </video>
+                  ) : tripVideoStatus === 'available' ? (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="text-center px-6">
+                        <Activity className="w-16 h-16 text-green-400 mx-auto mb-4" />
+                        <p className="text-green-400">Recording Available</p>
+                        <p className="text-white/40 text-sm mt-2">Video recording metadata is available but file may be missing</p>
+                      </div>
+                    </div>
+                  ) : tripVideoStatus === 'not_available' ? (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="text-center px-6">
+                        <Activity className="w-16 h-16 text-yellow-400 mx-auto mb-4" />
+                        <p className="text-yellow-400">No Recording Available</p>
+                        <p className="text-white/40 text-sm mt-2">Video recording not available for this trip</p>
+                      </div>
+                    </div>
+                  ) : tripVideoStatus === 'error' ? (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="text-center px-6">
+                        <Activity className="w-16 h-16 text-red-400 mx-auto mb-4" />
+                        <p className="text-red-400">Error Loading Video</p>
+                        <p className="text-white/40 text-sm mt-2">Could not fetch video information</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="text-center px-6">
+                        <Activity className="w-16 h-16 text-white/30 mx-auto mb-4" />
+                        <p className="text-white/50">Loading Video...</p>
+                        <p className="text-white/40 text-sm mt-2">Fetching recording information</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Trip Summary */}
+                <div className="glass-card p-4 rounded-xl">
+                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                    <Bus className="text-orange-400" />
+                    Trip Summary
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-white/5 p-3 rounded-lg">
+                      <p className="text-white/60 text-xs">Bus</p>
+                      <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.plate_number}</p>
+                    </div>
+                    <div className="bg-white/5 p-3 rounded-lg">
+                      <p className="text-white/60 text-xs">Status</p>
+                      <p className="text-white font-medium text-sm capitalize">{selectedTrip.status.replace('_', ' ')}</p>
+                    </div>
+                    <div className="bg-white/5 p-3 rounded-lg">
+                      <p className="text-white/60 text-xs">Conductor</p>
+                      <p className="text-white font-medium text-sm">{selectedTrip.conductor_staff?.full_name || 'N/A'}</p>
+                    </div>
+                    <div className="bg-white/5 p-3 rounded-lg">
+                      <p className="text-white/60 text-xs">Start Time</p>
+                      <p className="text-white font-medium text-sm">{new Date(selectedTrip.started_at).toLocaleString()}</p>
+                    </div>
+                    {selectedTrip.video_recording_duration && (
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Video Duration</p>
+                        <p className="text-white font-medium text-sm">{Math.floor(selectedTrip.video_recording_duration / 60)}m {selectedTrip.video_recording_duration % 60}s</p>
+                      </div>
+                    )}
+                    {selectedTrip.video_recording_file_size && (
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">File Size</p>
+                        <p className="text-white font-medium text-sm">{(selectedTrip.video_recording_file_size / (1024 * 1024)).toFixed(2)} MB</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Video Recordings List */}
+                {tripVideoRecordings.length > 0 && (
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <Activity className="text-orange-400" />
+                      Video Recordings ({tripVideoRecordings.length})
+                    </h3>
+                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                      {tripVideoRecordings.map((recording) => (
+                        <div key={recording.id} className="bg-white/5 p-3 rounded-lg">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex-1">
+                              <p className="text-white font-medium text-sm">{recording.file_name}</p>
+                              <p className="text-white/40 text-xs">{recording.storage_type} storage</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs px-2 py-1 rounded ${
+                                recording.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                                recording.status === 'recording' ? 'bg-yellow-500/20 text-yellow-400' :
+                                'bg-red-500/20 text-red-400'
+                              }`}>
+                                {recording.status}
+                              </span>
+                              {recording.status === 'completed' && (
+                                <button
+                                  onClick={() => handleDownloadVideo(recording)}
+                                  className="text-blue-400 hover:text-blue-300 transition-colors"
+                                  title="Download video"
+                                >
+                                  <DownloadIcon size={16} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2 text-xs">
+                            <div>
+                              <p className="text-white/40">Duration</p>
+                              <p className="text-white">{recording.duration ? `${Math.floor(recording.duration / 60)}m ${recording.duration % 60}s` : 'N/A'}</p>
+                            </div>
+                            <div>
+                              <p className="text-white/40">Size</p>
+                              <p className="text-white">{recording.file_size ? `${(recording.file_size / (1024 * 1024)).toFixed(2)} MB` : 'N/A'}</p>
+                            </div>
+                            <div>
+                              <p className="text-white/40">Format</p>
+                              <p className="text-white">{recording.format}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Side - Trip Details */}
+              <div className="space-y-4">
+                {/* Fare Statistics */}
+                <div className="glass-card p-4 rounded-xl">
+                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                    <DollarSign className="text-green-400" />
+                    Fare Statistics
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-white/5 p-3 rounded-lg">
+                      <p className="text-white/60 text-xs">Total Fare</p>
+                      <p className="text-white font-bold text-lg">₱{tripTransactions.reduce((sum, t) => sum + (t.fare_amount || 0), 0).toFixed(2)}</p>
+                    </div>
+                    <div className="bg-white/5 p-3 rounded-lg">
+                      <p className="text-white/60 text-xs">Total Baggage Fee</p>
+                      <p className="text-white font-bold text-lg">₱{tripTransactions.reduce((sum, t) => sum + (t.baggage_fee || 0), 0).toFixed(2)}</p>
+                    </div>
+                    <div className="bg-white/5 p-3 rounded-lg">
+                      <p className="text-white/60 text-xs">Total Revenue</p>
+                      <p className="text-white font-bold text-lg">₱{tripTransactions.reduce((sum, t) => sum + (t.amount || 0), 0).toFixed(2)}</p>
+                    </div>
+                    <div className="bg-white/5 p-3 rounded-lg">
+                      <p className="text-white/60 text-xs">Transactions</p>
+                      <p className="text-white font-bold text-lg">{tripTransactions.length}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Anomalies */}
+                {tripAnomalies.length > 0 && (
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <AlertTriangle className="text-red-400" />
+                      Anomalies ({tripAnomalies.length})
+                    </h3>
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {tripAnomalies.map((anomaly) => (
+                        <div key={anomaly.id} className="bg-white/5 p-3 rounded-lg">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="text-white font-medium text-sm">{anomaly.anomaly_type}</p>
+                              <p className="text-white/40 text-xs">{anomaly.description}</p>
+                            </div>
+                            <span className={`text-xs px-2 py-1 rounded ${
+                              anomaly.severity === 'high' ? 'bg-red-500/20 text-red-400' :
+                              anomaly.severity === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
+                              'bg-blue-500/20 text-blue-400'
+                            }`}>
+                              {anomaly.severity}
+                            </span>
+                          </div>
+                          <p className="text-white/40 text-xs mt-1">{new Date(anomaly.detected_at).toLocaleString()}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Irregularities */}
+                {tripIrregularities.length > 0 && (
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <AlertCircle className="text-yellow-400" />
+                      Irregularities ({tripIrregularities.length})
+                    </h3>
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {tripIrregularities.map((irregularity) => (
+                        <div key={irregularity.id} className="bg-white/5 p-3 rounded-lg">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="text-white font-medium text-sm">{irregularity.type}</p>
+                              <p className="text-white/40 text-xs">{irregularity.description}</p>
+                            </div>
+                            <span className={`text-xs px-2 py-1 rounded ${
+                              irregularity.resolved ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                            }`}>
+                              {irregularity.resolved ? 'Resolved' : 'Open'}
+                            </span>
+                          </div>
+                          <p className="text-white/40 text-xs mt-1">{new Date(irregularity.detected_at).toLocaleString()}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Emergency Alerts */}
+                {tripEmergencyAlerts.length > 0 && (
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <AlertTriangle className="text-red-500" />
+                      Emergency Alerts ({tripEmergencyAlerts.length})
+                    </h3>
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {tripEmergencyAlerts.map((alert) => (
+                        <div key={alert.id} className="bg-red-500/10 border border-red-500/30 p-3 rounded-lg">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="text-white font-medium text-sm">{alert.alert_type}</p>
+                              <p className="text-white/40 text-xs">{alert.description}</p>
+                            </div>
+                            <span className={`text-xs px-2 py-1 rounded ${
+                              alert.status === 'resolved' ? 'bg-green-500/20 text-green-400' :
+                              alert.status === 'acknowledged' ? 'bg-yellow-500/20 text-yellow-400' :
+                              'bg-red-500/20 text-red-400'
+                            }`}>
+                              {alert.status}
+                            </span>
+                          </div>
+                          <p className="text-white/40 text-xs mt-1">{new Date(alert.created_at).toLocaleString()}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Transactions List */}
+                <div className="glass-card p-4 rounded-xl">
+                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                    <ArrowLeftRight className="text-blue-400" />
+                    Transactions ({tripTransactions.length})
+                  </h3>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {tripTransactions.slice(0, 10).map((transaction) => (
+                      <div key={transaction.id} className="bg-white/5 p-3 rounded-lg">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="text-white font-medium text-sm">{transaction.type}</p>
+                            <p className="text-white/40 text-xs">{transaction.channel}</p>
+                          </div>
+                          <p className="text-white font-bold">₱{transaction.amount?.toFixed(2)}</p>
+                        </div>
+                        <p className="text-white/40 text-xs mt-1">{new Date(transaction.created_at).toLocaleString()}</p>
+                      </div>
+                    ))}
+                    {tripTransactions.length > 10 && (
+                      <p className="text-white/40 text-xs text-center py-2">
+                        Showing 10 of {tripTransactions.length} transactions
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+  </>
   );
 };
 

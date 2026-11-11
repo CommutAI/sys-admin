@@ -13,6 +13,7 @@ import asyncio
 from typing import Optional, List, Dict
 from queue import Queue
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
@@ -68,6 +69,17 @@ PASSENGER_CLASSES = ['person']
 # Frames keep streaming live; only database count writes are throttled.
 DB_SAVE_INTERVAL = int(os.getenv('DB_SAVE_INTERVAL', '5'))
 
+# Video recording configuration
+VIDEO_RECORDING_ENABLED = os.getenv('VIDEO_RECORDING_ENABLED', 'true').lower() == 'true'
+VIDEO_OUTPUT_DIR = os.getenv('VIDEO_OUTPUT_DIR', './recordings')
+VIDEO_FPS = int(os.getenv('VIDEO_FPS', '15'))  # Lower FPS for smaller files
+VIDEO_QUALITY = int(os.getenv('VIDEO_QUALITY', '40'))  # JPEG quality for frames
+
+# Ensure output directory exists
+if VIDEO_RECORDING_ENABLED and not os.path.exists(VIDEO_OUTPUT_DIR):
+    os.makedirs(VIDEO_OUTPUT_DIR, exist_ok=True)
+    print(f"[Video Processor] Created video output directory: {VIDEO_OUTPUT_DIR}")
+
 print(f"[Video Processor] Model: {MODEL_PATH}")
 print(f"[Video Processor] Confidence threshold: {YOLO_CONFIDENCE_THRESHOLD}")
 print(f"[Video Processor] Detection size: {DETECTION_SIZE}px")
@@ -84,6 +96,12 @@ class VideoProcessor:
         self.last_db_save = 0
         self.detection_history = []
         self.frame_count = 0
+
+        # Video recording
+        self.video_writer = None
+        self.recording_start_time = None
+        self.recording_frame_count = 0
+        self.current_video_path = None
 
     def initialize_model(self):
         """Initialize detection model (YOLO or check Roboflow)"""
@@ -404,6 +422,146 @@ class VideoProcessor:
         """Clear the current trip ID"""
         self.current_trip_id = None
         print("[Video Processor] Current trip ID cleared")
+
+    def start_recording(self, frame_width: int, frame_height: int):
+        """Start video recording for current trip"""
+        if not VIDEO_RECORDING_ENABLED:
+            print("[Video Processor] Video recording is disabled")
+            return False
+
+        if not self.current_trip_id:
+            print("[Video Processor] Cannot start recording: no trip ID set")
+            return False
+
+        if self.video_writer is not None:
+            print("[Video Processor] Recording already in progress")
+            return False
+
+        try:
+            # Create filename with trip ID and timestamp
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"trip_{self.current_trip_id}_{timestamp}.mp4"
+            self.current_video_path = os.path.join(VIDEO_OUTPUT_DIR, filename)
+
+            # Initialize video writer with MP4 codec
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            self.video_writer = cv2.VideoWriter(
+                self.current_video_path,
+                fourcc,
+                VIDEO_FPS,
+                (frame_width, frame_height)
+            )
+
+            self.recording_start_time = time.time()
+            self.recording_frame_count = 0
+
+            print(f"[Video Processor] Started recording to: {self.current_video_path}")
+            return True
+
+        except Exception as e:
+            print(f"[Video Processor] Error starting recording: {e}")
+            return False
+
+    def stop_recording(self):
+        """Stop video recording and save metadata to database"""
+        if self.video_writer is None:
+            print("[Video Processor] No recording in progress")
+            return None
+
+        try:
+            # Stop recording
+            self.video_writer.release()
+            self.video_writer = None
+
+            # Calculate duration
+            duration = int(time.time() - self.recording_start_time) if self.recording_start_time else 0
+
+            # Get file size
+            file_size = os.path.getsize(self.current_video_path) if self.current_video_path and os.path.exists(self.current_video_path) else 0
+
+            print(f"[Video Processor] Stopped recording:")
+            print(f"  Duration: {duration}s")
+            print(f"  Frames: {self.recording_frame_count}")
+            print(f"  File size: {file_size} bytes")
+
+            # Save video metadata to database
+            video_url = self.current_video_path
+            self.save_video_recording_to_db(video_url, duration, file_size)
+
+            # Return video info
+            result = {
+                'path': self.current_video_path,
+                'duration': duration,
+                'file_size': file_size,
+                'frame_count': self.recording_frame_count
+            }
+
+            # Reset recording state
+            self.current_video_path = None
+            self.recording_start_time = None
+            self.recording_frame_count = 0
+
+            return result
+
+        except Exception as e:
+            print(f"[Video Processor] Error stopping recording: {e}")
+            return None
+
+    def write_frame_to_recording(self, frame: np.ndarray):
+        """Write a frame to the current video recording"""
+        if self.video_writer is None:
+            return False
+
+        try:
+            self.video_writer.write(frame)
+            self.recording_frame_count += 1
+            return True
+        except Exception as e:
+            print(f"[Video Processor] Error writing frame: {e}")
+            return False
+
+    def save_video_recording_to_db(self, video_url: str, duration: int, file_size: int):
+        """Save video recording metadata to Supabase database (both trips and video_recordings tables)"""
+        if not supabase or not self.current_trip_id:
+            return
+
+        try:
+            # Update trips table with video metadata
+            trips_data = {
+                'video_recording_url': video_url,
+                'video_recording_duration': duration,
+                'video_recording_status': 'available',
+                'video_recording_file_size': file_size,
+                'video_recording_uploaded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())
+            }
+
+            result = supabase.table('trips').update(trips_data).eq('id', self.current_trip_id).execute()
+            if result:
+                print(f"[Video Processor] Saved video metadata to trips table for trip {self.current_trip_id}")
+
+            # Also save to video_recordings table for detailed history
+            video_recordings_data = {
+                'trip_id': self.current_trip_id,
+                'file_name': os.path.basename(video_url) if video_url else 'unknown',
+                'file_path': video_url,
+                'file_size': file_size,
+                'duration': duration,
+                'format': 'mp4',
+                'storage_type': 'local',
+                'status': 'completed',
+                'metadata': {
+                    'source': 'backend_processor',
+                    'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())
+                }
+            }
+
+            recordings_result = supabase.table('video_recordings').insert(video_recordings_data).execute()
+            if recordings_result and recordings_result.data:
+                recording_id = recordings_result.data[0].get('id')
+                print(f"[Video Processor] Saved video metadata to video_recordings table with ID: {recording_id}")
+
+        except Exception as e:
+            print(f"[Video Processor] Error saving video metadata to database: {e}")
 
 
 # Global video processor instance

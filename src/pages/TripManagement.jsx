@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft, Download, CheckCircle, Activity, AlertTriangle } from 'lucide-react';
+import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft, Download, CheckCircle, Activity, AlertTriangle, Download as DownloadIcon } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -24,6 +24,27 @@ const TripManagement = ({ userRole }) => {
   const [viewModalLoading, setViewModalLoading] = useState(false);
   const [tripVideoUrl, setTripVideoUrl] = useState(null);
   const [tripVideoStatus, setTripVideoStatus] = useState(null);
+  const [tripVideoRecordings, setTripVideoRecordings] = useState([]);
+
+  const handleDownloadVideo = async (recording) => {
+    try {
+      const piIp = localStorage.getItem('raspberryPiIp');
+      const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+
+      // Try backend first
+      let downloadUrl = `${backendUrl}/api/video-processing/download-video/${recording.file_name}`;
+
+      // If it's from Pi, use Pi's download endpoint
+      if (recording.metadata?.source === 'pi_server' || recording.storage_type === 'local') {
+        downloadUrl = `${backendUrl}/download-video/${recording.file_name}`;
+      }
+
+      window.open(downloadUrl, '_blank');
+    } catch (error) {
+      console.error('Error downloading video:', error);
+      alert('Error downloading video: ' + error.message);
+    }
+  };
 
   // Trip history state
   const [showHistory, setShowHistory] = useState(false);
@@ -122,7 +143,7 @@ const TripManagement = ({ userRole }) => {
       setLoading(true);
       const { data, error } = await supabase
         .from('trips')
-        .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor:staff_users!trips_conductor_id_fkey(*), driver:staff_users!trips_driver_id_fkey(*)')
+        .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor:staff_users!trips_conductor_id_fkey(*), driver:staff_users!trips_driver_id_fkey(*), video_recording_url, video_recording_duration, video_recording_status, video_recording_file_size, video_recording_uploaded_at')
         .order('started_at', { ascending: false });
 
       if (error) throw error;
@@ -235,6 +256,15 @@ const TripManagement = ({ userRole }) => {
       // Tell the Pi the trip is over so it stops linking counts to this trip
       await clearPiTrip();
 
+      // Stop video recording on backend
+      try {
+        const piIp = localStorage.getItem('raspberryPiIp');
+        const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+        await fetch(`${backendUrl}/api/video-processing/clear-trip`, { method: 'POST' });
+      } catch (videoError) {
+        console.error('Error stopping video recording:', videoError);
+      }
+
       fetchTrips();
     } catch (error) {
       console.error('Error ending trip:', error);
@@ -261,6 +291,15 @@ const TripManagement = ({ userRole }) => {
 
       // Tell the Pi the trip is cancelled
       await clearPiTrip();
+
+      // Stop video recording on backend
+      try {
+        const piIp = localStorage.getItem('raspberryPiIp');
+        const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+        await fetch(`${backendUrl}/api/video-processing/clear-trip`, { method: 'POST' });
+      } catch (videoError) {
+        console.error('Error stopping video recording:', videoError);
+      }
 
       fetchTrips();
     } catch (error) {
@@ -293,6 +332,15 @@ const TripManagement = ({ userRole }) => {
       // Tell the Pi the trip is over if cancelled or completed
       if (newStatus === 'completed' || newStatus === 'cancelled') {
         await clearPiTrip();
+
+        // Stop video recording on backend
+        try {
+          const piIp = localStorage.getItem('raspberryPiIp');
+          const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+          await fetch(`${backendUrl}/api/video-processing/clear-trip`, { method: 'POST' });
+        } catch (videoError) {
+          console.error('Error stopping video recording:', videoError);
+        }
       }
 
       fetchTrips();
@@ -402,6 +450,7 @@ const TripManagement = ({ userRole }) => {
     setViewModalLoading(true);
     setTripVideoUrl(null);
     setTripVideoStatus(null);
+    setTripVideoRecordings([]);
 
     try {
       // Fetch transactions for this trip
@@ -425,22 +474,25 @@ const TripManagement = ({ userRole }) => {
       setTripIrregularities(irregularitiesData?.filter(irr => !irr.anomaly_type) || []);
       setTripAnomalies(anomalies);
 
-      // Fetch video recording info from backend
-      try {
-        const piIp = localStorage.getItem('raspberryPiIp');
-        const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
-        const response = await fetch(`${backendUrl}/api/video-processing/trip-video/${trip.id}`);
-        const videoData = await response.json();
+      // Fetch video recordings from video_recordings table
+      const { data: recordingsData } = await supabase
+        .from('video_recordings')
+        .select('*')
+        .eq('trip_id', trip.id)
+        .order('recorded_at', { ascending: false });
 
-        if (videoData.status === 'success' && videoData.video_url) {
-          setTripVideoUrl(videoData.video_url);
-          setTripVideoStatus(videoData.status);
-        } else {
-          setTripVideoStatus('not_available');
-        }
-      } catch (videoError) {
-        console.error('Error fetching video info:', videoError);
+      setTripVideoRecordings(recordingsData || []);
+
+      // Use video recording data from trip object directly
+      if (trip.video_recording_url && trip.video_recording_status === 'available') {
+        setTripVideoUrl(trip.video_recording_url);
+        setTripVideoStatus('available');
+      } else if (trip.video_recording_status === 'not_recorded') {
+        setTripVideoStatus('not_available');
+      } else if (trip.video_recording_status === 'error') {
         setTripVideoStatus('error');
+      } else {
+        setTripVideoStatus('not_available');
       }
     } catch (error) {
       console.error('Error fetching trip details:', error);
@@ -1443,6 +1495,14 @@ const TripManagement = ({ userRole }) => {
                       >
                         Your browser does not support the video tag.
                       </video>
+                    ) : tripVideoStatus === 'available' ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <Activity className="w-16 h-16 text-green-400 mx-auto mb-4" />
+                          <p className="text-green-400">Recording Available</p>
+                          <p className="text-white/40 text-sm mt-2">Video recording metadata is available but file may be missing</p>
+                        </div>
+                      </div>
                     ) : tripVideoStatus === 'not_available' ? (
                       <div className="absolute inset-0 flex items-center justify-center">
                         <div className="text-center px-6">
@@ -1503,8 +1563,81 @@ const TripManagement = ({ userRole }) => {
                         <p className="text-white/60 text-xs">End Time</p>
                         <p className="text-white font-medium text-sm">{selectedTrip.ended_at ? new Date(selectedTrip.ended_at).toLocaleString() : 'In Progress'}</p>
                       </div>
+                      {selectedTrip.video_recording_duration && (
+                        <div className="bg-white/5 p-3 rounded-lg">
+                          <p className="text-white/60 text-xs">Video Duration</p>
+                          <p className="text-white font-medium text-sm">{Math.floor(selectedTrip.video_recording_duration / 60)}m {selectedTrip.video_recording_duration % 60}s</p>
+                        </div>
+                      )}
+                      {selectedTrip.video_recording_file_size && (
+                        <div className="bg-white/5 p-3 rounded-lg">
+                          <p className="text-white/60 text-xs">File Size</p>
+                          <p className="text-white font-medium text-sm">{(selectedTrip.video_recording_file_size / (1024 * 1024)).toFixed(2)} MB</p>
+                        </div>
+                      )}
                     </div>
                   </div>
+
+                  {/* Video Recordings List */}
+                  {tripVideoRecordings.length > 0 && (
+                    <div className="glass-card p-4 rounded-xl">
+                      <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                        <Activity className="text-orange-400" />
+                        Video Recordings ({tripVideoRecordings.length})
+                      </h3>
+                      <div className="space-y-2 max-h-60 overflow-y-auto">
+                        {tripVideoRecordings.map((recording) => (
+                          <div key={recording.id} className="bg-white/5 p-3 rounded-lg">
+                            <div className="flex justify-between items-start mb-2">
+                              <div className="flex-1">
+                                <p className="text-white font-medium text-sm">{recording.file_name}</p>
+                                <p className="text-white/40 text-xs">{recording.storage_type} storage</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs px-2 py-1 rounded ${
+                                  recording.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                                  recording.status === 'recording' ? 'bg-yellow-500/20 text-yellow-400' :
+                                  'bg-red-500/20 text-red-400'
+                                }`}>
+                                  {recording.status}
+                                </span>
+                                {recording.status === 'completed' && (
+                                  <button
+                                    onClick={() => handleDownloadVideo(recording)}
+                                    className="text-blue-400 hover:text-blue-300 transition-colors"
+                                    title="Download video"
+                                  >
+                                    <DownloadIcon size={16} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-xs">
+                              <div>
+                                <p className="text-white/40">Duration</p>
+                                <p className="text-white">{recording.duration ? `${Math.floor(recording.duration / 60)}m ${recording.duration % 60}s` : 'N/A'}</p>
+                              </div>
+                              <div>
+                                <p className="text-white/40">Size</p>
+                                <p className="text-white">{recording.file_size ? `${(recording.file_size / (1024 * 1024)).toFixed(2)} MB` : 'N/A'}</p>
+                              </div>
+                              <div>
+                                <p className="text-white/40">Format</p>
+                                <p className="text-white">{recording.format}</p>
+                              </div>
+                            </div>
+                            {recording.metadata && (
+                              <div className="mt-2 text-xs text-white/40">
+                                <p>Source: {recording.metadata.source || 'unknown'}</p>
+                                {recording.metadata.resolution && <p>Resolution: {recording.metadata.resolution}</p>}
+                                {recording.metadata.fps && <p>FPS: {recording.metadata.fps}</p>}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Right Side - Analytics */}

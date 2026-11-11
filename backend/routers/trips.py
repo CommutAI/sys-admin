@@ -22,6 +22,10 @@ class TripUpdate(BaseModel):
     status: Optional[str] = None
     current_lat: Optional[float] = None
     current_lng: Optional[float] = None
+    video_recording_status: Optional[str] = None
+    video_recording_url: Optional[str] = None
+    video_recording_duration: Optional[int] = None
+    video_recording_file_size: Optional[int] = None
 
 @router.post("/api/trips")
 async def create_trip(
@@ -63,7 +67,7 @@ async def get_trips():
     Get all trips. No authentication required for Pi polling.
     """
     try:
-        response = supabase.table('trips').select('id, status, bus_id, conductor_id, driver_id, started_at').order('started_at', desc=True).execute()
+        response = supabase.table('trips').select('id, status, bus_id, conductor_id, driver_id, started_at, video_recording_url, video_recording_duration, video_recording_status, video_recording_file_size, video_recording_uploaded_at').order('started_at', desc=True).execute()
         print(f"[Trips] Fetched {len(response.data) if response.data else 0} trips")
         return {"trips": response.data}
     except Exception as e:
@@ -82,7 +86,7 @@ async def get_trip(
     Get a specific trip by ID. All authenticated users can read trip data.
     """
     try:
-        response = supabase.table('trips').select('*, buses!trips_bus_id_fkey(*), conductor:staff_users!trips_conductor_id_fkey(*), driver:staff_users!trips_driver_id_fkey(*)').eq('id', trip_id).single().execute()
+        response = supabase.table('trips').select('*, buses!trips_bus_id_fkey(*), conductor:staff_users!trips_conductor_id_fkey(*), driver:staff_users!trips_driver_id_fkey(*), video_recording_url, video_recording_duration, video_recording_status, video_recording_file_size, video_recording_uploaded_at').eq('id', trip_id).single().execute()
         if not response.data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -114,6 +118,14 @@ async def update_trip(
             update_data['current_lat'] = trip_update.current_lat
         if trip_update.current_lng is not None:
             update_data['current_lng'] = trip_update.current_lng
+        if trip_update.video_recording_status:
+            update_data['video_recording_status'] = trip_update.video_recording_status
+        if trip_update.video_recording_url:
+            update_data['video_recording_url'] = trip_update.video_recording_url
+        if trip_update.video_recording_duration is not None:
+            update_data['video_recording_duration'] = trip_update.video_recording_duration
+        if trip_update.video_recording_file_size is not None:
+            update_data['video_recording_file_size'] = trip_update.video_recording_file_size
 
         if trip_update.status in ['completed', 'cancelled']:
             update_data['ended_at'] = supabase.auth.get_current_user().created_at if supabase.auth.get_current_user() else None
