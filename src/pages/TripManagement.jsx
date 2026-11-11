@@ -1155,37 +1155,39 @@ const TripManagement = ({ userRole }) => {
                         <th className="text-left text-white/60 text-sm py-3 px-4">Route</th>
                         <th className="text-left text-white/60 text-sm py-3 px-4">Conductor</th>
                         <th className="text-left text-white/60 text-sm py-3 px-4">Driver</th>
+                        <th className="text-left text-white/60 text-sm py-3 px-4">Passengers</th>
                         <th className="text-left text-white/60 text-sm py-3 px-4">Start Time</th>
+                        <th className="text-left text-white/60 text-sm py-3 px-4">Duration</th>
                         <th className="text-left text-white/60 text-sm py-3 px-4">Status</th>
-                        <th className="text-left text-white/60 text-sm py-3 px-4">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {historyPaginatedData.map((trip) => (
-                        <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
-                          <td className="text-white py-3 px-4 text-sm">{trip.bus_id?.plate_number || 'N/A'}</td>
+                        <tr
+                          key={trip.id}
+                          className="border-b border-white/5 hover:bg-white/10 cursor-pointer transition-colors"
+                          onClick={() => openViewModal(trip)}
+                          title="Click to view trip details"
+                        >
+                          <td className="text-white py-3 px-4 text-sm font-medium">{trip.bus_id?.plate_number || 'N/A'}</td>
                           <td className="text-white/70 py-3 px-4 text-sm">{trip.bus_id?.route || 'N/A'}</td>
                           <td className="text-white/70 py-3 px-4 text-sm">{trip.conductor?.full_name || 'N/A'}</td>
                           <td className="text-white/70 py-3 px-4 text-sm">{trip.driver?.full_name || 'N/A'}</td>
+                          <td className="text-white/70 py-3 px-4 text-sm">{trip.total_passengers || 0}</td>
                           <td className="text-white/60 py-3 px-4 text-sm">{new Date(trip.started_at).toLocaleString()}</td>
-                          <td className="py-3 px-4 text-sm">
-                            <select
-                              value={trip.status}
-                              onChange={(e) => handleUpdateTripStatus(trip.id, e.target.value)}
-                              className="bg-gray-800 border border-white/20 rounded-lg px-2 py-1 text-white text-xs focus:outline-none focus:border-orange-500"
-                            >
-                              <option value="in_progress" className="bg-gray-800 text-white">In Progress</option>
-                              <option value="completed" className="bg-gray-800 text-white">Completed</option>
-                              <option value="cancelled" className="bg-gray-800 text-white">Cancelled</option>
-                            </select>
+                          <td className="text-white/60 py-3 px-4 text-sm">
+                            {trip.ended_at
+                              ? `${Math.round((new Date(trip.ended_at) - new Date(trip.started_at)) / 60000)} min`
+                              : '—'}
                           </td>
                           <td className="py-3 px-4 text-sm">
-                            <button
-                              onClick={() => openViewModal(trip)}
-                              className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-white text-xs transition-colors"
-                            >
-                              View
-                            </button>
+                            <span className={`px-2 py-1 rounded-full text-xs border ${
+                              trip.status === 'completed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                              trip.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                              'bg-red-500/20 text-red-400 border-red-500/30'
+                            }`}>
+                              {trip.status?.replace('_', ' ')}
+                            </span>
                           </td>
                         </tr>
                       ))}

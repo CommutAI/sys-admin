@@ -396,41 +396,6 @@ const LiveMap = () => {
               )}
             </div>
           </div>
-
-          <div className="glass-card p-6">
-            <h3 className="text-white text-lg font-bold mb-4 flex items-center gap-2">
-              <Navigation className="text-orange-400" />
-              Routes
-            </h3>
-            <div className="space-y-3">
-              {routes.map((route) => (
-                <div key={route.id} className="flex items-center gap-3">
-                  <div className="w-4 h-4 rounded-full" style={{ backgroundColor: route.color }} />
-                  <span className="text-white/70 text-sm">{route.name}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="glass-card p-6">
-            <h3 className="text-white text-lg font-bold mb-4">Map Legend</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-green-400" />
-                <span className="text-white/70">Active Bus</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-gray-400" />
-                <span className="text-white/70">Idle Bus</span>
-              </div>
-              {routes.map((route) => (
-                <div key={route.id} className="flex items-center gap-2">
-                  <div className="w-6 h-1 rounded" style={{ backgroundColor: route.color }} />
-                  <span className="text-white/70">{route.name}</span>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     </div>
