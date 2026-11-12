@@ -276,17 +276,19 @@ async def lifespan(app: FastAPI):
 
                 try:
                     async with websockets.connect(backend_ws_url) as ws:
-                        print(f"[Backend Stream] Connected to backend")
+                        print(f"[Backend Stream] ✓ Connected to backend successfully")
 
                         # Send trip info
                         await ws.send(json.dumps({
                             'type': 'set_trip',
                             'trip_id': video_processor.current_trip_id
                         }))
+                        print(f"[Backend Stream] Sent trip ID: {video_processor.current_trip_id}")
 
                         # Create tasks for sending and receiving
                         async def send_frames():
                             """Send frames to backend"""
+                            frame_count = 0
                             while video_processor.current_trip_id:
                                 try:
                                     if not video_processor.frame_queue.empty():
@@ -298,6 +300,10 @@ async def lifespan(app: FastAPI):
                                             'trip_id': video_processor.current_trip_id,
                                             'timestamp': time.time()
                                         }))
+                                        
+                                        frame_count += 1
+                                        if frame_count % 30 == 0:  # Log every 30 frames (every 3 seconds)
+                                            print(f"[Backend Stream] Sent {frame_count} frames to backend")
 
                                         # Limit to 10 FPS for backend recording
                                         await asyncio.sleep(0.1)

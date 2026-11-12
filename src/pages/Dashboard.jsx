@@ -469,7 +469,7 @@ const Dashboard = () => {
     assignedBus: piAssignedBus,
     activeTripId: piActiveTripId,
     usingWebSocket: piUsingWebSocket,
-  } = useRaspberryPi({ autoConnect: false, enableHealthCheck: true });
+  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
 
   // Backend video connection for YOLOv8m processing - always auto-connect with discovery
   const {
