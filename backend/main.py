@@ -111,9 +111,12 @@ allowed_origins = [
     "http://localhost:3000",
     "http://localhost:8080",
     frontend_url,
-    "https://*.vercel.app",  # Allow all Vercel preview deployments
-    "*",  # Allow all origins for development (can be restricted in production)
+    "https://sys-admin-nine.vercel.app",  # Production Vercel deployment
 ]
+
+# If in development mode, allow all origins
+if os.getenv("ENVIRONMENT", "development") == "development":
+    allowed_origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -121,6 +124,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
     max_age=600,
 )
 
