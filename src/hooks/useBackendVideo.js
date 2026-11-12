@@ -4,7 +4,6 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getPersistedIp, discoverRaspberryPi, isSecureOrigin } from '../services/piAutoDiscovery';
 
 const HEARTBEAT_MS = 30_000;
 
@@ -19,40 +18,12 @@ export function useBackendVideo({ autoConnect = true } = {}) {
   const heartbeatTimer = useRef(null);
   const deadRef = useRef(false);
 
-  // Skip all Pi connections when on HTTPS with no secure Pi URL configured
-  const piEnvUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
-  const isHttps = isSecureOrigin();
+  // Use backend URL from environment (Render deployment)
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
-  // Auto-detect backend URL from Pi discovery
-  const [backendUrl, setBackendUrl] = useState(() => {
-    // On HTTPS, always use the ngrok URL — never use localStorage local IPs
-    if (isHttps) return piEnvUrl;
-    const piIp = getPersistedIp();
-    return piIp ? `http://${piIp}:5000` : null;
-  });
-  
   const wsUrl = backendUrl
-    ? backendUrl.replace(/^http/, 'ws') + '/ws'
+    ? backendUrl.replace(/^http/, 'ws') + '/ws/video-feed'
     : null;
-
-  // Auto-discover Pi if no IP is persisted (local network only)
-  useEffect(() => {
-    if (isHttps) {
-      // On HTTPS, always use ngrok — never scan local IPs
-      return;
-    }
-    if (!getPersistedIp()) {
-      console.log('[Backend Video] No persisted IP, starting discovery...');
-      discoverRaspberryPi().then(ip => {
-        console.log('[Backend Video] Discovery result:', ip);
-        if (ip) {
-          setBackendUrl(`http://${ip}:5000`);
-        }
-      });
-    } else {
-      console.log('[Backend Video] Using persisted IP:', getPersistedIp());
-    }
-  }, []);
 
   function clearTimers() {
     if (heartbeatTimer.current) {
