@@ -24,13 +24,13 @@ if [ $? -eq 0 ]; then
     
     # Restart the video server
     echo "🔄 Restarting video server on Pi..."
-    ssh "${PI_USER}@${PI_HOST}" "sudo systemctl restart video-server"
+    ssh "${PI_USER}@${PI_HOST}" "sudo systemctl restart commutai-pi-service"
     
     if [ $? -eq 0 ]; then
         echo "✅ Video server restarted!"
         echo ""
         echo "📊 Checking logs (Ctrl+C to exit)..."
-        ssh "${PI_USER}@${PI_HOST}" "sudo journalctl -u video-server -f"
+        ssh "${PI_USER}@${PI_HOST}" "sudo journalctl -u commutai-pi-service -f"
     else
         echo "⚠️  Failed to restart video server"
     fi

@@ -23,13 +23,13 @@ if ($LASTEXITCODE -eq 0) {
     
     # Restart the video server
     Write-Host "🔄 Restarting video server on Pi..." -ForegroundColor Yellow
-    ssh "${PI_USER}@${PI_HOST}" "sudo systemctl restart video-server"
+    ssh "${PI_USER}@${PI_HOST}" "sudo systemctl restart commutai-pi-service"
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✅ Video server restarted!" -ForegroundColor Green
         Write-Host ""
         Write-Host "📊 Checking logs (Ctrl+C to exit)..." -ForegroundColor Cyan
-        ssh "${PI_USER}@${PI_HOST}" "sudo journalctl -u video-server -f"
+        ssh "${PI_USER}@${PI_HOST}" "sudo journalctl -u commutai-pi-service -f"
     } else {
         Write-Host "⚠️  Failed to restart video server" -ForegroundColor Yellow
     }
