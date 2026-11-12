@@ -493,12 +493,13 @@ const Dashboard = () => {
           setBackendTripId(data.current_trip_id);
         }
       } catch (err) {
-        console.error('Error fetching backend video status:', err);
+        // Silently fail - this is not critical, Pi provides the trip ID
+        console.debug('Backend video status unavailable (rate limited or offline)');
       }
     };
 
     fetchBackendStatus();
-    const interval = setInterval(fetchBackendStatus, 10000); // Check every 10 seconds
+    const interval = setInterval(fetchBackendStatus, 60000); // Check every 60 seconds instead of 10
 
     return () => clearInterval(interval);
   }, [backendUrl]);
