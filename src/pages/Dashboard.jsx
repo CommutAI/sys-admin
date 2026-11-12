@@ -825,13 +825,6 @@ const Dashboard = () => {
         }
       });
 
-      console.log('GPS Data loaded:', {
-        totalGpsRows: gpsRows?.length || 0,
-        gpsByTripId: Object.keys(latestGpsByTripId).length,
-        gpsByBusId: Object.keys(latestGpsByBusId).length,
-        activeTrips: activeTrips?.length || 0
-      });
-
       // Build a marker for every bus — use GPS data if available, otherwise fallback
       const busMarkers = (allBuses || []).map(bus => {
         const trip = tripByBusId[bus.id];
@@ -842,8 +835,6 @@ const Dashboard = () => {
         const routeProgress = calculateRouteProgress(lat, lng, routeCoordinates);
         const routeDirection = getRouteDirection(routeProgress);
         const eta = estimateTimeToDestination(routeProgress, calculateRouteDistance(routeCoordinates));
-
-        console.log(`Bus ${bus.plate_number}: GPS from ${gps?.source || 'fallback'}, lat=${lat}, lng=${lng}`);
 
         return {
           id: bus.id,
