@@ -285,7 +285,7 @@ export function useRaspberryPi(options = {}) {
     try {
       // On HTTPS origins, skip local Pi connection UNLESS a secure public URL
       // is configured (e.g. ngrok https:// tunnel via VITE_RASPBERRY_PI_URL).
-      const piEnvUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+      const piEnvUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://asbestos-controlled-rebel-subsidiaries.trycloudflare.com';
       if (isSecureOrigin() && (!piEnvUrl || !piEnvUrl.startsWith('https://'))) {
         console.log('[Pi] Skipping WebSocket — running on HTTPS with no secure Pi URL configured');
         switchToDatabaseMode();

@@ -9,8 +9,8 @@
 
 import { supabase } from '../lib/supabase';
 
-const NGROK_URL      = 'https://hertz-osmosis-squiggly.ngrok-free.dev';
-const FALLBACK_URL   = import.meta.env.VITE_RASPBERRY_PI_URL || NGROK_URL;
+const CLOUDFLARE_TUNNEL_URL = 'https://asbestos-controlled-rebel-subsidiaries.trycloudflare.com';
+const FALLBACK_URL   = import.meta.env.VITE_RASPBERRY_PI_URL || CLOUDFLARE_TUNNEL_URL;
 const DEFAULT_TIMEOUT = 8000;
 const BUS_NUMBER      = 1; // this dashboard manages bus 001
 
@@ -29,11 +29,11 @@ const REDISCOVER_INTERVAL = 10_000;
 export async function resolvePiUrl() {
   const now = Date.now();
 
-  // On HTTPS origins, always use the ngrok URL and skip the Supabase
+  // On HTTPS origins, always use the secure tunnel URL and skip the Supabase
   // lookup — the pi_devices table stores local LAN IPs (192.168.x.x) which are
   // unreachable from the public internet and would cause Mixed Content errors.
   if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-    const secureUrl = import.meta.env.VITE_RASPBERRY_PI_URL || NGROK_URL;
+    const secureUrl = import.meta.env.VITE_RASPBERRY_PI_URL || CLOUDFLARE_TUNNEL_URL;
     if (secureUrl && secureUrl.startsWith('https://')) {
       return secureUrl;
     }

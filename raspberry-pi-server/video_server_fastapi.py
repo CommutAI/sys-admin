@@ -1862,7 +1862,12 @@ class VideoProcessor:
                         disconnected_clients = set()
                         for client in self.websocket_clients:
                             try:
-                                await client.send_json({'video_frame': frame_base64})
+                                # Include passenger count in the message for dashboard display
+                                await client.send_json({
+                                    'video_frame': frame_base64,
+                                    'count': self.passenger_count,
+                                    'average_count': self.average_count
+                                })
                             except:
                                 disconnected_clients.add(client)
                         
