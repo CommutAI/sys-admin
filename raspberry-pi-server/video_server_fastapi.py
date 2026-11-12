@@ -284,27 +284,49 @@ async def lifespan(app: FastAPI):
                             'trip_id': video_processor.current_trip_id
                         }))
 
-                        # Stream frames
-                        last_frame_time = time.time()
-                        while video_processor.current_trip_id:
-                            try:
-                                if not video_processor.frame_queue.empty():
-                                    frame_base64 = video_processor.frame_queue.get_nowait()
+                        # Create tasks for sending and receiving
+                        async def send_frames():
+                            """Send frames to backend"""
+                            while video_processor.current_trip_id:
+                                try:
+                                    if not video_processor.frame_queue.empty():
+                                        frame_base64 = video_processor.frame_queue.get_nowait()
 
-                                    await ws.send(json.dumps({
-                                        'type': 'frame',
-                                        'frame': frame_base64,
-                                        'trip_id': video_processor.current_trip_id,
-                                        'timestamp': time.time()
-                                    }))
+                                        await ws.send(json.dumps({
+                                            'type': 'frame',
+                                            'frame': frame_base64,
+                                            'trip_id': video_processor.current_trip_id,
+                                            'timestamp': time.time()
+                                        }))
 
-                                    # Limit to 10 FPS for backend recording
-                                    await asyncio.sleep(0.1)
-                                else:
-                                    await asyncio.sleep(0.01)
-                            except Exception as e:
-                                print(f"[Backend Stream] Error sending frame: {e}")
-                                break
+                                        # Limit to 10 FPS for backend recording
+                                        await asyncio.sleep(0.1)
+                                    else:
+                                        await asyncio.sleep(0.01)
+                                except Exception as e:
+                                    print(f"[Backend Stream] Error sending frame: {e}")
+                                    break
+
+                        async def receive_detections():
+                            """Receive detection results from backend"""
+                            while video_processor.current_trip_id:
+                                try:
+                                    response = await ws.recv()
+                                    data = json.loads(response)
+                                    
+                                    if data.get('type') == 'detection':
+                                        # Update passenger count from backend
+                                        count = data.get('count', 0)
+                                        video_processor.passenger_count = count
+                                        video_processor.average_count = count  # Also update average
+                                        print(f"[Backend Stream] Received count from backend: {count}")
+                                    
+                                except Exception as e:
+                                    print(f"[Backend Stream] Error receiving detection: {e}")
+                                    break
+
+                        # Run both send and receive concurrently
+                        await asyncio.gather(send_frames(), receive_detections())
 
                 except websockets.exceptions.WebSocketException as e:
                     print(f"[Backend Stream] WebSocket error: {e}")
@@ -481,7 +503,7 @@ DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '640'))  # ONNX model requires 
 
 # AI Model configuration
 DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
-_count_method_default = 'mog2' if DISABLE_AI else 'onnx'
+_count_method_default = 'backend' if not DISABLE_AI else 'mog2'  # Use backend by default
 COUNT_METHOD = os.getenv('COUNT_METHOD', _count_method_default)
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.pt')
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))  # Keep at 0.25 for better detection
@@ -625,6 +647,10 @@ class VideoProcessor:
     
     def initialize_model(self):
         """Initialize detection backend based on COUNT_METHOD."""
+        if COUNT_METHOD == 'backend':
+            # Backend detection mode - no local model needed
+            print("Backend detection mode - frames sent to backend for AI processing")
+            return True
         if COUNT_METHOD == 'mog2':
             # MOG2 background subtraction — detects movement only, not still people
             self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
@@ -768,6 +794,10 @@ class VideoProcessor:
 
     def detect_passengers(self, frame):
         """Detect/count passengers. Uses HOG, MOG2, ONNX, TFLite, Roboflow, OpenCV DNN, or YOLO depending on COUNT_METHOD."""
+        if COUNT_METHOD == 'backend':
+            # Backend detection mode - don't process locally, wait for backend results
+            # Return empty list since backend will handle detection
+            return []
         if COUNT_METHOD == 'hog' and hasattr(self, 'hog'):
             return self._detect_hog(frame)
         if COUNT_METHOD == 'mog2' and self.bg_subtractor is not None:
