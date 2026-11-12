@@ -477,7 +477,7 @@ const Dashboard = () => {
     passengerCount: backendCount,
     videoRef: backendVideoRef,
     refresh: backendRefresh,
-  } = useBackendVideo({ autoConnect: true });
+  } = useBackendVideo({ autoConnect: false });
 
   // Backend video processing status (including trip ID)
   const [backendTripId, setBackendTripId] = useState(null);
