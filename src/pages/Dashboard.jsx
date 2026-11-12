@@ -640,7 +640,7 @@ const Dashboard = () => {
       const [
         { data: buses },
         { data: trips },
-        { data: passengerCounts },
+        { data: boardedPassengers },
         { data: irregularities },
         { data: emergencyAlerts },
         { data: staffUsers }
@@ -651,8 +651,8 @@ const Dashboard = () => {
         // Fetch today's trips
         supabase.from('trips').select('*, bus_id:buses!trips_bus_id_fkey(*)').gte('started_at', todayStart),
 
-        // Fetch passenger counts for today
-        supabase.from('passenger_counts').select('count').gte('recorded_at', todayStart),
+        // Fetch boarded passengers (QR scans/tickets) for today
+        supabase.from('boarded_passengers').select('*').gte('boarded_at', todayStart),
 
         // Fetch fare irregularities for today
         supabase.from('fare_irregularities')
@@ -672,8 +672,8 @@ const Dashboard = () => {
         supabase.from('staff_users').select('*').eq('is_active', true)
       ]);
 
-      // Calculate KPIs
-      const totalPassengers = passengerCounts?.reduce((sum, pc) => sum + (pc.count || 0), 0) || 0;
+      // Calculate KPIs based on tickets (QR scans) instead of YOLO counting
+      const totalPassengers = boardedPassengers?.length || 0;
       const totalTrips = trips?.length || 0;
       const activeBusesCount = buses?.length || 0;
       const activeConductorsCount = staffUsers?.filter(u => u.role === 'conductor').length || 0;
