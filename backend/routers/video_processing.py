@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from fastapi.responses import JSONResponse
 
 from video_processor import video_processor
+from database import supabase
 
 load_dotenv()
 
