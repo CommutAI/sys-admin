@@ -5,6 +5,7 @@ Integrates with Roboflow serverless workflows for object detection
 import os
 import base64
 import asyncio
+import time
 from typing import Dict, List, Any, Optional
 import httpx
 from dotenv import load_dotenv
@@ -25,6 +26,12 @@ class RoboflowClient:
         self.api_url = "https://serverless.roboflow.com"
         self.timeout = 30.0
         self.max_retries = 3
+        
+        # Token optimization settings
+        self.call_count = 0
+        self.last_call_time = 0
+        self.min_call_interval = 0.5  # Minimum 500ms between calls (2 calls/sec max)
+        self.max_calls_per_minute = 60  # Rate limit: 60 calls per minute
 
     def _encode_image(self, image_bytes: bytes) -> str:
         """Encode image bytes to base64"""
@@ -36,7 +43,7 @@ class RoboflowClient:
         parameters: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Run Roboflow workflow on an image
+        Run Roboflow workflow on an image with rate limiting
 
         Args:
             image_bytes: Raw image bytes (from OpenCV or file)
@@ -53,6 +60,22 @@ class RoboflowClient:
 
         if not image_bytes:
             raise RoboflowWorkflowError("Image bytes cannot be empty")
+
+        # Rate limiting: enforce minimum interval between calls
+        current_time = time.time()
+        time_since_last_call = current_time - self.last_call_time
+        if time_since_last_call < self.min_call_interval:
+            wait_time = self.min_call_interval - time_since_last_call
+            await asyncio.sleep(wait_time)
+
+        # Rate limiting: enforce per-minute limit
+        if self.call_count >= self.max_calls_per_minute:
+            time_in_window = current_time - self.last_call_time
+            if time_in_window < 60:
+                wait_time = 60 - time_in_window
+                print(f"[RoboflowClient] Rate limit reached, waiting {wait_time:.1f}s")
+                await asyncio.sleep(wait_time)
+                self.call_count = 0  # Reset counter
 
         # Prepare request payload
         payload = {
@@ -82,6 +105,10 @@ class RoboflowClient:
                     response.raise_for_status()
                     result = response.json()
 
+                    # Update rate limiting counters
+                    self.call_count += 1
+                    self.last_call_time = time.time()
+
                     # Parse the response - workflow returns a list with one entry per input
                     if isinstance(result, list) and len(result) > 0:
                         return result[0]
@@ -91,8 +118,9 @@ class RoboflowClient:
                 if e.response.status_code == 401:
                     raise RoboflowWorkflowError("Invalid Roboflow API key")
                 elif e.response.status_code == 429:
-                    # Rate limited - wait and retry
-                    wait_time = 2 ** attempt
+                    # Rate limited - wait and retry with exponential backoff
+                    wait_time = min(2 ** attempt, 30)  # Max 30s wait
+                    print(f"[RoboflowClient] Rate limited, waiting {wait_time}s (attempt {attempt + 1})")
                     await asyncio.sleep(wait_time)
                     continue
                 else:
@@ -153,6 +181,21 @@ class RoboflowClient:
         """
         detections = self.extract_detections(workflow_result)
         return len(detections)
+
+    def get_usage_stats(self) -> Dict[str, Any]:
+        """
+        Get current usage statistics for monitoring token consumption
+
+        Returns:
+            Dict with call count, last call time, and rate limit info
+        """
+        return {
+            'total_calls': self.call_count,
+            'last_call_time': self.last_call_time,
+            'min_call_interval': self.min_call_interval,
+            'max_calls_per_minute': self.max_calls_per_minute,
+            'calls_in_current_minute': self.call_count % self.max_calls_per_minute
+        }
 
 # Global client instance
 roboflow_client = RoboflowClient()

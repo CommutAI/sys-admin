@@ -12,4 +12,31 @@ services:
       - key: FRONTEND_URL
         sync: false
         defaultValue: "https://your-vercel-app.vercel.app"
+      - key: ROBOFLOW_FRAME_SKIP
+        sync: false
+        defaultValue: "3"
+      - key: ROBOFLOW_MIN_DETECTION_INTERVAL
+        sync: false
+        defaultValue: "1.0"
+      - key: DETECTION_METHOD
+        sync: false
+        defaultValue: "yolo"
+      - key: ROBOFLOW_API_KEY
+        sync: false
+      - key: CLOUDFLARE_ENABLED
+        sync: false
+        defaultValue: "false"
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: CLOUDFLARE_R2_ACCESS_KEY_ID
+        sync: false
+      - key: CLOUDFLARE_R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: CLOUDFLARE_R2_ENDPOINT
+        sync: false
+      - key: CLOUDFLARE_R2_BUCKET_NAME
+        sync: false
+        defaultValue: "commutai-videos"
     autoDeploy: true

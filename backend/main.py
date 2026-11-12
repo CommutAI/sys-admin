@@ -22,6 +22,14 @@ from database import supabase
 from auth import verify_supabase_token, require_admin, require_driver
 from video_processor import video_processor
 
+# Import Roboflow client for token monitoring
+try:
+    from roboflow_client import roboflow_client
+    ROBOFLOW_AVAILABLE = True
+except ImportError:
+    ROBOFLOW_AVAILABLE = False
+    print("Warning: roboflow_client not available")
+
 # Rate limiting
 limiter = Limiter(key_func=get_remote_address)
 
@@ -157,6 +165,19 @@ async def health_check(request: Request):
     return {
         "status": "healthy",
         "service": "commutai-backend"
+    }
+
+@app.get("/api/roboflow-stats")
+@limiter.limit("30/minute")
+async def get_roboflow_stats(request: Request):
+    """Get Roboflow API usage statistics for token monitoring"""
+    if not ROBOFLOW_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Roboflow client not available")
+
+    stats = roboflow_client.get_usage_stats()
+    return {
+        "service": "roboflow-client",
+        "stats": stats
     }
 
 if __name__ == "__main__":

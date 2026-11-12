@@ -70,6 +70,10 @@ PASSENGER_CLASSES = ['person']
 # Frames keep streaming live; only database count writes are throttled.
 DB_SAVE_INTERVAL = int(os.getenv('DB_SAVE_INTERVAL', '5'))
 
+# Token optimization settings for Roboflow
+ROBOFLOW_FRAME_SKIP = int(os.getenv('ROBOFLOW_FRAME_SKIP', '3'))  # Process every Nth frame (default: 3)
+ROBOFLOW_MIN_DETECTION_INTERVAL = float(os.getenv('ROBOFLOW_MIN_DETECTION_INTERVAL', '1.0'))  # Minimum seconds between detections
+
 # Video recording configuration
 VIDEO_RECORDING_ENABLED = os.getenv('VIDEO_RECORDING_ENABLED', 'true').lower() == 'true'
 VIDEO_OUTPUT_DIR = os.getenv('VIDEO_OUTPUT_DIR', './recordings')
@@ -103,6 +107,11 @@ class VideoProcessor:
         self.recording_start_time = None
         self.recording_frame_count = 0
         self.current_video_path = None
+
+        # Token optimization for Roboflow
+        self.last_roboflow_detection_time = 0
+        self.roboflow_frame_counter = 0
+        self.last_passenger_count = 0
 
     def initialize_model(self):
         """Initialize detection model (YOLO or check Roboflow)"""
@@ -158,12 +167,37 @@ class VideoProcessor:
             print(f"[Video Processor] Frame decode error: {e}")
             return None
     
+    def _should_skip_roboflow_frame(self) -> bool:
+        """
+        Determine if we should skip this frame for Roboflow detection
+        Implements frame sampling and rate limiting for token optimization
+        """
+        current_time = time.time()
+
+        # Check frame skip counter (process every Nth frame)
+        self.roboflow_frame_counter += 1
+        if self.roboflow_frame_counter < ROBOFLOW_FRAME_SKIP:
+            return True
+        self.roboflow_frame_counter = 0
+
+        # Check minimum interval between detections
+        time_since_last = current_time - self.last_roboflow_detection_time
+        if time_since_last < ROBOFLOW_MIN_DETECTION_INTERVAL:
+            return True
+
+        return False
+
     async def detect_passengers(self, frame: np.ndarray) -> List[Dict]:
         """
         Detect passengers using configured method (YOLO or Roboflow)
         Optimized for 90%+ accuracy with confidence filtering and NMS
+        Implements token optimization for Roboflow with frame sampling
         """
         if DETECTION_METHOD == 'roboflow' and ROBOFLOW_AVAILABLE:
+            # Apply token optimization: skip frames if needed
+            if self._should_skip_roboflow_frame():
+                # Return last known count for skipped frames
+                return [{'count': self.last_passenger_count, 'skipped': True}]
             return await self._detect_with_roboflow(frame)
         elif DETECTION_METHOD == 'yolo' and YOLO_AVAILABLE:
             return self._detect_with_yolo(frame)
@@ -254,19 +288,23 @@ class VideoProcessor:
             return []
 
     async def _detect_with_roboflow(self, frame: np.ndarray) -> List[Dict]:
-        """Detect passengers using Roboflow workflow"""
+        """Detect passengers using Roboflow workflow with token optimization"""
         try:
-            # Encode frame to JPEG bytes
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            # Encode frame to JPEG bytes with optimized quality for smaller payload
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
             image_bytes = buffer.tobytes()
 
-            # Run Roboflow workflow
+            # Run Roboflow workflow (has built-in rate limiting)
             workflow_result = await roboflow_client.run_workflow(image_bytes)
 
             # Extract detections from workflow result
             detections = roboflow_client.extract_detections(workflow_result)
 
-            print(f"[Video Processor] Roboflow detected {len(detections)} passengers")
+            # Update tracking for token optimization
+            self.last_roboflow_detection_time = time.time()
+            self.last_passenger_count = len(detections)
+
+            print(f"[Video Processor] Roboflow detected {len(detections)} passengers (API calls: {roboflow_client.call_count})")
             return detections
 
         except RoboflowWorkflowError as e:
