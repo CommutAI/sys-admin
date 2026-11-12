@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: sys-admin-frontend
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm run preview
+    envVars:
+      - key: VITE_BACKEND_URL
+        sync: false
+        defaultValue: "https://sys-admin-my13.onrender.com"
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_RASPBERRY_PI_URL
+        sync: false
+        defaultValue: "https://asbestos-controlled-rebel-subsidiaries.trycloudflare.com"
+    autoDeploy: true
