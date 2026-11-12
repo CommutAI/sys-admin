@@ -222,6 +222,16 @@ async def clear_trip():
 @router.get("/api/video-processing/status")
 async def get_status():
     """Get video processing service status"""
+    # Fetch active trip from database if none is set
+    if not video_processor.current_trip_id:
+        try:
+            trip_result = supabase.table('trips').select('id').eq('status', 'in_progress').order('started_at', desc=True).limit(1).execute()
+            if trip_result.data and len(trip_result.data) > 0:
+                video_processor.current_trip_id = trip_result.data[0]['id']
+                print(f"[Video Status] Auto-set active trip: {video_processor.current_trip_id}")
+        except Exception as e:
+            print(f"[Video Status] Error fetching active trip: {e}")
+
     return {
         'model_loaded': video_processor.model is not None,
         'current_trip_id': video_processor.current_trip_id,

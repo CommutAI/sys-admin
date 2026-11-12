@@ -18,6 +18,7 @@ import {
   getPiBaseUrl,
 } from '../services/raspberryPiApi';
 import { supabase } from '../lib/supabase';
+import AuditService from '../services/auditService';
 
 const RECONNECT_BASE     = 3_000;
 const RECONNECT_MAX      = 30_000;
@@ -341,6 +342,9 @@ export function useRaspberryPi(options = {}) {
       safeSet(setError, null);
       setUsingWebSocket(true);
 
+      // Log Pi connection to audit logs
+      AuditService.logPiConnected();
+
       clearInterval(heartbeatTimer.current);
       heartbeatTimer.current = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'heartbeat' }));
@@ -421,6 +425,9 @@ export function useRaspberryPi(options = {}) {
       clearAllTimers();
       if (deadRef.current) return;
 
+      // Log Pi disconnection to audit logs
+      AuditService.logPiDisconnected();
+
       // If this is the first failure, switch to database mode
       if (attemptsRef.current < 3) {
         console.log('[Pi] WebSocket closed, switching to database mode');
@@ -488,11 +495,35 @@ export function useRaspberryPi(options = {}) {
 
     if (autoConnect) openSocket();
 
+    // Periodically fetch active trip from database (independent of Pi connection)
+    const tripFetchInterval = setInterval(async () => {
+      if (deadRef.current) return;
+      try {
+        const { data } = await supabase
+          .from('trips')
+          .select('id')
+          .eq('status', 'in_progress')
+          .order('started_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (data?.id) {
+          safeSet(setActiveTripId, data.id);
+          safeSet(setCurrentTripId, data.id);
+        } else {
+          safeSet(setActiveTripId, null);
+          safeSet(setCurrentTripId, null);
+        }
+      } catch (err) {
+        console.error('Error fetching active trip:', err);
+      }
+    }, 10000); // Check every 10 seconds
+
     // Subscribe to pi_devices changes for auto-reconnect on IP change
     const unsubscribe = subscribePiDeviceChanges((newUrl) => {
       if (deadRef.current) return;
       console.log('[Pi] Network changed, auto-reconnecting to:', newUrl);
-      
+
       // Exit fallback mode and try WebSocket with new IP
       fallbackModeRef.current = false;
       invalidatePiUrl();
@@ -500,7 +531,7 @@ export function useRaspberryPi(options = {}) {
       clearAllTimers();
       closeSocket(wsRef.current);
       wsRef.current = null;
-      
+
       // Small delay to ensure Pi is ready at new IP
       setTimeout(openSocket, 2000);
     });

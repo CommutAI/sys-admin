@@ -353,6 +353,25 @@ const AuditService = {
       details: `Viewed ${pageName} page`,
     });
   },
+
+  /**
+   * Raspberry Pi events
+   */
+  async logPiDisconnected() {
+    return this.logAuditEvent({
+      action: 'DISCONNECT',
+      module: 'Raspberry Pi',
+      details: 'Raspberry Pi WebSocket connection closed/disconnected',
+    });
+  },
+
+  async logPiConnected() {
+    return this.logAuditEvent({
+      action: 'CONNECT',
+      module: 'Raspberry Pi',
+      details: 'Raspberry Pi WebSocket connection established',
+    });
+  },
 };
 
 export default AuditService;

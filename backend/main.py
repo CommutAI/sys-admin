@@ -27,7 +27,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 # Background task for anomaly detection
 async def anomaly_detection_scheduler():
-    """Run anomaly detection every 10 seconds and store results in database"""
+    """Run anomaly detection every 30 seconds and store results in database"""
     while True:
         try:
             print("Running scheduled anomaly detection...")
@@ -65,8 +65,8 @@ async def anomaly_detection_scheduler():
         except Exception as e:
             print(f"Error in anomaly detection scheduler: {e}")
 
-        # Wait 10 seconds before next run
-        await asyncio.sleep(10)
+        # Wait 30 seconds before next run
+        await asyncio.sleep(30)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
 
     # Start anomaly detection scheduler as background task
     asyncio.create_task(anomaly_detection_scheduler())
-    print("Anomaly detection scheduler started (every 10s)")
+    print("Anomaly detection scheduler started (every 30s)")
 
     yield
     # Shutdown

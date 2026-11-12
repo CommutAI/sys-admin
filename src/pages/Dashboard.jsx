@@ -479,6 +479,30 @@ const Dashboard = () => {
     refresh: backendRefresh,
   } = useBackendVideo({ autoConnect: true });
 
+  // Backend video processing status (including trip ID)
+  const [backendTripId, setBackendTripId] = useState(null);
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+
+  // Periodically fetch backend video processing status to get active trip
+  useEffect(() => {
+    const fetchBackendStatus = async () => {
+      try {
+        const response = await fetch(`${backendUrl}/api/video-processing/status`);
+        if (response.ok) {
+          const data = await response.json();
+          setBackendTripId(data.current_trip_id);
+        }
+      } catch (err) {
+        console.error('Error fetching backend video status:', err);
+      }
+    };
+
+    fetchBackendStatus();
+    const interval = setInterval(fetchBackendStatus, 10000); // Check every 10 seconds
+
+    return () => clearInterval(interval);
+  }, [backendUrl]);
+
   useEffect(() => {
     fetchDashboardData();
     fetchLiveMapData();
@@ -881,7 +905,7 @@ const Dashboard = () => {
 
   const handleAcknowledgeAlert = async (alertId) => {
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
       const { data: { user } } = await supabase.auth.getUser();
       
       const response = await fetch(`${API_URL}/api/emergency-alerts/${alertId}/acknowledge`, {
@@ -914,7 +938,7 @@ const Dashboard = () => {
     try {
       const alert = emergencyAlerts.find(a => a.id === alertId);
       const notes = alert?.notes || 'No notes provided';
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
       const { data: { user } } = await supabase.auth.getUser();
 
       const response = await fetch(`${API_URL}/api/emergency-alerts/${alertId}/resolve`, {
@@ -1059,7 +1083,7 @@ const Dashboard = () => {
                 <p className="text-white/60 text-xs">Trip ID</p>
               </div>
               <p className="text-lg font-bold text-white">
-                {piCurrentTripId ? `#${piCurrentTripId.slice(0, 8)}` : 'None'}
+                {(backendTripId || piCurrentTripId) ? `#${(backendTripId || piCurrentTripId).slice(0, 8)}` : 'None'}
               </p>
               <p className="text-white/40 text-xs mt-1">Active trip</p>
             </div>
