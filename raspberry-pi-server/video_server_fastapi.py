@@ -1734,7 +1734,33 @@ class VideoProcessor:
                 # Real-time optimization: Skip detection on some frames
                 if ENABLE_REALTIME_MODE and SKIP_DETECTION_FRAMES > 0:
                     if self.frame_count % (SKIP_DETECTION_FRAMES + 1) == 0:
-                        # Detect passengers only on specified frames (use deep copy to prevent YOLO drawing)
+                        # Only run detection if NOT in backend mode
+                        if COUNT_METHOD != 'backend':
+                            # Detect passengers only on specified frames (use deep copy to prevent YOLO drawing)
+                            import copy
+                            detection_frame = copy.deepcopy(frame)
+                            detections = self.detect_passengers(detection_frame)
+                            
+                            # SAFEGUARD: Double-check that all detections meet confidence threshold
+                            if COUNT_METHOD == 'yolo':
+                                valid_detections = [d for d in detections if d.get('confidence', 0) >= YOLO_CONFIDENCE_THRESHOLD]
+                                if len(valid_detections) != len(detections):
+                                    print(f"[SAFEGUARD] Found {len(detections) - len(valid_detections)} low-confidence detections that slipped through!")
+                                    detections = valid_detections
+                            
+                            self.passenger_count = len(detections)
+                            self.last_detections = detections
+                            self.last_detection_count = self.frame_count
+                        else:
+                            # Backend mode: use last known detections from backend response
+                            detections = self.last_detections
+                    else:
+                        # Use last known detections
+                        detections = self.last_detections
+                else:
+                    # Only run detection if NOT in backend mode
+                    if COUNT_METHOD != 'backend':
+                        # Detect passengers on every frame (use deep copy to prevent YOLO drawing)
                         import copy
                         detection_frame = copy.deepcopy(frame)
                         detections = self.detect_passengers(detection_frame)
@@ -1748,25 +1774,9 @@ class VideoProcessor:
                         
                         self.passenger_count = len(detections)
                         self.last_detections = detections
-                        self.last_detection_count = self.frame_count
                     else:
-                        # Use last known detections
+                        # Backend mode: use last known detections from backend response
                         detections = self.last_detections
-                else:
-                    # Detect passengers on every frame (use deep copy to prevent YOLO drawing)
-                    import copy
-                    detection_frame = copy.deepcopy(frame)
-                    detections = self.detect_passengers(detection_frame)
-                    
-                    # SAFEGUARD: Double-check that all detections meet confidence threshold
-                    if COUNT_METHOD == 'yolo':
-                        valid_detections = [d for d in detections if d.get('confidence', 0) >= YOLO_CONFIDENCE_THRESHOLD]
-                        if len(valid_detections) != len(detections):
-                            print(f"[SAFEGUARD] Found {len(detections) - len(valid_detections)} low-confidence detections that slipped through!")
-                            detections = valid_detections
-                    
-                    self.passenger_count = len(detections)
-                    self.last_detections = detections
                 
                 # Only print passenger count periodically to reduce overhead
                 if self.frame_count % 30 == 0:
