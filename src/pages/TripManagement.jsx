@@ -618,10 +618,10 @@ const TripManagement = ({ userRole }) => {
       console.log('Trip history filtered:', filtered.length, 'of', trips.length, 'trips for period:', period);
       setHistoryData(filtered);
 
-      // Calculate statistics using total_passengers column
+      // Calculate statistics using boarded_passengers_count (tickets)
       const stats = {
         totalTrips: filtered.length,
-        totalPassengers: filtered.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0),
+        totalPassengers: filtered.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0),
         avgPassengers: 0,
         totalDistance: 0
       };
@@ -871,8 +871,8 @@ const TripManagement = ({ userRole }) => {
       ['Completed', trips.filter(t => t.status === 'completed').length],
       ['In Progress', trips.filter(t => t.status === 'in_progress').length],
       ['Cancelled', trips.filter(t => t.status === 'cancelled').length],
-      ['Total Passengers', trips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0)],
-      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0) / trips.length) : 0],
+      ['Total Passengers (Tickets)', trips.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0)],
+      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0) / trips.length) : 0],
     ];
 
     autoTable(doc, {
@@ -947,8 +947,8 @@ const TripManagement = ({ userRole }) => {
       ['Completed', trips.filter(t => t.status === 'completed').length],
       ['In Progress', trips.filter(t => t.status === 'in_progress').length],
       ['Cancelled', trips.filter(t => t.status === 'cancelled').length],
-      ['Total Passengers', trips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0)],
-      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0) / trips.length) : 0],
+      ['Total Passengers (Tickets)', trips.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0)],
+      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0) / trips.length) : 0],
     ];
     const statsSheet = XLSX.utils.aoa_to_sheet(statsData);
     XLSX.utils.book_append_sheet(workbook, statsSheet, 'Statistics');
@@ -961,7 +961,7 @@ const TripManagement = ({ userRole }) => {
           new Date(trip.started_at).toLocaleString(),
           trip.conductor?.full_name || 'N/A',
           trip.driver?.full_name || 'N/A',
-          trip.total_passengers || 0,
+          trip.boarded_passengers_count || 0,
           trip.status.replace('_', ' '),
           trip.ended_at
             ? `${Math.round((new Date(trip.ended_at) - new Date(trip.started_at)) / 60000)} min`
