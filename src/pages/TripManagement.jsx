@@ -454,7 +454,7 @@ const TripManagement = ({ userRole }) => {
 
       let query = supabase
         .from('trips')
-        .select('*, buses(*), conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*), passenger_counts(count)')
+        .select('*, buses(*), conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*), boarded_passengers_count')
         .gte('started_at', startDate.toISOString())
         .order('started_at', { ascending: false });
 
@@ -467,7 +467,7 @@ const TripManagement = ({ userRole }) => {
       if (error) throw error;
       setHistoryData(data || []);
 
-      // Calculate statistics
+      // Calculate statistics based on tickets/QR scans
       const stats = {
         totalTrips: data?.length || 0,
         totalPassengers: 0,
@@ -476,12 +476,9 @@ const TripManagement = ({ userRole }) => {
       };
 
       if (data && data.length > 0) {
-        const allPassengerCounts = data.flatMap(trip => 
-          trip.passenger_counts?.map(pc => pc.count) || []
-        );
-        stats.totalPassengers = allPassengerCounts.reduce((sum, count) => sum + count, 0);
-        stats.avgPassengers = allPassengerCounts.length > 0 
-          ? Math.round(stats.totalPassengers / allPassengerCounts.length)
+        stats.totalPassengers = data.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0);
+        stats.avgPassengers = data.length > 0
+          ? Math.round(stats.totalPassengers / data.length)
           : 0;
       }
 
@@ -724,14 +721,14 @@ const TripManagement = ({ userRole }) => {
       styles: { fontSize: 8 },
     });
 
-    // Trip Statistics
+    // Trip Statistics (based on tickets/QR scans, not YOLO counting)
     const statsData = [
       ['Total Trips', trips.length],
       ['Completed', trips.filter(t => t.status === 'completed').length],
       ['In Progress', trips.filter(t => t.status === 'in_progress').length],
       ['Cancelled', trips.filter(t => t.status === 'cancelled').length],
-      ['Total Passengers', trips.reduce((sum, trip) => sum + (trip.passenger_counts?.[0]?.count || 0), 0)],
-      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.passenger_counts?.[0]?.count || 0), 0) / trips.length) : 0],
+      ['Total Passengers (Tickets)', trips.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0)],
+      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0) / trips.length) : 0],
     ];
 
     autoTable(doc, {
@@ -799,30 +796,30 @@ const TripManagement = ({ userRole }) => {
     const staffSheet = XLSX.utils.aoa_to_sheet(staffData);
     XLSX.utils.book_append_sheet(workbook, staffSheet, 'Staff');
 
-    // Trip Statistics Sheet
+    // Trip Statistics Sheet (based on tickets/QR scans)
     const statsData = [
       ['Metric', 'Value'],
       ['Total Trips', trips.length],
       ['Completed', trips.filter(t => t.status === 'completed').length],
       ['In Progress', trips.filter(t => t.status === 'in_progress').length],
       ['Cancelled', trips.filter(t => t.status === 'cancelled').length],
-      ['Total Passengers', trips.reduce((sum, trip) => sum + (trip.passenger_counts?.[0]?.count || 0), 0)],
-      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.passenger_counts?.[0]?.count || 0), 0) / trips.length) : 0],
+      ['Total Passengers (Tickets)', trips.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0)],
+      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0) / trips.length) : 0],
     ];
     const statsSheet = XLSX.utils.aoa_to_sheet(statsData);
     XLSX.utils.book_append_sheet(workbook, statsSheet, 'Statistics');
 
-    // Trip History Sheet
+    // Trip History Sheet (based on tickets/QR scans)
     if (trips.length > 0) {
       const tripTableData = [
-        ['Date', 'Conductor', 'Driver', 'Passengers', 'Status', 'Duration'],
+        ['Date', 'Conductor', 'Driver', 'Passengers (Tickets)', 'Status', 'Duration'],
         ...trips.map(trip => [
           new Date(trip.started_at).toLocaleString(),
           trip.conductor?.full_name || 'N/A',
           trip.driver?.full_name || 'N/A',
-          trip.passenger_counts?.[0]?.count || 0,
+          trip.boarded_passengers_count || 0,
           trip.status.replace('_', ' '),
-          trip.ended_at 
+          trip.ended_at
             ? `${Math.round((new Date(trip.ended_at) - new Date(trip.started_at)) / 60000)} min`
             : 'In progress',
         ]),
@@ -999,7 +996,7 @@ const TripManagement = ({ userRole }) => {
               <div className="bg-white/5 p-4 rounded-xl">
                 <div className="flex items-center gap-2 mb-2">
                   <Users className="text-green-400" size={20} />
-                  <span className="text-white/60 text-sm">Total Passengers</span>
+                  <span className="text-white/60 text-sm">Total Passengers (Tickets)</span>
                 </div>
                 <p className="text-white text-2xl font-bold">{historyStats.totalPassengers}</p>
               </div>

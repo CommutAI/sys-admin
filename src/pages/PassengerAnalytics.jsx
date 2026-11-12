@@ -112,11 +112,13 @@ const PassengerAnalytics = () => {
       setBoardedPassengers(boarded);
       setFareIrregularities(irregularities);
 
-      // Calculate statistics
-      const totalPassengers = counts.reduce((sum, pc) => sum + (pc.count || 0), 0);
-      const yoloCount = counts.reduce((sum, pc) => sum + (pc.ai_count || 0), 0);
+      // Calculate statistics - use tickets (QR scans) as the primary passenger count
       const qrCount = boarded.length;
+      const yoloCount = counts.reduce((sum, pc) => sum + (pc.ai_count || 0), 0);
       const anomaliesCount = irregularities.length;
+
+      // Total passengers is now based on tickets, not YOLO counts
+      const totalPassengers = qrCount;
 
       // Calculate seat utilization (would need bus capacity data)
       const seatUtilization = totalPassengers > 0 ? Math.round((qrCount / totalPassengers) * 100) : 0;
@@ -328,11 +330,11 @@ const PassengerAnalytics = () => {
               <Users className="w-6 h-6 text-blue-400" />
             </div>
             <div>
-              <p className="text-white/60 text-sm">Total Passengers</p>
+              <p className="text-white/60 text-sm">Total Passengers (Tickets)</p>
               <p className="text-white text-2xl font-bold">{stats.totalPassengers.toLocaleString()}</p>
             </div>
           </div>
-          <p className="text-green-400 text-sm">Based on counts</p>
+          <p className="text-green-400 text-sm">Based on QR scans</p>
         </div>
 
         <div className="glass-card p-6">
@@ -544,7 +546,7 @@ const PassengerAnalytics = () => {
               itemStyle={{ color: '#fff' }}
             />
             <Legend />
-            <Bar dataKey="passengers" fill="#f97316" name="Total Passengers" />
+            <Bar dataKey="passengers" fill="#f97316" name="Total Passengers (Tickets)" />
             <Bar dataKey="yolo" fill="#8b5cf6" name="YOLO Count" />
           </BarChart>
         </ResponsiveContainer>
@@ -726,7 +728,7 @@ const PassengerAnalytics = () => {
               itemStyle={{ color: '#fff' }}
             />
             <Legend />
-            <Line type="monotone" dataKey="passengers" strokeWidth={3} stroke="#f97316" name="Total Passengers" />
+            <Line type="monotone" dataKey="passengers" strokeWidth={3} stroke="#f97316" name="Total Passengers (Tickets)" />
             <Line type="monotone" dataKey="yolo" strokeWidth={2} stroke="#8b5cf6" name="YOLO Count" />
           </LineChart>
         </ResponsiveContainer>

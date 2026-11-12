@@ -137,29 +137,26 @@ const LiveMap = () => {
         })
         .filter(Boolean);
 
-      // Fetch passenger counts for active trips
+      // Fetch boarded passengers (tickets) for active trips
       const tripIds = (activeTrips || []).map(t => t.id);
       let totalPassengers = 0;
-      
-      if (tripIds.length > 0) {
-        const { data: passengerCounts } = await supabase
-          .from('passenger_counts')
-          .select('trip_id, count')
-          .in('trip_id', tripIds)
-          .order('recorded_at', { ascending: false });
 
-        // Group by trip_id and get latest count
-        const latestCounts = {};
-        (passengerCounts || []).forEach(pc => {
-          if (!latestCounts[pc.trip_id]) {
-            latestCounts[pc.trip_id] = pc.count;
-          }
+      if (tripIds.length > 0) {
+        const { data: boardedPassengers } = await supabase
+          .from('boarded_passengers')
+          .select('trip_id')
+          .in('trip_id', tripIds);
+
+        // Count passengers per trip based on tickets
+        const countsByTrip = {};
+        (boardedPassengers || []).forEach(bp => {
+          countsByTrip[bp.trip_id] = (countsByTrip[bp.trip_id] || 0) + 1;
         });
 
         busMarkers.forEach(bus => {
-          if (latestCounts[bus.tripId]) {
-            bus.passengers = latestCounts[bus.tripId];
-            totalPassengers += latestCounts[bus.tripId];
+          if (countsByTrip[bus.tripId]) {
+            bus.passengers = countsByTrip[bus.tripId];
+            totalPassengers += countsByTrip[bus.tripId];
           }
         });
       }
@@ -245,11 +242,11 @@ const LiveMap = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <SummaryCard 
-          title="Total Passengers" 
-          value={stats.totalPassengers} 
-          icon={Users} 
-          color="bg-blue-500" 
+        <SummaryCard
+          title="Total Passengers (Tickets)"
+          value={stats.totalPassengers}
+          icon={Users}
+          color="bg-blue-500"
         />
         <SummaryCard 
           title="Active Buses" 
