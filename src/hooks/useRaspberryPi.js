@@ -19,6 +19,7 @@ import {
 } from '../services/raspberryPiApi';
 import { supabase } from '../lib/supabase';
 import AuditService from '../services/auditService';
+import { isSecureOrigin } from '../services/piAutoDiscovery';
 
 const RECONNECT_BASE     = 3_000;
 const RECONNECT_MAX      = 30_000;
@@ -282,6 +283,15 @@ export function useRaspberryPi(options = {}) {
     // Resolve URL from Supabase pi_devices
     let wsUrl, httpBase;
     try {
+      // On HTTPS origins, skip local Pi connection UNLESS a secure public URL
+      // is configured (e.g. ngrok https:// tunnel via VITE_RASPBERRY_PI_URL).
+      const piEnvUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+      if (isSecureOrigin() && (!piEnvUrl || !piEnvUrl.startsWith('https://'))) {
+        console.log('[Pi] Skipping WebSocket — running on HTTPS with no secure Pi URL configured');
+        switchToDatabaseMode();
+        return;
+      }
+
       const { resolvePiUrl } = await import('../services/raspberryPiApi');
       httpBase = await resolvePiUrl();
       wsUrl = httpBase.replace(/^http/, 'ws').replace(/\/?$/, '/ws');

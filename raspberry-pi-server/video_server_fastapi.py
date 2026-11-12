@@ -24,6 +24,8 @@ from supabase import create_client, Client
 from hardware_integration import HardwareManager
 import socket
 import httpx
+import websockets
+import requests
 
 # Optional AI imports - allow server to run without them
 try:
@@ -251,6 +253,72 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(poll_active_trips())
     print("[Trip Poll] Started automatic trip ID polling (every 10s)")
+
+    # Stream frames to backend for recording
+    async def stream_frames_to_backend():
+        """Send video frames to backend WebSocket for recording"""
+        client_id = f"pi-{BUS_NUMBER}"
+        print(f"[Backend Stream] Starting frame streaming to backend")
+
+        while True:
+            try:
+                # Only connect if there's an active trip
+                if not video_processor.current_trip_id:
+                    await asyncio.sleep(1)
+                    continue
+
+                # Build backend WebSocket URL
+                backend_url = get_backend_url()
+                backend_ws_url = backend_url.replace('http://', 'ws://').replace('https://', 'wss://')
+                backend_ws_url = f"{backend_ws_url}/ws/video-stream/{client_id}"
+
+                print(f"[Backend Stream] Connecting to: {backend_ws_url}")
+
+                try:
+                    async with websockets.connect(backend_ws_url) as ws:
+                        print(f"[Backend Stream] Connected to backend")
+
+                        # Send trip info
+                        await ws.send(json.dumps({
+                            'type': 'set_trip',
+                            'trip_id': video_processor.current_trip_id
+                        }))
+
+                        # Stream frames
+                        last_frame_time = time.time()
+                        while video_processor.current_trip_id:
+                            try:
+                                if not video_processor.frame_queue.empty():
+                                    frame_base64 = video_processor.frame_queue.get_nowait()
+
+                                    await ws.send(json.dumps({
+                                        'type': 'frame',
+                                        'frame': frame_base64,
+                                        'trip_id': video_processor.current_trip_id,
+                                        'timestamp': time.time()
+                                    }))
+
+                                    # Limit to 10 FPS for backend recording
+                                    await asyncio.sleep(0.1)
+                                else:
+                                    await asyncio.sleep(0.01)
+                            except Exception as e:
+                                print(f"[Backend Stream] Error sending frame: {e}")
+                                break
+
+                except websockets.exceptions.WebSocketException as e:
+                    print(f"[Backend Stream] WebSocket error: {e}")
+                    await asyncio.sleep(5)  # Wait before reconnecting
+                except Exception as e:
+                    print(f"[Backend Stream] Connection error: {e}")
+                    await asyncio.sleep(5)
+
+            except Exception as e:
+                print(f"[Backend Stream] Unexpected error: {e}")
+                await asyncio.sleep(5)
+
+    asyncio.create_task(stream_frames_to_backend())
+    print("[Backend Stream] Started frame streaming to backend")
 
     yield
 
@@ -480,8 +548,8 @@ class VideoProcessor:
             if self.camera is not None:
                 self.camera.release()
 
-            # Open by device path string — works on this Pi/OpenCV combination.
-            self.camera = cv2.VideoCapture(CAMERA_DEVICE)
+            # Open with explicit V4L2 backend — required for USB cameras on this Pi/OpenCV build.
+            self.camera = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)
 
             if not self.camera.isOpened():
                 print(f"Error: Could not open camera at {CAMERA_DEVICE}")
@@ -534,7 +602,7 @@ class VideoProcessor:
         for i in range(4):
             path = f'/dev/video{i}'
             try:
-                test_cam = cv2.VideoCapture(path)
+                test_cam = cv2.VideoCapture(path, cv2.CAP_V4L2)
                 if test_cam.isOpened():
                     ret, frame = test_cam.read()
                     if ret and frame is not None:
@@ -1351,9 +1419,15 @@ class VideoProcessor:
         self.current_trip_id = trip_id
         self.current_bus_id = bus_id
         print(f"Current trip ID set to: {trip_id}, bus_id: {bus_id}")
-    
+        # Auto-start recording when a trip begins
+        if ENABLE_VIDEO_RECORDING and not self.recording:
+            self.start_recording()
+
     def clear_current_trip(self):
         """Clear the current trip ID"""
+        # Auto-stop recording when trip ends
+        if self.recording:
+            self.stop_recording()
         self.current_trip_id = None
         print("Current trip ID cleared")
     
@@ -1378,22 +1452,29 @@ class VideoProcessor:
             # Generate filename with timestamp
             timestamp = time.strftime('%Y%m%d_%H%M%S')
             trip_suffix = f"_trip_{self.current_trip_id}" if self.current_trip_id else ""
-            filename = f"video_{timestamp}{trip_suffix}.{VIDEO_FORMAT}"
+            # Use MP4 format with mp4v codec - browser compatible
+            filename = f"video_{timestamp}{trip_suffix}.mp4"
             self.current_video_path = os.path.join(VIDEO_STORAGE_PATH, filename)
-            
-            # Initialize video writer
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v') if VIDEO_FORMAT == 'mp4' else cv2.VideoWriter_fourcc(*'XVID')
+
+            # Read actual camera dimensions — they may differ from requested resolution
+            actual_w = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_h = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            actual_fps = self.camera.get(cv2.CAP_PROP_FPS) or FPS
+            print(f"[Recording] Using frame size: {actual_w}x{actual_h} @ {actual_fps}fps")
+
+            # Initialize video writer with actual camera dimensions - use mp4v for browser compatibility
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             self.video_writer = cv2.VideoWriter(
                 self.current_video_path,
                 fourcc,
-                FPS,
-                (CAMERA_WIDTH, CAMERA_HEIGHT)
+                actual_fps,
+                (actual_w, actual_h)
             )
-            
+
             if not self.video_writer.isOpened():
                 print("Failed to initialize video writer")
                 return False
-            
+
             self.recording = True
             self.recording_start_time = time.time()
             self.recording_frame_count = 0
@@ -1409,74 +1490,154 @@ class VideoProcessor:
         if not self.recording:
             print("No recording in progress")
             return None
-        
+
         try:
             self.recording = False
-            
+
             if self.video_writer:
                 self.video_writer.release()
                 self.video_writer = None
-            
+
+            # Capture these before clearing state
+            video_path = self.current_video_path
+            trip_id = self.current_trip_id
+            start_time = self.recording_start_time
+            frame_count = self.recording_frame_count
+
             # Calculate duration
-            duration = int(time.time() - self.recording_start_time) if self.recording_start_time else 0
-            
+            duration = int(time.time() - start_time) if start_time else 0
+
             # Get file size
             file_size = 0
-            if self.current_video_path and os.path.exists(self.current_video_path):
-                file_size = os.path.getsize(self.current_video_path)
-            
-            print(f"Recording stopped: {self.current_video_path}")
-            print(f"Duration: {duration}s, Frames: {self.recording_frame_count}, Size: {file_size} bytes")
-            
-            # Save metadata to database
-            recording_id = self.save_video_metadata(duration, file_size)
-            
-            result = {
-                'file_path': self.current_video_path,
-                'duration': duration,
-                'frame_count': self.recording_frame_count,
-                'file_size': file_size,
-                'recording_id': recording_id
-            }
-            
+            if video_path and os.path.exists(video_path):
+                file_size = os.path.getsize(video_path)
+
+            print(f"Recording stopped: {video_path}")
+            print(f"Duration: {duration}s, Frames: {frame_count}, Size: {file_size} bytes")
+
+            # Clear state before DB call so crashes don't leave stale state
             self.current_video_path = None
             self.recording_start_time = None
             self.recording_frame_count = 0
-            
-            return result
-            
+
+            # Save metadata to database
+            recording_id = self._save_video_metadata_internal(video_path, trip_id, start_time, frame_count, duration, file_size)
+
+            return {
+                'file_path': video_path,
+                'duration': duration,
+                'frame_count': frame_count,
+                'file_size': file_size,
+                'recording_id': recording_id
+            }
+
         except Exception as e:
             print(f"Error stopping recording: {e}")
             return None
-    
-    def save_video_metadata(self, duration, file_size):
-        """Save video recording metadata to Supabase database"""
+
+    def _upload_to_cloudflare_stream(self, video_path, trip_id):
+        """Upload video to Cloudflare Stream and return playback URL"""
+        account_id = os.getenv('CLOUDFLARE_ACCOUNT_ID')
+        api_token = os.getenv('CLOUDFLARE_API_TOKEN')
+        cloudflare_enabled = os.getenv('CLOUDFLARE_ENABLED', 'false').lower() == 'true'
+
+        if not cloudflare_enabled or not account_id or not api_token:
+            print("[Cloudflare] Cloudflare Stream not configured - skipping upload")
+            return None
+
+        if not video_path or not os.path.exists(video_path):
+            print(f"[Cloudflare] Video file not found: {video_path}")
+            return None
+
+        try:
+            print(f"[Cloudflare] Uploading video to Cloudflare Stream: {video_path}")
+
+            # Cloudflare Stream Direct Upload API
+            url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/stream"
+            headers = {
+                'Authorization': f'Bearer {api_token}',
+            }
+
+            # Upload the file
+            with open(video_path, 'rb') as video_file:
+                files = {
+                    'file': (os.path.basename(video_path), video_file, 'video/mp4')
+                }
+                params = {
+                    'metadata': json.dumps({
+                        'trip_id': trip_id,
+                        'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())
+                    })
+                }
+
+                response = requests.post(url, headers=headers, files=files, params=params, timeout=300)
+
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('success'):
+                    video_uid = result['result']['uid']
+                    playback_url = f"https://watch.cloudflarestream.com/{video_uid}"
+                    print(f"[Cloudflare] Upload successful! Playback URL: {playback_url}")
+                    return playback_url
+                else:
+                    print(f"[Cloudflare] Upload failed: {result.get('errors')}")
+                    return None
+            else:
+                print(f"[Cloudflare] Upload failed with status {response.status_code}: {response.text}")
+                return None
+
+        except Exception as e:
+            print(f"[Cloudflare] Upload error: {e}")
+            return None
+
+    def _save_video_metadata_internal(self, video_path, trip_id, start_time, frame_count, duration, file_size):
+        """Save video recording metadata to Supabase database (internal, uses explicit params)"""
         if not supabase:
             print("Database not available - skipping metadata save")
             return None
-        
+
         try:
+            # Try to upload to Cloudflare Stream first
+            cloudflare_url = self._upload_to_cloudflare_stream(video_path, trip_id)
+            
+            actual_w = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)) if self.camera else CAMERA_WIDTH
+            actual_h = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)) if self.camera else CAMERA_HEIGHT
+            
             data = {
-                'trip_id': self.current_trip_id,
-                'file_name': os.path.basename(self.current_video_path) if self.current_video_path else 'unknown',
-                'file_path': self.current_video_path,
+                'trip_id': trip_id,
+                'file_name': os.path.basename(video_path) if video_path else 'unknown',
+                'file_path': cloudflare_url if cloudflare_url else video_path,
                 'file_size': file_size,
                 'duration': duration,
-                'format': VIDEO_FORMAT,
-                'storage_type': 'local',
+                'format': 'mp4',
+                'storage_type': 'cloudflare' if cloudflare_url else 'local',
                 'status': 'completed',
                 'metadata': {
-                    'resolution': f"{CAMERA_WIDTH}x{CAMERA_HEIGHT}",
+                    'resolution': f"{actual_w}x{actual_h}",
                     'fps': FPS,
-                    'frame_count': self.recording_frame_count,
-                    'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(self.recording_start_time)) if self.recording_start_time else None
+                    'frame_count': frame_count,
+                    'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(start_time)) if start_time else None,
+                    'cloudflare_url': cloudflare_url
                 }
             }
-            
+
             result = supabase.table('video_recordings').insert(data).execute()
             if result and result.data:
                 recording_id = result.data[0].get('id')
-                print(f"[DB] Video metadata saved with ID: {recording_id}")
+                print(f"[DB] Video metadata saved: id={recording_id}, trip={trip_id}, size={file_size}b, storage={data['storage_type']}")
+                
+                # Also update trips table with Cloudflare URL
+                if cloudflare_url:
+                    trips_update = {
+                        'video_recording_url': cloudflare_url,
+                        'video_recording_duration': duration,
+                        'video_recording_status': 'available',
+                        'video_recording_file_size': file_size,
+                        'video_recording_uploaded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())
+                    }
+                    supabase.table('trips').update(trips_update).eq('id', trip_id).execute()
+                    print(f"[DB] Updated trips table with Cloudflare URL")
+                
                 return str(recording_id) if recording_id else None
             else:
                 print("[DB] Video metadata save returned no data")
@@ -1484,6 +1645,14 @@ class VideoProcessor:
         except Exception as e:
             print(f"Error saving video metadata to database: {e}")
             return None
+
+    def save_video_metadata(self, duration, file_size):
+        """Deprecated — kept for backwards compatibility. Use _save_video_metadata_internal."""
+        return self._save_video_metadata_internal(
+            self.current_video_path, self.current_trip_id,
+            self.recording_start_time, self.recording_frame_count,
+            duration, file_size
+        )
     
     def write_frame_to_video(self, frame):
         """Write frame to video file if recording is active"""
@@ -1689,7 +1858,7 @@ class VideoProcessor:
                 path = f'/dev/video{idx}'
                 if path == CAMERA_DEVICE:
                     continue
-                self.camera = cv2.VideoCapture(path)
+                self.camera = cv2.VideoCapture(path, cv2.CAP_V4L2)
                 if self.camera.isOpened():
                     ret, _ = self.camera.read()
                     if ret:
@@ -1857,13 +2026,17 @@ async def get_recording(recording_id: str):
 
 @app.get("/download-video/{filename}")
 async def download_video(filename: str):
-    """Download a video file"""
+    """Stream a video file - supports range requests for browser playback"""
     file_path = os.path.join(VIDEO_STORAGE_PATH, filename)
-    
+
     if not os.path.exists(file_path):
         return JSONResponse({'status': 'error', 'message': 'File not found'}, status_code=404)
-    
+
     try:
+        file_size = os.path.getsize(file_path)
+        if file_size < 1000:  # Less than 1KB means file is corrupted/empty
+            return JSONResponse({'status': 'error', 'message': 'Video file is corrupted or empty'}, status_code=500)
+
         return FileResponse(
             file_path,
             media_type='video/mp4',

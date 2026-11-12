@@ -3,6 +3,7 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, L
 import { TrendingUp, Users, Armchair, Calendar, Brain, AlertTriangle, Eye, Scan, XCircle, CheckCircle, Search, Filter, Video, Camera, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useRaspberryPi } from '../hooks/useRaspberryPi';
+import { useBackendVideo } from '../hooks/useBackendVideo';
 import AuditService from '../services/auditService';
 
 const PassengerAnalytics = () => {
@@ -37,9 +38,21 @@ const PassengerAnalytics = () => {
     assignedBus,
     activeTripId,
     cameraActive,
-  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: false });
+  } = useRaspberryPi({ autoConnect: false, enableHealthCheck: false });
 
-  // Stream starts automatically inside the hook on connect — no useEffect needed
+  // Backend video connection for YOLOv8m processing
+  const {
+    isStreaming: backendStreaming,
+    passengerCount: backendCount,
+    videoRef: backendVideoRef,
+    refresh: backendRefresh,
+  } = useBackendVideo({ autoConnect: true });
+
+  // Use backend video if available, otherwise fall back to Pi
+  const videoConnected = backendStreaming || isStreaming;
+  const videoSourceRef = backendStreaming ? backendVideoRef : videoRef;
+  const videoRefresh = backendStreaming ? backendRefresh : refresh;
+  const currentPassengerCount = backendCount || passengerCount;
 
   const fetchAnalyticsData = async () => {
     try {
@@ -64,7 +77,7 @@ const PassengerAnalytics = () => {
         const busFilter = assignedBus?.busId;
         let countsQuery = supabase
           .from('passenger_counts')
-          .select('*, trips(*, buses(*))')
+          .select('*, trips(*, bus_id:buses!trips_bus_id_fkey(*))')
           .gte('recorded_at', startDate.toISOString())
           .order('recorded_at', { ascending: true });
 
@@ -72,7 +85,7 @@ const PassengerAnalytics = () => {
           // Join through trips to filter by bus_id
           countsQuery = supabase
             .from('passenger_counts')
-            .select('*, trips!inner(*, buses(*))')
+            .select('*, trips!inner(*, bus_id:buses!trips_bus_id_fkey(*))')
             .eq('trips.bus_id', busFilter)
             .gte('recorded_at', startDate.toISOString())
             .order('recorded_at', { ascending: true });
@@ -99,7 +112,7 @@ const PassengerAnalytics = () => {
       try {
         const { data: irregularitiesData } = await supabase
           .from('fare_irregularities')
-          .select('*, trips(*, buses(*))')
+          .select('*, trips!fare_irregularities_trip_id_fkey(*, bus_id:buses!trips_bus_id_fkey(*))')
           .gte('detected_at', startDate.toISOString())
           .order('detected_at', { ascending: false })
           .limit(10);
@@ -209,7 +222,7 @@ const PassengerAnalytics = () => {
   const getRouteUtilization = () => {
     const routeMap = {};
     passengerCounts.forEach(pc => {
-      const route = pc.trips?.buses?.route || 'Unknown';
+      const route = pc.trips?.bus_id?.route || 'Unknown';
       if (!routeMap[route]) {
         routeMap[route] = { route, count: 0 };
       }
@@ -230,7 +243,7 @@ const PassengerAnalytics = () => {
 
       const { error } = await supabase
         .from('fare_irregularities')
-        .update({ 
+        .update({
           resolved: true,
           resolved_at: new Date().toISOString(),
           resolved_by: (await supabase.auth.getUser()).data.user?.id
@@ -242,7 +255,14 @@ const PassengerAnalytics = () => {
       // Log irregularity resolution to audit logs
       await AuditService.logIrregularityResolved(irregularityId, irregularityType);
 
-      fetchAnalyticsData();
+      // Update local state instead of refetching all data
+      setFareIrregularities(prev =>
+        prev.map(irr =>
+          irr.id === irregularityId
+            ? { ...irr, resolved: true, resolved_at: new Date().toISOString() }
+            : irr
+        )
+      );
     } catch (error) {
       console.error('Error resolving irregularity:', error);
       alert('Error resolving irregularity: ' + error.message);
@@ -251,7 +271,7 @@ const PassengerAnalytics = () => {
 
   const filteredIrregularities = fareIrregularities.filter(irr => {
     const matchesSearch = irr.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         irr.trips?.buses?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase());
+                         irr.trips?.bus_id?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = filterStatus === 'all' || (filterStatus === 'resolved' ? irr.resolved : !irr.resolved);
     const matchesType = filterType === 'all' || irr.type === filterType;
     return matchesSearch && matchesStatus && matchesType;
@@ -391,7 +411,7 @@ const PassengerAnalytics = () => {
           </h2>
           <div className="flex items-center gap-3">
             <button
-              onClick={refresh}
+              onClick={videoRefresh}
               className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg transition-colors"
               title="Refresh Connection"
             >
@@ -402,23 +422,25 @@ const PassengerAnalytics = () => {
 
         {/* Connection Status */}
         <div className={`mb-4 p-4 rounded-xl flex items-center gap-3 ${
-          online ? 'border-green-500/30 bg-green-500/10' : 'border-yellow-500/30 bg-yellow-500/10'
+          backendStreaming ? 'border-green-500/30 bg-green-500/10' : online ? 'border-green-500/30 bg-green-500/10' : 'border-yellow-500/30 bg-yellow-500/10'
         }`}>
-          {online ? (
+          {backendStreaming || online ? (
             <Wifi className="w-5 h-5 text-green-400" />
           ) : (
             <WifiOff className="w-5 h-5 text-yellow-400" />
           )}
           <div className="flex-1">
             <p className="text-white font-medium">
-              {cameraActive === false ? 'Camera not connected' : online ? 'Connected to Raspberry Pi' : 'Connecting to Raspberry Pi…'}
+              {backendStreaming ? 'Backend Stream Active' : cameraActive === false ? 'Camera Disabled (GPS Only Mode)' : online ? 'Raspberry Pi Connected' : 'Connecting…'}
             </p>
             <p className="text-white/60 text-sm">
-              {cameraActive === false
-                ? 'Please check camera connection on Raspberry Pi'
+              {backendStreaming
+                ? 'YOLOv8n AI Processing - Stream Status: Active'
+                : cameraActive === false
+                ? 'Pi running in GPS-only mode. Camera disabled for stability.'
                 : online
-                ? `Status: ${connectionStatus.charAt(0).toUpperCase() + connectionStatus.slice(1)}`
-                : 'Connecting to Raspberry Pi…'}
+                ? `Stream Status: ${isStreaming ? 'Active' : 'Inactive'}`
+                : 'Connecting…'}
             </p>
           </div>
         </div>
@@ -428,35 +450,36 @@ const PassengerAnalytics = () => {
           <div className="lg:col-span-2">
             <div className="bg-black/30 rounded-xl overflow-hidden relative aspect-video">
               <img
-                ref={videoRef}
+                ref={videoSourceRef}
                 alt="Live video feed"
-                className={`w-full h-full object-contain ${isStreaming ? 'block' : 'hidden'}`}
+                className={`w-full h-full object-cover ${videoConnected ? 'block' : 'hidden'}`}
               />
-              {!isStreaming && (
+              {!videoConnected && (
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="text-center px-6">
                     {cameraActive === false ? (
                       <>
                         <Camera className="w-16 h-16 text-red-400 mx-auto mb-4" />
                         <p className="text-red-400 font-medium mb-1">Camera not connected</p>
-                        <p className="text-white/40 text-sm">Please check camera connection on Raspberry Pi</p>
+                        <p className="text-white/40 text-sm">Please check camera connection</p>
                       </>
                     ) : (
                       <>
                         <Video className="w-16 h-16 text-white/30 mx-auto mb-4" />
                         <p className="text-white/50">
-                          {online ? 'Starting stream…' : 'Connecting to Raspberry Pi…'}
+                          {backendStreaming ? 'Connecting to Backend...' : online ? 'Starting stream…' : 'Connecting…'}
                         </p>
                       </>
                     )}
                   </div>
                 </div>
               )}
-              {isStreaming && (
+              {videoConnected && (
                 <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-2">
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
                     <span className="text-white text-sm font-medium">LIVE</span>
+                    {backendStreaming && <span className="text-green-400 text-xs ml-2">· AI Processing</span>}
                   </div>
                 </div>
               )}
@@ -471,7 +494,7 @@ const PassengerAnalytics = () => {
                 <h3 className="text-white font-semibold">Real-time Count</h3>
               </div>
               <div className="text-center py-6">
-                <div className="text-5xl font-bold text-white mb-2">{passengerCount}</div>
+                <div className="text-5xl font-bold text-white mb-2">{currentPassengerCount}</div>
                 <p className="text-white/60">Current Passengers</p>
               </div>
               {lastUpdate && (
@@ -614,7 +637,7 @@ const PassengerAnalytics = () => {
                       </span>
                     </td>
                     <td className="py-4 text-white/70">{irr.description}</td>
-                    <td className="py-4 text-white/70">{irr.trips?.buses?.plate_number || 'N/A'}</td>
+                    <td className="py-4 text-white/70">{irr.trips?.bus_id?.plate_number || 'N/A'}</td>
                     <td className="py-4 text-white/60 text-sm">
                       {new Date(irr.detected_at).toLocaleString()}
                     </td>

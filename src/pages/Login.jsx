@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Lock, Mail, Bus, Eye, EyeOff } from 'lucide-react';
 import AuditService from '../services/auditService';
+import bcrypt from 'bcryptjs';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -54,8 +55,14 @@ const Login = () => {
         return;
       }
 
-      // Verify password
-      if (staffUser.password !== password) {
+      // Verify password — support both bcrypt hashes and plain text passwords
+      const storedPassword = staffUser.password;
+      const isBcrypt = storedPassword && storedPassword.startsWith('$2');
+      const passwordMatch = isBcrypt
+        ? await bcrypt.compare(password, storedPassword)
+        : storedPassword === password;
+
+      if (!passwordMatch) {
         console.error('Password mismatch');
         setError('Invalid email or password');
         setLoading(false);
@@ -64,19 +71,19 @@ const Login = () => {
 
       console.log('User found in staff_users, is_active:', staffUser.is_active);
 
-      // Sign in with Supabase auth to create a session
+      // Sign in with Supabase auth to create a session (best-effort — not all
+      // staff users have a Supabase Auth account; fallback to localStorage is fine)
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: email,
         password: password,
       });
 
       if (authError) {
-        console.error('Supabase auth sign-in failed:', authError);
+        // Expected for users who only exist in staff_users (no Supabase Auth account)
         // Store session info in localStorage as fallback
         localStorage.setItem('staff_user_id', staffUser.id);
         localStorage.setItem('staff_user_email', staffUser.email);
         localStorage.setItem('staff_user_role', staffUser.role);
-        console.log('Stored session in localStorage as fallback');
       } else {
         console.log('Supabase auth sign-in successful');
       }
@@ -113,15 +120,15 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-4">
-      <div className="glass-card p-8 rounded-2xl w-full max-w-md">
-        <div className="flex flex-col items-center mb-8">
-          <img 
-            src="/logo.png" 
-            alt="CommutAI Logo" 
-            className="w-24 h-24 mb-4"
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-orange-950 to-slate-900 flex items-center justify-center p-4">
+      <div className="glass-card p-6 sm:p-8 rounded-2xl w-full max-w-md">
+        <div className="flex flex-col items-center mb-6 sm:mb-8">
+          <img
+            src="/logo.png"
+            alt="CommutAI Logo"
+            className="w-20 h-20 sm:w-24 sm:h-24 mb-4"
           />
-          <h1 className="text-white text-2xl font-bold">CommutAI</h1>
+          <h1 className="text-white text-xl sm:text-2xl font-bold">CommutAI</h1>
           <p className="text-white/60 text-sm">System Admin Portal</p>
         </div>
 
@@ -141,7 +148,7 @@ const Login = () => {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-3 text-white placeholder-white/40 focus:outline-none focus:border-orange-500"
+                className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-3 text-white placeholder-white/40 focus:outline-none focus:border-orange-500 text-sm"
                 placeholder="admin@commutai.com"
               />
             </div>
@@ -156,7 +163,7 @@ const Login = () => {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-12 py-3 text-white placeholder-white/40 focus:outline-none focus:border-orange-500"
+                className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-12 py-3 text-white placeholder-white/40 focus:outline-none focus:border-orange-500 text-sm"
                 placeholder="••••••••"
               />
               <button
@@ -172,7 +179,7 @@ const Login = () => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
+            className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2 text-sm"
           >
             {loading ? (
               <>
@@ -209,21 +216,21 @@ const Login = () => {
 
   if (resetMode) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-4">
-        <div className="glass-card p-8 rounded-2xl w-full max-w-md">
-          <div className="flex flex-col items-center mb-8">
-            <img 
-              src="/logo.png" 
-              alt="CommutAI Logo" 
-              className="w-24 h-24 mb-4"
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-orange-950 to-slate-900 flex items-center justify-center p-4">
+        <div className="glass-card p-6 sm:p-8 rounded-2xl w-full max-w-md">
+          <div className="flex flex-col items-center mb-6 sm:mb-8">
+            <img
+              src="/logo.png"
+              alt="CommutAI Logo"
+              className="w-20 h-20 sm:w-24 sm:h-24 mb-4"
             />
-            <h1 className="text-white text-2xl font-bold">Reset Password</h1>
+            <h1 className="text-white text-xl sm:text-2xl font-bold">Reset Password</h1>
             <p className="text-white/60 text-sm">Enter your email to receive a reset link</p>
           </div>
 
           {resetSuccess ? (
             <div className="text-center">
-              <div className="bg-green-500/20 border border-green-500/50 text-green-400 px-4 py-3 rounded-xl mb-4">
+              <div className="bg-green-500/20 border border-green-500/50 text-green-400 px-4 py-3 rounded-xl mb-4 text-sm">
                 Password reset email sent! Check your inbox.
               </div>
               <button
@@ -250,7 +257,7 @@ const Login = () => {
                     value={resetEmail}
                     onChange={(e) => setResetEmail(e.target.value)}
                     required
-                    className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-3 text-white placeholder-white/40 focus:outline-none focus:border-orange-500"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-3 text-white placeholder-white/40 focus:outline-none focus:border-orange-500 text-sm"
                     placeholder="Enter your email"
                   />
                 </div>
@@ -259,7 +266,7 @@ const Login = () => {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
+                className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2 text-sm"
               >
                 {loading ? (
                   <>

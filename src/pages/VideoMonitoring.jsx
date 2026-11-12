@@ -170,7 +170,7 @@ const VideoMonitoring = ({ autoConnect = true }) => {
             <Video className={`w-7 h-7 ${isStreaming ? 'text-green-400' : 'text-white/40'}`} />
           </div>
           <div>
-            <p className="text-white/60 text-sm">Stream</p>
+            <p className="text-white/60 text-sm">Stream Status</p>
             <p className={`text-xl font-bold leading-none mt-1 ${
               isStreaming ? 'text-green-400' : 'text-white/50'
             }`}>

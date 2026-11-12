@@ -18,7 +18,9 @@ import {
   AlertTriangle
 } from 'lucide-react';
 
-const Sidebar = ({ isOpen, setIsOpen }) => {
+const BREAKPOINT = 1024; // lg breakpoint
+
+const Sidebar = ({ isOpen, setIsOpen, isMobile }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const [userRole, setUserRole] = useState(null);
@@ -78,68 +80,94 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
   const isItemActive = (path) => location.pathname === path;
 
   return (
-    <aside className={`glass-sidebar fixed left-0 top-0 h-full z-50 transition-all duration-300 flex flex-col ${isOpen ? 'w-64' : 'w-20'}`}>
-      <div className="p-4 flex items-center justify-between border-b border-white/10">
-        {isOpen && (
-          <div className="flex items-center gap-2">
-            <img
-              src="/logo.png"
-              alt="CommutAI Logo"
-              className="w-10 h-10"
-            />
-            <span className="text-white font-bold text-xl">CommutAI</span>
-          </div>
-        )}
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          className="text-white hover:text-orange-400 transition-colors"
-        >
-          {isOpen ? <X size={24} /> : <Menu size={24} />}
-        </button>
-      </div>
+    <>
+      {/* Mobile backdrop */}
+      {isMobile && isOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden"
+          onClick={() => setIsOpen(false)}
+        />
+      )}
 
-      <nav className="p-4 space-y-2 overflow-y-auto flex-1">
-        {menuItems
-          .filter(item => !item.adminOnly || userRole === 'admin')
-          .map((item) => {
-          const Icon = item.icon;
-          const isActive = isItemActive(item.path);
-          return (
-            <Link
-              key={item.path}
-              to={item.path}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
-                isActive
-                  ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
-                  : 'text-white/70 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <Icon size={20} />
-              {isOpen && <span className="font-medium">{item.label}</span>}
-            </Link>
-          );
-        })}
-      </nav>
+      <aside
+        className={`glass-sidebar fixed left-0 top-0 h-full z-50 transition-all duration-300 flex flex-col ${
+          isMobile
+            ? isOpen ? 'w-64 translate-x-0' : 'w-64 -translate-x-full'
+            : isOpen ? 'w-64' : 'w-20'
+        }`}
+      >
+        <div className="p-4 flex items-center justify-between border-b border-white/10">
+          {isOpen && (
+            <div className="flex items-center gap-2">
+              <img
+                src="/logo.png"
+                alt="CommutAI Logo"
+                className="w-10 h-10"
+              />
+              <span className="text-white font-bold text-xl">CommutAI</span>
+            </div>
+          )}
+          <button
+            onClick={() => setIsOpen(!isOpen)}
+            className="text-white hover:text-orange-400 transition-colors"
+          >
+            {isOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+        </div>
 
-      <div className="p-4 border-t border-white/10">
-        <button
-          onClick={handleLogout}
-          className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 w-full text-red-400 hover:bg-red-500/20 hover:text-red-300`}
-        >
-          <LogOut size={20} />
-          {isOpen && <span className="font-medium">Logout</span>}
-        </button>
-      </div>
-    </aside>
+        <nav className="p-4 space-y-2 overflow-y-auto flex-1">
+          {menuItems
+            .filter(item => !item.adminOnly || userRole === 'admin')
+            .map((item) => {
+            const Icon = item.icon;
+            const isActive = isItemActive(item.path);
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={() => isMobile && setIsOpen(false)}
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+                  isActive
+                    ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                    : 'text-white/70 hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                <Icon size={20} />
+                {isOpen && <span className="font-medium">{item.label}</span>}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="p-4 border-t border-white/10">
+          <button
+            onClick={handleLogout}
+            className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 w-full text-red-400 hover:bg-red-500/20 hover:text-red-300`}
+          >
+            <LogOut size={20} />
+            {isOpen && <span className="font-medium">Logout</span>}
+          </button>
+        </div>
+      </aside>
+    </>
   );
 };
 
-const Header = () => {
+const Header = ({ isMobile, isOpen, setIsOpen }) => {
   return (
-    <header className="glass-card h-16 flex items-center justify-between px-6 mb-6">
-      <div></div>
+    <header className="glass-card h-16 flex items-center justify-between px-4 lg:px-6 mb-6">
       <div className="flex items-center gap-4">
-        <div className="text-right">
+        {isMobile && (
+          <button
+            onClick={() => setIsOpen(!isOpen)}
+            className="text-white hover:text-orange-400 transition-colors lg:hidden"
+          >
+            <Menu size={24} />
+          </button>
+        )}
+      </div>
+      <div className="flex items-center gap-4">
+        <div className="text-right hidden sm:block">
           <p className="text-white font-medium">Admin User</p>
           <p className="text-white/60 text-sm">System Administrator</p>
         </div>
@@ -153,12 +181,32 @@ const Header = () => {
 
 const Layout = () => {
   const [isOpen, setIsOpen] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < BREAKPOINT);
+      if (window.innerWidth < BREAKPOINT) {
+        setIsOpen(false);
+      } else {
+        setIsOpen(true);
+      }
+    };
+
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   return (
     <div className="min-h-screen">
-      <Sidebar isOpen={isOpen} setIsOpen={setIsOpen} />
-      <main className={`transition-all duration-300 ${isOpen ? 'ml-64' : 'ml-20'} p-6`}>
-        <Header />
+      <Sidebar isOpen={isOpen} setIsOpen={setIsOpen} isMobile={isMobile} />
+      <main
+        className={`transition-all duration-300 ${
+          isMobile ? 'ml-0' : isOpen ? 'ml-64' : 'ml-20'
+        } p-4 lg:p-6`}
+      >
+        <Header isMobile={isMobile} isOpen={isOpen} setIsOpen={setIsOpen} />
         <Outlet />
       </main>
     </div>

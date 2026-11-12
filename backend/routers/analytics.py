@@ -150,7 +150,7 @@ async def get_route_performance(
         end_iso = (end_date + timedelta(days=1)).isoformat()
         
         # Get trips in date range - optimize field selection
-        trips_result = supabase.table('trips').select('id, created_at, scheduled_departure, bus_id, buses(id, plate_number, route, routes(id, route_name))').gte('created_at', start_iso).lt('created_at', end_iso).execute()
+        trips_result = supabase.table('trips').select('id, created_at, started_at, bus_id, buses!trips_bus_id_fkey(id, plate_number, route), routes(id, name)').gte('created_at', start_iso).lt('created_at', end_iso).execute()
         trips = trips_result[1] if trips_result[1] else []
         
         if not trips:
@@ -169,12 +169,12 @@ async def get_route_performance(
         route_data = {}
         
         for trip in trips:
-            route = trip.get('buses', {}).get('routes')
+            route = trip.get('routes')
             if not route:
                 continue
             
             route_id = route['id']
-            route_name = route.get('route_name', 'Unknown')
+            route_name = route.get('name', 'Unknown')
             
             if route_id not in route_data:
                 route_data[route_id] = {
@@ -237,7 +237,7 @@ async def get_realtime_dashboard_data():
             return cached_data
         
         # Get current active trips - optimize field selection
-        active_result = supabase.table('trips').select('id, bus_id, status, buses(id, plate_number)').eq('status', 'active').execute()
+        active_result = supabase.table('trips').select('id, bus_id, status, buses!trips_bus_id_fkey(id, plate_number)').eq('status', 'active').execute()
         active_trips = active_result[1] if active_result[1] else []
         
         # Get latest passenger counts - optimize field selection and limit

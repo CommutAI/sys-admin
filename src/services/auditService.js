@@ -16,43 +16,58 @@ const AuditService = {
    */
   async logAuditEvent({ action, module, details, ipAddress }) {
     try {
-      // Get current user info
+      // Skip VIEW actions — page views are too noisy for audit logs
+      if (action === 'VIEW') return;
+
+      // Get current user info — try Supabase auth first, fall back to localStorage
       const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        console.warn('No authenticated user for audit log');
-        return;
+
+      let username, userRole, fullName;
+
+      if (user) {
+        username = user.email || 'unknown';
+
+        const { data: staffData } = await supabase
+          .from('staff_users')
+          .select('role, full_name')
+          .eq('id', user.id)
+          .single();
+
+        userRole = staffData?.role || 'unknown';
+        fullName = staffData?.full_name || username;
+      } else {
+        // localStorage fallback (admin users without a Supabase Auth account)
+        username = localStorage.getItem('staff_user_email') || 'unknown';
+        userRole = localStorage.getItem('staff_user_role') || 'unknown';
+        fullName = username;
       }
 
-      // Get user email from auth metadata
-      const username = user.email || 'unknown';
-
-      // Get user's role from staff_users
-      const { data: staffData } = await supabase
-        .from('staff_users')
-        .select('role, full_name')
-        .eq('id', user.id)
-        .single();
-
-      const userRole = staffData?.role || 'unknown';
-      const fullName = staffData?.full_name || username;
-
-      // Construct detailed log message
       const detailedMessage = `${fullName} (${userRole}): ${details}`;
 
-      // Insert audit log
-      const { error } = await supabase
-        .from('audit_logs')
-        .insert({
-          username: username,
-          action: action,
-          module: module,
-          details: detailedMessage,
-          ip_address: ipAddress || null,
-        });
+      // Try SECURITY DEFINER RPC first (bypasses RLS regardless of session state)
+      const { error: rpcError } = await supabase.rpc('insert_audit_log', {
+        p_username:   username,
+        p_action:     action,
+        p_module:     module,
+        p_details:    detailedMessage,
+        p_ip_address: ipAddress || null,
+      });
 
-      if (error) {
-        console.error('Error logging audit event:', error);
+      if (rpcError) {
+        // RPC not available yet — fall back to direct insert
+        console.warn('insert_audit_log RPC not available, falling back to direct insert');
+        const { error: insertError } = await supabase
+          .from('audit_logs')
+          .insert({
+            username:   username,
+            action:     action,
+            module:     module,
+            details:    detailedMessage,
+            ip_address: ipAddress || null,
+          });
+        if (insertError) {
+          console.error('Error logging audit event:', insertError);
+        }
       }
     } catch (error) {
       console.error('Audit logging error:', error);

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft, Download, CheckCircle, Activity } from 'lucide-react';
+import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft, Download, CheckCircle, Activity, AlertTriangle, Download as DownloadIcon } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -18,6 +18,33 @@ const TripManagement = ({ userRole }) => {
   const [selectedTrip, setSelectedTrip] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
+  const [tripTransactions, setTripTransactions] = useState([]);
+  const [tripIrregularities, setTripIrregularities] = useState([]);
+  const [tripAnomalies, setTripAnomalies] = useState([]);
+  const [viewModalLoading, setViewModalLoading] = useState(false);
+  const [tripVideoUrl, setTripVideoUrl] = useState(null);
+  const [tripVideoStatus, setTripVideoStatus] = useState(null);
+  const [tripVideoRecordings, setTripVideoRecordings] = useState([]);
+
+  const handleDownloadVideo = async (recording) => {
+    try {
+      const piIp = localStorage.getItem('raspberryPiIp');
+      const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+
+      // Try backend first
+      let downloadUrl = `${backendUrl}/api/video-processing/download-video/${recording.file_name}`;
+
+      // If it's from Pi, use Pi's download endpoint
+      if (recording.metadata?.source === 'pi_server' || recording.storage_type === 'local') {
+        downloadUrl = `${backendUrl}/download-video/${recording.file_name}`;
+      }
+
+      window.open(downloadUrl, '_blank');
+    } catch (error) {
+      console.error('Error downloading video:', error);
+      alert('Error downloading video: ' + error.message);
+    }
+  };
 
   // Trip history state
   const [showHistory, setShowHistory] = useState(false);
@@ -116,7 +143,7 @@ const TripManagement = ({ userRole }) => {
       setLoading(true);
       const { data, error } = await supabase
         .from('trips')
-        .select('*, buses(*), conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*)')
+        .select('*, bus_id:buses!trips_bus_id_fkey(*), conductor:staff_users!trips_conductor_id_fkey(*), driver:staff_users!trips_driver_id_fkey(*), video_recording_url, video_recording_duration, video_recording_status, video_recording_file_size, video_recording_uploaded_at')
         .order('started_at', { ascending: false });
 
       if (error) throw error;
@@ -214,7 +241,7 @@ const TripManagement = ({ userRole }) => {
 
     try {
       const trip = trips.find(t => t.id === tripId);
-      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+      const busInfo = trip?.bus_id?.plate_number || 'Unknown bus';
 
       const { error } = await supabase
         .from('trips')
@@ -229,6 +256,15 @@ const TripManagement = ({ userRole }) => {
       // Tell the Pi the trip is over so it stops linking counts to this trip
       await clearPiTrip();
 
+      // Stop video recording on backend
+      try {
+        const piIp = localStorage.getItem('raspberryPiIp');
+        const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+        await fetch(`${backendUrl}/api/video-processing/clear-trip`, { method: 'POST' });
+      } catch (videoError) {
+        console.error('Error stopping video recording:', videoError);
+      }
+
       fetchTrips();
     } catch (error) {
       console.error('Error ending trip:', error);
@@ -241,7 +277,7 @@ const TripManagement = ({ userRole }) => {
 
     try {
       const trip = trips.find(t => t.id === tripId);
-      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+      const busInfo = trip?.bus_id?.plate_number || 'Unknown bus';
 
       const { error } = await supabase
         .from('trips')
@@ -256,6 +292,15 @@ const TripManagement = ({ userRole }) => {
       // Tell the Pi the trip is cancelled
       await clearPiTrip();
 
+      // Stop video recording on backend
+      try {
+        const piIp = localStorage.getItem('raspberryPiIp');
+        const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+        await fetch(`${backendUrl}/api/video-processing/clear-trip`, { method: 'POST' });
+      } catch (videoError) {
+        console.error('Error stopping video recording:', videoError);
+      }
+
       fetchTrips();
     } catch (error) {
       console.error('Error cancelling trip:', error);
@@ -267,7 +312,7 @@ const TripManagement = ({ userRole }) => {
     try {
       const trip = trips.find(t => t.id === tripId);
       const oldStatus = trip?.status || 'unknown';
-      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+      const busInfo = trip?.bus_id?.plate_number || 'Unknown bus';
 
       const updateData = { status: newStatus };
       if (newStatus === 'completed' || newStatus === 'cancelled') {
@@ -287,6 +332,15 @@ const TripManagement = ({ userRole }) => {
       // Tell the Pi the trip is over if cancelled or completed
       if (newStatus === 'completed' || newStatus === 'cancelled') {
         await clearPiTrip();
+
+        // Stop video recording on backend
+        try {
+          const piIp = localStorage.getItem('raspberryPiIp');
+          const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+          await fetch(`${backendUrl}/api/video-processing/clear-trip`, { method: 'POST' });
+        } catch (videoError) {
+          console.error('Error stopping video recording:', videoError);
+        }
       }
 
       fetchTrips();
@@ -361,7 +415,7 @@ const TripManagement = ({ userRole }) => {
 
     try {
       const trip = trips.find(t => t.id === tripId);
-      const busInfo = trip?.buses?.plate_number || 'Unknown bus';
+      const busInfo = trip?.bus_id?.plate_number || 'Unknown bus';
 
       const { error } = await supabase
         .from('trips')
@@ -390,9 +444,92 @@ const TripManagement = ({ userRole }) => {
     setShowEditModal(true);
   };
 
-  const openViewModal = (trip) => {
+  const openViewModal = async (trip) => {
     setSelectedTrip(trip);
     setShowViewModal(true);
+    setViewModalLoading(true);
+    setTripVideoUrl(null);
+    setTripVideoStatus(null);
+    setTripVideoRecordings([]);
+
+    try {
+      // Fetch transactions for this trip
+      const { data: transactionsData } = await supabase
+        .from('transactions')
+        .select('*, staff:staff_users!transactions_staff_id_fkey(*)')
+        .eq('trip_id', trip.id)
+        .order('created_at', { ascending: false });
+
+      // Fetch irregularities for this trip
+      const { data: irregularitiesData } = await supabase
+        .from('fare_irregularities')
+        .select('*')
+        .eq('trip_id', trip.id)
+        .order('detected_at', { ascending: false });
+
+      // Filter anomalies (auto-detected irregularities)
+      const anomalies = irregularitiesData?.filter(irr => irr.anomaly_type) || [];
+
+      setTripTransactions(transactionsData || []);
+      setTripIrregularities(irregularitiesData?.filter(irr => !irr.anomaly_type) || []);
+      setTripAnomalies(anomalies);
+
+      // Fetch video recordings from video_recordings table
+      const { data: recordingsData } = await supabase
+        .from('video_recordings')
+        .select('*')
+        .eq('trip_id', trip.id)
+        .order('recorded_at', { ascending: false });
+
+      setTripVideoRecordings(recordingsData || []);
+
+      // Build video URL — priority:
+      // 1. trip.video_recording_url if set and available
+      // 2. First completed recording from video_recordings table
+      const piBaseUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+      const completedRecording = (recordingsData || []).find(r => r.status === 'completed' && r.file_name);
+
+      if (trip.video_recording_url && trip.video_recording_status === 'available') {
+        // If the URL is a local path, convert to appropriate URL based on source
+        if (trip.video_recording_url.startsWith('./') || trip.video_recording_url.startsWith('/')) {
+          const fileName = trip.video_recording_url.split('/').pop();
+          // Check if recording is from backend (in video_recordings table)
+          const backendRecording = (recordingsData || []).find(r => r.metadata?.source === 'backend_processor');
+          if (backendRecording) {
+            // Use backend download endpoint
+            setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${fileName}`);
+          } else {
+            // Use Pi download endpoint
+            setTripVideoUrl(`${piBaseUrl}/download-video/${fileName}`);
+          }
+        } else {
+          setTripVideoUrl(trip.video_recording_url);
+        }
+        setTripVideoStatus('available');
+      } else if (completedRecording) {
+        // Use appropriate URL based on recording source
+        if (completedRecording.metadata?.source === 'backend_processor') {
+          setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${completedRecording.file_name}`);
+        } else {
+          setTripVideoUrl(`${piBaseUrl}/download-video/${completedRecording.file_name}`);
+        }
+        setTripVideoStatus('available');
+      } else if ((recordingsData || []).length > 0) {
+        // Recordings exist but none completed yet
+        setTripVideoStatus('processing');
+      } else if (trip.video_recording_status === 'not_recorded') {
+        setTripVideoStatus('not_available');
+      } else if (trip.video_recording_status === 'error') {
+        setTripVideoStatus('error');
+      } else {
+        setTripVideoStatus('not_available');
+      }
+    } catch (error) {
+      console.error('Error fetching trip details:', error);
+    } finally {
+      setViewModalLoading(false);
+    }
   };
 
   const fetchTripPassengers = async (tripId) => {
@@ -416,71 +553,81 @@ const TripManagement = ({ userRole }) => {
   const fetchTripHistory = async (period) => {
     try {
       setHistoryLoading(true);
-      let startDate, endDate;
-      const now = new Date();
 
-      switch (period) {
-        case 'daily':
-          startDate = new Date(now.setHours(0, 0, 0, 0));
-          endDate = new Date();
-          break;
-        case 'weekly':
-          startDate = new Date(now.setDate(now.getDate() - 7));
-          endDate = new Date();
-          break;
-        case 'monthly':
-          startDate = new Date(now.setMonth(now.getMonth() - 1));
-          endDate = new Date();
-          break;
-        case 'yearly':
-          startDate = new Date(now.setFullYear(now.getFullYear() - 1));
-          endDate = new Date();
-          break;
-        case 'custom':
-          if (customDateRange.startDate && customDateRange.endDate) {
-            startDate = new Date(customDateRange.startDate);
-            startDate.setHours(0, 0, 0, 0);
-            endDate = new Date(customDateRange.endDate);
-            endDate.setHours(23, 59, 59, 999);
-          } else {
-            startDate = new Date(now.setHours(0, 0, 0, 0));
-            endDate = new Date();
+      // Use the already-fetched trips state and filter client-side
+      // This avoids timezone mismatches and unnecessary extra queries
+      let filtered = [...trips];
+
+      if (period !== 'all') {
+        let startDate, endDate;
+        const now = () => new Date();
+
+        switch (period) {
+          case 'daily': {
+            const d = now();
+            d.setHours(0, 0, 0, 0);
+            startDate = d;
+            endDate = now();
+            break;
           }
-          break;
-        default:
-          startDate = new Date(now.setHours(0, 0, 0, 0));
-          endDate = new Date();
+          case 'weekly': {
+            const d = now();
+            d.setDate(d.getDate() - 7);
+            startDate = d;
+            endDate = now();
+            break;
+          }
+          case 'monthly': {
+            const d = now();
+            d.setMonth(d.getMonth() - 1);
+            startDate = d;
+            endDate = now();
+            break;
+          }
+          case 'yearly': {
+            const d = now();
+            d.setFullYear(d.getFullYear() - 1);
+            startDate = d;
+            endDate = now();
+            break;
+          }
+          case 'custom':
+            if (customDateRange.startDate && customDateRange.endDate) {
+              startDate = new Date(customDateRange.startDate);
+              startDate.setHours(0, 0, 0, 0);
+              endDate = new Date(customDateRange.endDate);
+              endDate.setHours(23, 59, 59, 999);
+            }
+            break;
+          default:
+            break;
+        }
+
+        if (startDate) {
+          filtered = filtered.filter(trip => {
+            if (!trip.started_at) return false;
+            const t = new Date(trip.started_at);
+            return t >= startDate && (!endDate || t <= endDate);
+          });
+        }
       }
 
-      let query = supabase
-        .from('trips')
-        .select('*, buses(*), conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*), boarded_passengers_count')
-        .gte('started_at', startDate.toISOString())
-        .order('started_at', { ascending: false });
+      // Sort descending by start time
+      filtered.sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
 
-      if (endDate) {
-        query = query.lte('started_at', endDate.toISOString());
-      }
+      console.log('Trip history filtered:', filtered.length, 'of', trips.length, 'trips for period:', period);
+      setHistoryData(filtered);
 
-      const { data, error } = await query;
-
-      if (error) throw error;
-      setHistoryData(data || []);
-
-      // Calculate statistics based on tickets/QR scans
+      // Calculate statistics using total_passengers column
       const stats = {
-        totalTrips: data?.length || 0,
-        totalPassengers: 0,
+        totalTrips: filtered.length,
+        totalPassengers: filtered.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0),
         avgPassengers: 0,
         totalDistance: 0
       };
-
-      if (data && data.length > 0) {
-        stats.totalPassengers = data.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0);
-        stats.avgPassengers = data.length > 0
-          ? Math.round(stats.totalPassengers / data.length)
-          : 0;
-      }
+      stats.avgPassengers = stats.totalTrips > 0
+        ? Math.round(stats.totalPassengers / stats.totalTrips)
+        : 0;
 
       setHistoryStats(stats);
     } catch (error) {
@@ -498,14 +645,11 @@ const TripManagement = ({ userRole }) => {
 
   const toggleHistoryView = () => {
     setShowHistory(!showHistory);
-    if (!showHistory) {
-      fetchTripHistory(historyPeriod);
-    }
   };
 
   const filteredTrips = trips.filter(trip => {
-    const matchesSearch = trip.buses?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         trip.buses?.route?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    const matchesSearch = trip.bus_id?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         trip.bus_id?.route?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          trip.conductor?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          trip.driver?.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = filterStatus === 'all' || trip.status === filterStatus;
@@ -661,7 +805,7 @@ const TripManagement = ({ userRole }) => {
     try {
       const { data, error } = await supabase
         .from('trips')
-        .select('*, conductor:staff_users!conductor_id(*), driver:staff_users!driver_id(*), passenger_counts(count)')
+        .select('*, conductor:staff_users!trips_conductor_id_fkey(*), driver:staff_users!trips_driver_id_fkey(*)')
         .eq('bus_id', bus.id)
         .order('started_at', { ascending: false });
 
@@ -727,8 +871,8 @@ const TripManagement = ({ userRole }) => {
       ['Completed', trips.filter(t => t.status === 'completed').length],
       ['In Progress', trips.filter(t => t.status === 'in_progress').length],
       ['Cancelled', trips.filter(t => t.status === 'cancelled').length],
-      ['Total Passengers (Tickets)', trips.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0)],
-      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0) / trips.length) : 0],
+      ['Total Passengers', trips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0)],
+      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0) / trips.length) : 0],
     ];
 
     autoTable(doc, {
@@ -746,7 +890,7 @@ const TripManagement = ({ userRole }) => {
         new Date(trip.started_at).toLocaleString(),
         trip.conductor?.full_name || 'N/A',
         trip.driver?.full_name || 'N/A',
-        trip.passenger_counts?.[0]?.count || 0,
+        trip.total_passengers || 0,
         trip.status.replace('_', ' '),
         trip.ended_at 
           ? `${Math.round((new Date(trip.ended_at) - new Date(trip.started_at)) / 60000)} min`
@@ -803,8 +947,8 @@ const TripManagement = ({ userRole }) => {
       ['Completed', trips.filter(t => t.status === 'completed').length],
       ['In Progress', trips.filter(t => t.status === 'in_progress').length],
       ['Cancelled', trips.filter(t => t.status === 'cancelled').length],
-      ['Total Passengers (Tickets)', trips.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0)],
-      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.boarded_passengers_count || 0), 0) / trips.length) : 0],
+      ['Total Passengers', trips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0)],
+      ['Avg Passengers/Trip', trips.length > 0 ? Math.round(trips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0) / trips.length) : 0],
     ];
     const statsSheet = XLSX.utils.aoa_to_sheet(statsData);
     XLSX.utils.book_append_sheet(workbook, statsSheet, 'Statistics');
@@ -817,7 +961,7 @@ const TripManagement = ({ userRole }) => {
           new Date(trip.started_at).toLocaleString(),
           trip.conductor?.full_name || 'N/A',
           trip.driver?.full_name || 'N/A',
-          trip.boarded_passengers_count || 0,
+          trip.total_passengers || 0,
           trip.status.replace('_', ' '),
           trip.ended_at
             ? `${Math.round((new Date(trip.ended_at) - new Date(trip.started_at)) / 60000)} min`
@@ -859,6 +1003,13 @@ const TripManagement = ({ userRole }) => {
     setBusCurrentPage(1);
   }, [busSearchTerm, busStatusFilter]);
 
+  // Fetch trip history when history view is first opened, or when trips data is refreshed
+  useEffect(() => {
+    if (showHistory) {
+      fetchTripHistory(historyPeriod);
+    }
+  }, [showHistory, trips]);
+
   // Pagination logic for history
   const historyTotalPages = Math.ceil(historyData.length / historyItemsPerPage);
   const historyPaginatedData = historyData.slice(
@@ -889,38 +1040,38 @@ const TripManagement = ({ userRole }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
         <div>
-          <h1 className="text-white text-3xl font-bold mb-2">Trip & Bus Management</h1>
-          <p className="text-white/60">Monitor trips and manage bus fleet</p>
+          <h1 className="text-white text-2xl sm:text-3xl font-bold mb-2">Trip & Bus Management</h1>
+          <p className="text-white/60 text-sm sm:text-base">Monitor trips and manage bus fleet</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-2 sm:gap-3">
           <button
             onClick={toggleHistoryView}
-            className={`px-4 py-2 rounded-xl flex items-center gap-2 transition-colors ${
+            className={`px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 transition-colors text-sm ${
               showHistory
                 ? 'bg-orange-500 hover:bg-orange-600 text-white'
                 : 'bg-white/10 hover:bg-white/20 text-white'
             }`}
           >
             {showHistory ? <ArrowLeft size={20} /> : <BarChart3 size={20} />}
-            {showHistory ? 'Back to Trips' : 'Trip History'}
+            <span className="hidden sm:inline">{showHistory ? 'Back to Trips' : 'Trip History'}</span>
           </button>
           {userRole === 'driver' && (
             <button
               onClick={() => setShowCreateTripModal(true)}
-              className="px-4 py-2 rounded-xl flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white transition-colors"
+              className="px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white transition-colors text-sm"
             >
               <Plus size={20} />
-              Create Trip
+              <span className="hidden sm:inline">Create Trip</span>
             </button>
           )}
           <button
             onClick={() => setShowAddBusModal(true)}
-            className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+            className="bg-orange-500 hover:bg-orange-600 text-white px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 transition-colors text-sm"
           >
             <Plus size={20} />
-            Add Bus
+            <span className="hidden sm:inline">Add Bus</span>
           </button>
         </div>
       </div>
@@ -929,18 +1080,18 @@ const TripManagement = ({ userRole }) => {
       {showHistory && (
         <div className="space-y-6">
           {/* Period Selector */}
-          <div className="glass-card p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-white text-xl font-bold flex items-center gap-2">
+          <div className="glass-card p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
+              <h2 className="text-white text-lg sm:text-xl font-bold flex items-center gap-2">
                 <Calendar className="text-orange-400" />
                 Trip History
               </h2>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((period) => (
                   <button
                     key={period}
                     onClick={() => handleHistoryPeriodChange(period)}
-                    className={`px-4 py-2 rounded-lg capitalize transition-colors ${
+                    className={`px-3 sm:px-4 py-2 rounded-lg capitalize transition-colors text-sm ${
                       historyPeriod === period
                         ? 'bg-orange-500 text-white'
                         : 'bg-white/10 text-white hover:bg-white/20'
@@ -954,14 +1105,14 @@ const TripManagement = ({ userRole }) => {
 
             {/* Custom Date Range Picker */}
             {historyPeriod === 'custom' && (
-              <div className="mt-6 mb-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="mt-6 mb-8 grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6">
                 <div>
                   <label className="text-white/60 text-sm mb-2 block">Start Date</label>
                   <input
                     type="date"
                     value={customDateRange.startDate}
                     onChange={(e) => setCustomDateRange({...customDateRange, startDate: e.target.value})}
-                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-3 sm:px-4 py-3 text-white focus:outline-none focus:border-orange-500 text-sm"
                   />
                 </div>
                 <div>
@@ -970,13 +1121,13 @@ const TripManagement = ({ userRole }) => {
                     type="date"
                     value={customDateRange.endDate}
                     onChange={(e) => setCustomDateRange({...customDateRange, endDate: e.target.value})}
-                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-orange-500"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-3 sm:px-4 py-3 text-white focus:outline-none focus:border-orange-500 text-sm"
                   />
                 </div>
                 <div className="flex items-end">
                   <button
                     onClick={() => fetchTripHistory('custom')}
-                    className="w-full px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors"
+                    className="w-full px-4 sm:px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors text-sm"
                   >
                     Apply Filter
                   </button>
@@ -985,7 +1136,7 @@ const TripManagement = ({ userRole }) => {
             )}
 
             {/* Statistics Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               <div className="bg-white/5 p-4 rounded-xl">
                 <div className="flex items-center gap-2 mb-2">
                   <Bus className="text-orange-400" size={20} />
@@ -1035,37 +1186,39 @@ const TripManagement = ({ userRole }) => {
                         <th className="text-left text-white/60 text-sm py-3 px-4">Route</th>
                         <th className="text-left text-white/60 text-sm py-3 px-4">Conductor</th>
                         <th className="text-left text-white/60 text-sm py-3 px-4">Driver</th>
+                        <th className="text-left text-white/60 text-sm py-3 px-4">Passengers</th>
                         <th className="text-left text-white/60 text-sm py-3 px-4">Start Time</th>
+                        <th className="text-left text-white/60 text-sm py-3 px-4">Duration</th>
                         <th className="text-left text-white/60 text-sm py-3 px-4">Status</th>
-                        <th className="text-left text-white/60 text-sm py-3 px-4">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {historyPaginatedData.map((trip) => (
-                        <tr key={trip.id} className="border-b border-white/5 hover:bg-white/5">
-                          <td className="text-white py-3 px-4">{trip.buses?.plate_number || 'N/A'}</td>
-                          <td className="text-white/70 py-3 px-4">{trip.buses?.route || 'N/A'}</td>
-                          <td className="text-white/70 py-3 px-4">{trip.conductor?.full_name || 'N/A'}</td>
-                          <td className="text-white/70 py-3 px-4">{trip.driver?.full_name || 'N/A'}</td>
-                          <td className="text-white/60 py-3 px-4">{new Date(trip.started_at).toLocaleString()}</td>
-                          <td className="py-3 px-4">
-                            <select
-                              value={trip.status}
-                              onChange={(e) => handleUpdateTripStatus(trip.id, e.target.value)}
-                              className="bg-gray-800 border border-white/20 rounded-lg px-2 py-1 text-white text-xs focus:outline-none focus:border-orange-500"
-                            >
-                              <option value="in_progress" className="bg-gray-800 text-white">In Progress</option>
-                              <option value="completed" className="bg-gray-800 text-white">Completed</option>
-                              <option value="cancelled" className="bg-gray-800 text-white">Cancelled</option>
-                            </select>
+                        <tr
+                          key={trip.id}
+                          className="border-b border-white/5 hover:bg-white/10 cursor-pointer transition-colors"
+                          onClick={() => openViewModal(trip)}
+                          title="Click to view trip details"
+                        >
+                          <td className="text-white py-3 px-4 text-sm font-medium">{trip.bus_id?.plate_number || 'N/A'}</td>
+                          <td className="text-white/70 py-3 px-4 text-sm">{trip.bus_id?.route || 'N/A'}</td>
+                          <td className="text-white/70 py-3 px-4 text-sm">{trip.conductor?.full_name || 'N/A'}</td>
+                          <td className="text-white/70 py-3 px-4 text-sm">{trip.driver?.full_name || 'N/A'}</td>
+                          <td className="text-white/70 py-3 px-4 text-sm">{trip.total_passengers || 0}</td>
+                          <td className="text-white/60 py-3 px-4 text-sm">{new Date(trip.started_at).toLocaleString()}</td>
+                          <td className="text-white/60 py-3 px-4 text-sm">
+                            {trip.ended_at
+                              ? `${Math.round((new Date(trip.ended_at) - new Date(trip.started_at)) / 60000)} min`
+                              : '—'}
                           </td>
-                          <td className="py-3 px-4">
-                            <button
-                              onClick={() => openViewModal(trip)}
-                              className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-white text-xs transition-colors"
-                            >
-                              View
-                            </button>
+                          <td className="py-3 px-4 text-sm">
+                            <span className={`px-2 py-1 rounded-full text-xs border ${
+                              trip.status === 'completed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                              trip.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                              'bg-red-500/20 text-red-400 border-red-500/30'
+                            }`}>
+                              {trip.status?.replace('_', ' ')}
+                            </span>
                           </td>
                         </tr>
                       ))}
@@ -1075,8 +1228,8 @@ const TripManagement = ({ userRole }) => {
 
                 {/* History Pagination */}
                 {historyTotalPages > 1 && (
-                  <div className="flex items-center justify-between mt-4">
-                    <div className="text-white/60 text-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 gap-3">
+                    <div className="text-white/60 text-xs sm:text-sm">
                       Showing {((historyCurrentPage - 1) * historyItemsPerPage) + 1} to {Math.min(historyCurrentPage * historyItemsPerPage, historyData.length)} of {historyData.length} trips
                     </div>
                     <div className="flex gap-2">
@@ -1087,20 +1240,27 @@ const TripManagement = ({ userRole }) => {
                       >
                         Previous
                       </button>
-                      <div className="flex gap-1">
-                        {Array.from({ length: historyTotalPages }, (_, i) => i + 1).map((page) => (
-                          <button
-                            key={page}
-                            onClick={() => setHistoryCurrentPage(page)}
-                            className={`px-3 py-1 rounded-lg text-sm transition-colors ${
-                              historyCurrentPage === page
-                                ? 'bg-orange-500 text-white'
-                                : 'bg-white/10 hover:bg-white/20 text-white'
-                            }`}
-                          >
-                            {page}
-                          </button>
-                        ))}
+                      <div className="flex gap-1 overflow-x-auto">
+                        {Array.from({ length: Math.min(historyTotalPages, 5) }, (_, i) => {
+                          let p;
+                          if (historyTotalPages <= 5) p = i + 1;
+                          else if (historyCurrentPage <= 3) p = i + 1;
+                          else if (historyCurrentPage >= historyTotalPages - 2) p = historyTotalPages - 4 + i;
+                          else p = historyCurrentPage - 2 + i;
+                          return (
+                            <button
+                              key={p}
+                              onClick={() => setHistoryCurrentPage(p)}
+                              className={`min-w-[32px] px-2 py-1 rounded-lg text-xs sm:text-sm transition-colors ${
+                                historyCurrentPage === p
+                                  ? 'bg-orange-500 text-white'
+                                  : 'bg-white/10 hover:bg-white/20 text-white'
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          );
+                        })}
                       </div>
                       <button
                         onClick={() => setHistoryCurrentPage(prev => Math.min(historyTotalPages, prev + 1))}
@@ -1222,8 +1382,8 @@ const TripManagement = ({ userRole }) => {
 
           {/* Pagination */}
           {busTotalPages > 1 && (
-            <div className="flex items-center justify-between mt-4">
-              <div className="text-white/60 text-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 gap-3">
+              <div className="text-white/60 text-xs sm:text-sm">
                 Showing {((busCurrentPage - 1) * busItemsPerPage) + 1} to {Math.min(busCurrentPage * busItemsPerPage, filteredBuses.length)} of {filteredBuses.length} buses
               </div>
               <div className="flex gap-2">
@@ -1234,20 +1394,27 @@ const TripManagement = ({ userRole }) => {
                 >
                   Previous
                 </button>
-                <div className="flex gap-1">
-                  {Array.from({ length: busTotalPages }, (_, i) => i + 1).map((page) => (
-                    <button
-                      key={page}
-                      onClick={() => setBusCurrentPage(page)}
-                      className={`px-3 py-1 rounded-lg text-sm transition-colors ${
-                        busCurrentPage === page
-                          ? 'bg-orange-500 text-white'
-                          : 'bg-white/10 hover:bg-white/20 text-white'
-                      }`}
-                    >
-                      {page}
-                    </button>
-                  ))}
+                <div className="flex gap-1 overflow-x-auto">
+                  {Array.from({ length: Math.min(busTotalPages, 5) }, (_, i) => {
+                    let p;
+                    if (busTotalPages <= 5) p = i + 1;
+                    else if (busCurrentPage <= 3) p = i + 1;
+                    else if (busCurrentPage >= busTotalPages - 2) p = busTotalPages - 4 + i;
+                    else p = busCurrentPage - 2 + i;
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => setBusCurrentPage(p)}
+                        className={`min-w-[32px] px-2 py-1 rounded-lg text-xs sm:text-sm transition-colors ${
+                          busCurrentPage === p
+                            ? 'bg-orange-500 text-white'
+                            : 'bg-white/10 hover:bg-white/20 text-white'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
                 </div>
                 <button
                   onClick={() => setBusCurrentPage(prev => Math.min(busTotalPages, prev + 1))}
@@ -1271,7 +1438,7 @@ const TripManagement = ({ userRole }) => {
             <p className="text-white/60 text-sm mb-4">Update the current GPS location for this trip</p>
             <form onSubmit={handleEditTrip} className="space-y-4">
               <div className="bg-white/5 p-3 rounded-xl mb-4">
-                <p className="text-white/60 text-xs">Bus: {selectedTrip.buses?.plate_number}</p>
+                <p className="text-white/60 text-xs">Bus: {selectedTrip.bus_id?.plate_number}</p>
                 <p className="text-white/60 text-xs">Conductor: {selectedTrip.conductor?.full_name}</p>
                 {selectedTrip.driver && (
                   <p className="text-white/60 text-xs">Driver: {selectedTrip.driver.full_name}</p>
@@ -1324,79 +1491,347 @@ const TripManagement = ({ userRole }) => {
 
       {/* View Trip Modal */}
       {showViewModal && selectedTrip && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999]">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-lg relative z-[1000000]">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-white text-xl font-bold">Trip Details</h2>
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999] p-4">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-7xl relative z-[1000000] max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-white text-2xl font-bold">Trip Details & Analytics</h2>
               <button
                 onClick={() => {
                   setShowViewModal(false);
                   setSelectedTrip(null);
+                  setTripTransactions([]);
+                  setTripIrregularities([]);
+                  setTripAnomalies([]);
+                  setTripVideoUrl(null);
+                  setTripVideoStatus(null);
                 }}
                 className="text-white/60 hover:text-white"
               >
                 <X size={24} />
               </button>
             </div>
-            <div className="space-y-4">
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <Bus className="text-orange-400" />
-                <div>
-                  <p className="text-white/60 text-sm">Bus</p>
-                  <p className="text-white font-medium">{selectedTrip.buses?.plate_number}</p>
-                </div>
+
+            {viewModalLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <div className="text-white/60">Loading trip data...</div>
               </div>
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <User className="text-orange-400" />
-                <div>
-                  <p className="text-white/60 text-sm">Conductor</p>
-                  <p className="text-white font-medium">{selectedTrip.conductor?.full_name || 'N/A'}</p>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Left Side - Camera Feed */}
+                <div className="space-y-4">
+                  <div className="bg-black/30 rounded-xl overflow-hidden aspect-video relative">
+                    {tripVideoUrl ? (
+                      <>
+                        {tripVideoUrl.endsWith('.avi') ? (
+                          // AVI files aren't playable directly in browsers — show download link
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="text-center px-6">
+                              <Activity className="w-16 h-16 text-green-400 mx-auto mb-4" />
+                              <p className="text-green-400 font-medium mb-2">Recording Available</p>
+                              <p className="text-white/40 text-sm mb-4">AVI files must be downloaded to play</p>
+                              <a
+                                href={tripVideoUrl}
+                                download
+                                className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-sm transition-colors inline-flex items-center gap-2"
+                              >
+                                <Download size={16} />
+                                Download Recording
+                              </a>
+                            </div>
+                          </div>
+                        ) : (
+                          <video
+                            controls
+                            className="w-full h-full object-contain"
+                            src={tripVideoUrl}
+                          >
+                            Your browser does not support the video tag.
+                          </video>
+                        )}
+                        {/* Timestamp overlay */}
+                        {tripVideoRecordings[0]?.metadata?.recorded_at && (
+                          <div className="absolute top-2 left-2 bg-black/70 px-2 py-1 rounded text-xs text-white/80 font-mono">
+                            {new Date(tripVideoRecordings[0].metadata.recorded_at).toLocaleString()}
+                          </div>
+                        )}
+                      </>
+                    ) : tripVideoStatus === 'processing' ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <div className="w-12 h-12 border-2 border-orange-500/30 border-t-orange-500 rounded-full animate-spin mx-auto mb-4" />
+                          <p className="text-orange-400">Recording Processing</p>
+                          <p className="text-white/40 text-sm mt-2">Video is being processed, check back shortly</p>
+                        </div>
+                      </div>
+                    ) : tripVideoStatus === 'not_available' ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <Activity className="w-16 h-16 text-white/20 mx-auto mb-4" />
+                          <p className="text-white/50">No Recording Available</p>
+                          <p className="text-white/30 text-sm mt-2">Video recording was not enabled for this trip</p>
+                        </div>
+                      </div>
+                    ) : tripVideoStatus === 'error' ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <Activity className="w-16 h-16 text-red-400 mx-auto mb-4" />
+                          <p className="text-red-400">Error Loading Video</p>
+                          <p className="text-white/40 text-sm mt-2">Could not fetch video information</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <Activity className="w-16 h-16 text-white/30 mx-auto mb-4" />
+                          <p className="text-white/50">Loading...</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Recording info bar */}
+                  {tripVideoRecordings.length > 0 && (
+                    <div className="flex items-center gap-3 text-xs text-white/50 px-1">
+                      <span className="flex items-center gap-1">
+                        <Clock size={12} />
+                        {new Date(tripVideoRecordings[0].recorded_at).toLocaleString()}
+                      </span>
+                      {tripVideoRecordings[0].duration && (
+                        <span>{Math.floor(tripVideoRecordings[0].duration / 60)}m {tripVideoRecordings[0].duration % 60}s</span>
+                      )}
+                      {tripVideoRecordings[0].file_size && (
+                        <span>{(tripVideoRecordings[0].file_size / (1024 * 1024)).toFixed(1)} MB</span>
+                      )}
+                      <span className={`px-2 py-0.5 rounded-full ${
+                        tripVideoRecordings[0].status === 'completed' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+                      }`}>{tripVideoRecordings[0].status}</span>
+                    </div>
+                  )}
+
+                  {/* Trip Summary */}
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <Bus className="text-orange-400" />
+                      Trip Summary
+                    </h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Bus</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.plate_number}</p>
+                      </div>
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Status</p>
+                        <p className="text-white font-medium text-sm capitalize">{selectedTrip.status.replace('_', ' ')}</p>
+                      </div>
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Conductor</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.conductor?.full_name || 'N/A'}</p>
+                      </div>
+                      {selectedTrip.driver && (
+                        <div className="bg-white/5 p-3 rounded-lg">
+                          <p className="text-white/60 text-xs">Driver</p>
+                          <p className="text-white font-medium text-sm">{selectedTrip.driver.full_name}</p>
+                        </div>
+                      )}
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Start Time</p>
+                        <p className="text-white font-medium text-sm">{new Date(selectedTrip.started_at).toLocaleString()}</p>
+                      </div>
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">End Time</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.ended_at ? new Date(selectedTrip.ended_at).toLocaleString() : 'In Progress'}</p>
+                      </div>
+                      {selectedTrip.video_recording_duration && (
+                        <div className="bg-white/5 p-3 rounded-lg">
+                          <p className="text-white/60 text-xs">Video Duration</p>
+                          <p className="text-white font-medium text-sm">{Math.floor(selectedTrip.video_recording_duration / 60)}m {selectedTrip.video_recording_duration % 60}s</p>
+                        </div>
+                      )}
+                      {selectedTrip.video_recording_file_size && (
+                        <div className="bg-white/5 p-3 rounded-lg">
+                          <p className="text-white/60 text-xs">File Size</p>
+                          <p className="text-white font-medium text-sm">{(selectedTrip.video_recording_file_size / (1024 * 1024)).toFixed(2)} MB</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Video Recordings List */}
+                  {tripVideoRecordings.length > 0 && (
+                    <div className="glass-card p-4 rounded-xl">
+                      <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                        <Activity className="text-orange-400" />
+                        Video Recordings ({tripVideoRecordings.length})
+                      </h3>
+                      <div className="space-y-2 max-h-60 overflow-y-auto">
+                        {tripVideoRecordings.map((recording) => (
+                          <div key={recording.id} className="bg-white/5 p-3 rounded-lg">
+                            <div className="flex justify-between items-start mb-2">
+                              <div className="flex-1">
+                                <p className="text-white font-medium text-sm">{recording.file_name}</p>
+                                <p className="text-white/40 text-xs">{recording.storage_type} storage</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs px-2 py-1 rounded ${
+                                  recording.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                                  recording.status === 'recording' ? 'bg-yellow-500/20 text-yellow-400' :
+                                  'bg-red-500/20 text-red-400'
+                                }`}>
+                                  {recording.status}
+                                </span>
+                                {recording.status === 'completed' && (
+                                  <button
+                                    onClick={() => handleDownloadVideo(recording)}
+                                    className="text-blue-400 hover:text-blue-300 transition-colors"
+                                    title="Download video"
+                                  >
+                                    <DownloadIcon size={16} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-xs">
+                              <div>
+                                <p className="text-white/40">Duration</p>
+                                <p className="text-white">{recording.duration ? `${Math.floor(recording.duration / 60)}m ${recording.duration % 60}s` : 'N/A'}</p>
+                              </div>
+                              <div>
+                                <p className="text-white/40">Size</p>
+                                <p className="text-white">{recording.file_size ? `${(recording.file_size / (1024 * 1024)).toFixed(2)} MB` : 'N/A'}</p>
+                              </div>
+                              <div>
+                                <p className="text-white/40">Format</p>
+                                <p className="text-white">{recording.format}</p>
+                              </div>
+                            </div>
+                            {recording.metadata && (
+                              <div className="mt-2 text-xs text-white/40">
+                                <p>Source: {recording.metadata.source || 'unknown'}</p>
+                                {recording.metadata.resolution && <p>Resolution: {recording.metadata.resolution}</p>}
+                                {recording.metadata.fps && <p>FPS: {recording.metadata.fps}</p>}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-              {selectedTrip.driver && (
-                <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                  <User className="text-orange-400" />
-                  <div>
-                    <p className="text-white/60 text-sm">Driver</p>
-                    <p className="text-white font-medium">{selectedTrip.driver.full_name}</p>
+
+                {/* Right Side - Analytics */}
+                <div className="space-y-4">
+                  {/* Fare Statistics */}
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <TrendingUp className="text-orange-400" />
+                      Fare Statistics
+                    </h3>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="bg-green-500/10 border border-green-500/20 p-3 rounded-lg text-center">
+                        <p className="text-green-400 text-xs mb-1">Total Fare</p>
+                        <p className="text-white font-bold text-lg">
+                          ₱{tripTransactions.reduce((sum, t) => sum + (t.fare_amount || 0), 0).toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="bg-blue-500/10 border border-blue-500/20 p-3 rounded-lg text-center">
+                        <p className="text-blue-400 text-xs mb-1">Baggage Fare</p>
+                        <p className="text-white font-bold text-lg">
+                          ₱{tripTransactions.reduce((sum, t) => sum + (t.baggage_fee || 0), 0).toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="bg-purple-500/10 border border-purple-500/20 p-3 rounded-lg text-center">
+                        <p className="text-purple-400 text-xs mb-1">Total Revenue</p>
+                        <p className="text-white font-bold text-lg">
+                          ₱{tripTransactions.reduce((sum, t) => sum + (t.fare_amount || 0) + (t.baggage_fee || 0), 0).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Transactions */}
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <BarChart3 className="text-orange-400" />
+                      Transactions ({tripTransactions.length})
+                    </h3>
+                    <div className="max-h-40 overflow-y-auto space-y-2">
+                      {tripTransactions.length === 0 ? (
+                        <p className="text-white/40 text-sm text-center py-4">No transactions recorded</p>
+                      ) : (
+                        tripTransactions.slice(0, 5).map((tx) => (
+                          <div key={tx.id} className="bg-white/5 p-3 rounded-lg flex justify-between items-center">
+                            <div>
+                              <p className="text-white text-sm font-medium">{tx.card_id || 'Cash'}</p>
+                              <p className="text-white/40 text-xs">{new Date(tx.created_at).toLocaleString()}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-green-400 font-medium">₱{(tx.fare_amount || 0).toFixed(2)}</p>
+                              {tx.baggage_fee > 0 && <p className="text-blue-400 text-xs">+₱{tx.baggage_fee.toFixed(2)} baggage</p>}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Anomalies */}
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <Activity className="text-red-400" />
+                      Anomalies ({tripAnomalies.length})
+                    </h3>
+                    <div className="max-h-32 overflow-y-auto space-y-2">
+                      {tripAnomalies.length === 0 ? (
+                        <p className="text-white/40 text-sm text-center py-4">No anomalies detected</p>
+                      ) : (
+                        tripAnomalies.map((anomaly) => (
+                          <div key={anomaly.id} className="bg-red-500/10 border border-red-500/20 p-3 rounded-lg">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <p className="text-red-400 text-sm font-medium">{anomaly.anomaly_type || 'Unknown Anomaly'}</p>
+                                <p className="text-white/40 text-xs">{new Date(anomaly.detected_at).toLocaleString()}</p>
+                              </div>
+                              <span className="px-2 py-0.5 bg-red-500/20 text-red-300 text-xs rounded">
+                                AI Detected
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Irregularities */}
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <AlertTriangle className="text-yellow-400" />
+                      Fare Irregularities ({tripIrregularities.length})
+                    </h3>
+                    <div className="max-h-32 overflow-y-auto space-y-2">
+                      {tripIrregularities.length === 0 ? (
+                        <p className="text-white/40 text-sm text-center py-4">No irregularities reported</p>
+                      ) : (
+                        tripIrregularities.map((irr) => (
+                          <div key={irr.id} className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-lg">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <p className="text-yellow-400 text-sm font-medium">{irr.irregularity_type || 'Unknown'}</p>
+                                <p className="text-white/40 text-xs">{new Date(irr.detected_at).toLocaleString()}</p>
+                              </div>
+                              <span className={`px-2 py-0.5 text-xs rounded ${
+                                irr.resolved ? 'bg-green-500/20 text-green-300' : 'bg-orange-500/20 text-orange-300'
+                              }`}>
+                                {irr.resolved ? 'Resolved' : 'Pending'}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
-              )}
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <Clock className="text-orange-400" />
-                <div>
-                  <p className="text-white/60 text-sm">Start Time</p>
-                  <p className="text-white font-medium">{new Date(selectedTrip.started_at).toLocaleString()}</p>
-                </div>
               </div>
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <Clock className="text-orange-400" />
-                <div>
-                  <p className="text-white/60 text-sm">End Time</p>
-                  <p className="text-white font-medium">{selectedTrip.ended_at ? new Date(selectedTrip.ended_at).toLocaleString() : 'Not ended'}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <MapPin className="text-orange-400" />
-                <div>
-                  <p className="text-white/60 text-sm">GPS Location</p>
-                  <p className="text-white font-medium">
-                    {selectedTrip.current_lat && selectedTrip.current_lng
-                      ? `${selectedTrip.current_lat.toFixed(4)}, ${selectedTrip.current_lng.toFixed(4)}`
-                      : 'No GPS data'}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <div className="w-8 h-8 rounded-full bg-orange-500/20 flex items-center justify-center">
-                  <span className="text-orange-400 text-sm">S</span>
-                </div>
-                <div>
-                  <p className="text-white/60 text-sm">Status</p>
-                  <p className="text-white font-medium">{selectedTrip.status.replace('_', ' ')}</p>
-                </div>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -1663,7 +2098,7 @@ const TripManagement = ({ userRole }) => {
                   <Users size={16} className="text-purple-400" />
                   <span className="text-white/60 text-sm">Total Passengers</span>
                 </div>
-                <p className="text-white text-2xl font-bold">{busTrips.reduce((sum, trip) => sum + (trip.passenger_counts?.[0]?.count || 0), 0)}</p>
+                <p className="text-white text-2xl font-bold">{busTrips.reduce((sum, trip) => sum + (trip.total_passengers || 0), 0)}</p>
               </div>
             </div>
 
@@ -1709,7 +2144,7 @@ const TripManagement = ({ userRole }) => {
                                 {trip.driver?.full_name || 'N/A'}
                               </td>
                               <td className="text-white/70 text-sm py-2 px-3">
-                                {trip.passenger_counts?.[0]?.count || 0}
+                                {trip.total_passengers || 0}
                               </td>
                               <td className="py-2 px-3">
                                 <span className={`px-2 py-1 rounded-full text-xs border ${statusColors[trip.status]}`}>
@@ -1729,8 +2164,8 @@ const TripManagement = ({ userRole }) => {
                   
                   {/* Pagination */}
                   {busTrips.length > busTripsItemsPerPage && (
-                    <div className="flex items-center justify-between mt-4">
-                      <span className="text-white/60 text-sm">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 gap-3">
+                      <span className="text-white/60 text-xs sm:text-sm">
                         Showing {((busTripsCurrentPage - 1) * busTripsItemsPerPage) + 1} to {Math.min(busTripsCurrentPage * busTripsItemsPerPage, busTrips.length)} of {busTrips.length} trips
                       </span>
                       <div className="flex gap-2">
@@ -1741,7 +2176,7 @@ const TripManagement = ({ userRole }) => {
                         >
                           Previous
                         </button>
-                        <span className="text-white/60 text-sm self-center">
+                        <span className="text-white/60 text-xs sm:text-sm self-center">
                           Page {busTripsCurrentPage} of {Math.ceil(busTrips.length / busTripsItemsPerPage)}
                         </span>
                         <button

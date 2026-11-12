@@ -50,7 +50,7 @@ const EmergencyAlerts = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('emergency_alerts')
-        .select('*, trips(*, buses(*)), conductor_staff:staff_users(*)')
+        .select('*, trips(*, bus_id:buses!trips_bus_id_fkey(*)), conductor_staff:staff_users!emergency_alerts_conductor_id_fkey(*)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -199,7 +199,7 @@ const EmergencyAlerts = () => {
 
   const filteredAlerts = alerts.filter(alert => {
     const matchesSearch = alert.notes?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         alert.trips?.buses?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         alert.trips?.bus_id?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          alert.conductor_staff?.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = filterStatus === 'all' || alert.status === filterStatus;
     return matchesSearch && matchesStatus;
@@ -387,8 +387,8 @@ const EmergencyAlerts = () => {
             </tbody>
           </table>
           {contactsTotalPages > 1 && (
-            <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
-              <p className="text-white/60 text-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 pt-4 border-t border-white/10 gap-3">
+              <p className="text-white/60 text-xs sm:text-sm">
                 Showing {((contactsCurrentPage - 1) * itemsPerPage) + 1} to {Math.min(contactsCurrentPage * itemsPerPage, contacts.length)} of {contacts.length} contacts
               </p>
               <div className="flex items-center gap-2">
@@ -399,20 +399,27 @@ const EmergencyAlerts = () => {
                 >
                   <ChevronLeft size={16} />
                 </button>
-                <div className="flex items-center gap-1">
-                  {Array.from({ length: contactsTotalPages }, (_, i) => i + 1).map(page => (
-                    <button
-                      key={page}
-                      onClick={() => setContactsCurrentPage(page)}
-                      className={`w-8 h-8 rounded-lg text-sm transition-colors ${
-                        contactsCurrentPage === page
-                          ? 'bg-orange-500 text-white'
-                          : 'bg-white/10 hover:bg-white/20 text-white/70'
-                      }`}
-                    >
-                      {page}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-1 overflow-x-auto">
+                  {Array.from({ length: Math.min(contactsTotalPages, 5) }, (_, i) => {
+                    let p;
+                    if (contactsTotalPages <= 5) p = i + 1;
+                    else if (contactsCurrentPage <= 3) p = i + 1;
+                    else if (contactsCurrentPage >= contactsTotalPages - 2) p = contactsTotalPages - 4 + i;
+                    else p = contactsCurrentPage - 2 + i;
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => setContactsCurrentPage(p)}
+                        className={`min-w-[32px] w-8 h-8 rounded-lg text-xs sm:text-sm transition-colors ${
+                          contactsCurrentPage === p
+                            ? 'bg-orange-500 text-white'
+                            : 'bg-white/10 hover:bg-white/20 text-white/70'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
                 </div>
                 <button
                   onClick={() => setContactsCurrentPage(prev => Math.min(prev + 1, contactsTotalPages))}
@@ -565,7 +572,7 @@ const EmergencyAlerts = () => {
                         <div className="flex items-center gap-4 text-white/60 text-sm">
                           <div className="flex items-center gap-2">
                             <MapPin size={14} />
-                            <span>{alert.trips?.buses?.plate_number || 'Unknown Bus'}</span>
+                            <span>{alert.trips?.bus_id?.plate_number || 'Unknown Bus'}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <Clock size={14} />

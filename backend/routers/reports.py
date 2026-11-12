@@ -85,7 +85,7 @@ async def generate_report(request: ReportRequest) -> GeneratedReport:
         
         elif request.report_type == "bus_performance":
             # Bus performance report
-            trips_result = supabase.table('trips').select('*, buses(*)').gte('created_at', start_iso).lt('created_at', end_iso).execute()
+            trips_result = supabase.table('trips').select('*, buses!trips_bus_id_fkey(*)').gte('created_at', start_iso).lt('created_at', end_iso).execute()
             trips = trips_result[1] if trips_result[1] else []
             
             bus_performance = {}
