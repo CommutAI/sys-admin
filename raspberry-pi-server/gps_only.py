@@ -136,7 +136,7 @@ print("")
 async def send_gps_to_backend():
     """Send GPS data to backend continuously"""
     client_id = f"pi-{BUS_NUMBER}"
-    backend_ws_url = BACKEND_URL.replace('http://', 'ws://') + '/ws/video-stream/' + client_id
+    backend_ws_url = BACKEND_URL.replace('https://', 'wss://').replace('http://', 'ws://') + '/ws/video-stream/' + client_id
 
     print(f"[GPS Upload] Connecting to backend: {backend_ws_url}")
 

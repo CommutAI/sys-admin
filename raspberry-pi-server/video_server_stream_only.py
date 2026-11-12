@@ -82,7 +82,8 @@ def discover_backend_ip():
 
 # Backend configuration - auto-discover or use manual setting
 BACKEND_URL = discover_backend_ip() or os.getenv('BACKEND_URL', 'http://localhost:8000')
-BACKEND_WS_URL = BACKEND_URL.replace('http', 'ws')
+# Handle both HTTP and HTTPS protocols correctly for WebSocket
+BACKEND_WS_URL = BACKEND_URL.replace('https://', 'wss://').replace('http://', 'ws://')
 
 # Camera configuration - Optimized for 30-60 FPS
 CAMERA_DEVICE = os.getenv('CAMERA_DEVICE', '/dev/video0')
@@ -382,6 +383,35 @@ class VideoStreamer:
             asyncio.create_task(self.websocket.close())
         print("Video stream stopped")
 
+    async def stream_with_reconnection(self):
+        """Stream frames with automatic reconnection"""
+        retry_count = 0
+        max_retries = 5
+        base_delay = 2  # seconds
+        
+        while retry_count < max_retries:
+            try:
+                await self.stream_frames()
+                # If we get here, streaming ended normally
+                break
+            except Exception as e:
+                retry_count += 1
+                delay = min(base_delay * (2 ** retry_count), 60)  # Exponential backoff, max 60s
+                print(f"[Video Streamer] Connection lost: {e}")
+                print(f"[Video Streamer] Retry {retry_count}/{max_retries} in {delay}s...")
+                await asyncio.sleep(delay)
+                
+                # Try to rediscover backend if connection fails
+                global BACKEND_URL, BACKEND_WS_URL
+                discovered = discover_backend_ip()
+                if discovered:
+                    BACKEND_URL = discovered
+                    BACKEND_WS_URL = BACKEND_URL.replace('https://', 'wss://').replace('http://', 'ws://')
+                    print(f"[Video Streamer] Rediscovered backend: {BACKEND_URL}")
+        
+        if retry_count >= max_retries:
+            print(f"[Video Streamer] Failed after {max_retries} retries")
+
 
 async def send_gps_to_backend():
     """Send GPS data to backend independently of video stream"""
@@ -389,7 +419,7 @@ async def send_gps_to_backend():
         print("Hardware manager not available, GPS upload disabled")
         return
 
-    backend_ws_url = BACKEND_URL.replace('http://', 'ws://') + '/ws/video-stream/pi-' + str(BUS_NUMBER)
+    backend_ws_url = BACKEND_URL.replace('https://', 'wss://').replace('http://', 'ws://') + '/ws/video-stream/pi-' + str(BUS_NUMBER)
 
     while True:
         try:
@@ -433,13 +463,13 @@ async def main():
         gps_task = asyncio.create_task(send_gps_to_backend())
 
         # Keep the Pi camera service alive independently of backend restarts or
-        # temporary network loss. stream_frames() returns when the backend
-        # connection drops, so create a new camera/connection and retry.
+        # temporary network loss. stream_with_reconnection() handles retries with
+        # exponential backoff and rediscovery.
         while True:
             streamer = VideoStreamer()
-            await streamer.stream_frames()
-            print("[Stream Mode] Backend unavailable; retrying in 5 seconds")
-            await asyncio.sleep(5)
+            await streamer.stream_with_reconnection()
+            print("[Stream Mode] Max retries reached; restarting in 10 seconds")
+            await asyncio.sleep(10)
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
