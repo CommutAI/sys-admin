@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from hardware_integration import HardwareManager
 from supabase import create_client, Client
 
-load_dotenv()
+load_dotenv('.env.stream-mode')
 
 def discover_backend_ip():
     """
