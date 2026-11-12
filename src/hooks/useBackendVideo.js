@@ -59,7 +59,7 @@ export function useBackendVideo({ autoConnect = true } = {}) {
     setIsStreaming(false);
 
     try {
-      const currentWsUrl = backendUrl.replace(/^http/, 'ws') + '/ws';
+      const currentWsUrl = backendUrl.replace(/^http/, 'ws') + '/ws/video-feed';
       console.log('[Backend Video] WebSocket URL:', currentWsUrl);
       const ws = new WebSocket(currentWsUrl);
       wsRef.current = ws;
