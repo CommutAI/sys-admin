@@ -504,6 +504,18 @@ const Dashboard = () => {
     };
   }, []);
 
+  // Keep Render backend alive — ping every 10 minutes to prevent spin-down
+  useEffect(() => {
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
+    const keepAlive = () => {
+      fetch(`${backendUrl}/health`, { method: 'GET' })
+        .catch(() => {}); // silent fail
+    };
+    keepAlive(); // ping immediately on mount
+    const interval = setInterval(keepAlive, 10 * 60 * 1000); // every 10 min
+    return () => clearInterval(interval);
+  }, []);
+
   // Auto-start video stream when Pi connects
   useEffect(() => {
     if (piOnline && piCameraActive && !piIsStreaming) {
