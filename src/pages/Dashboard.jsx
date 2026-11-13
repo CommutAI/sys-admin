@@ -322,14 +322,14 @@ const AnimatedBusMarker = ({ bus, onClick }) => {
   );
 };
 
-// Compact video widget for the dashboard — receives Pi state from parent to avoid duplicate WebSocket connections
-const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreaming, videoRef, refresh, cameraActive }) => {
+// Compact video widget — shows backend YOLO when available, otherwise Pi local ONNX/MJPEG
+const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreaming, videoRef, refresh, cameraActive, usingBackend }) => {
   const [useMjpeg, setUseMjpeg] = useState(false);
-  const [useBackend, setUseBackend] = useState(true); // Use Backend YOLO by default
-  // Stream is started automatically by the hook on connect — no effect needed here
+  const showLive = isStreaming || useMjpeg;
 
-  const statusColor = isStreaming || useMjpeg || useBackend ? 'text-green-400' : online ? 'text-yellow-400' : 'text-red-400';
-  const statusLabel = isStreaming || useMjpeg || useBackend ? 'Live' : online ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting…' : 'Offline';
+  const statusColor = showLive ? 'text-green-400' : online ? 'text-yellow-400' : 'text-red-400';
+  const statusLabel = showLive ? 'Live' : online ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting…' : 'Offline';
+  const sourceLabel = usingBackend ? 'YOLOv8m backend' : 'Pi ONNX';
 
   return (
     <div>
@@ -339,7 +339,7 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
           <Video className="w-4 h-4 text-orange-400" />
           <h2 className="text-white font-semibold text-sm">Bus Video Monitoring</h2>
           <span className={`text-xs ${statusColor}`}>· {statusLabel}</span>
-          {useBackend && <span className="text-xs text-green-400 hidden sm:inline">· 90%+ AI Accuracy</span>}
+          <span className="text-xs text-white/40 hidden sm:inline">· {sourceLabel}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <button onClick={refresh} className="bg-white/10 hover:bg-white/20 text-white p-1.5 rounded-lg transition-colors">
@@ -350,60 +350,43 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
 
       {/* Video — responsive height */}
       <div className="relative bg-black rounded-xl overflow-hidden" style={{ height: '450px', minHeight: '350px' }}>
-        {/* Backend YOLO Stream */}
-        {useBackend && (
-          <img ref={videoRef} alt="Live feed" className={`w-full h-full object-cover ${isStreaming ? 'block' : 'hidden'}`} />
+        <img
+          ref={videoRef}
+          alt="Live feed"
+          className="w-full h-full object-cover"
+          style={{ visibility: isStreaming && !useMjpeg ? 'visible' : 'hidden' }}
+        />
+
+        {!usingBackend && useMjpeg && (
+          <img src={getPiVideoFeedUrl()} alt="MJPEG feed" className="w-full h-full object-contain" />
         )}
 
-        {/* Backend connecting message */}
-        {useBackend && !isStreaming && (
+        {!showLive && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-            <Video className="w-10 h-10 text-blue-400" />
-            <p className="text-blue-400 text-xs font-medium">Connecting to Backend...</p>
-            <p className="text-white/30 text-xs">YOLOv8m AI Processing</p>
-          </div>
-        )}
-
-        {/* Pi WebSocket Stream */}
-        {!useBackend && (
-          <img ref={videoRef} alt="Live feed" className={`w-full h-full object-contain ${isStreaming && !useMjpeg ? 'block' : 'hidden'}`} />
-        )}
-
-        {/* Pi MJPEG Stream */}
-        {!useBackend && useMjpeg && <img src={getPiVideoFeedUrl()} alt="MJPEG feed" className="w-full h-full object-contain" />}
-
-        {/* Pi offline message */}
-        {!useBackend && !isStreaming && !useMjpeg && !online && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-            <Camera className="w-10 h-10 text-red-400" />
-            <p className="text-red-400 text-xs font-medium">Pi Server Offline</p>
-            <p className="text-white/30 text-xs">Switch to Backend for AI detection</p>
-          </div>
-        )}
-
-        {!isStreaming && !useMjpeg && !useBackend && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-            {cameraActive === false ? (
+            {cameraActive === false && online ? (
               <>
                 <Camera className="w-10 h-10 text-red-400" />
                 <p className="text-red-400 text-xs font-medium">Camera not connected</p>
-                <p className="text-white/30 text-xs">Check camera on Raspberry Pi</p>
+                <p className="text-white/30 text-xs">Check USB camera on Raspberry Pi</p>
+              </>
+            ) : !online ? (
+              <>
+                <Camera className="w-10 h-10 text-red-400" />
+                <p className="text-red-400 text-xs font-medium">Pi Server Offline</p>
+                <p className="text-white/30 text-xs">Waiting for Raspberry Pi stream</p>
               </>
             ) : (
               <>
                 <Video className="w-10 h-10 text-white/20" />
-                {online ? (
-                  <p className="text-white/40 text-xs">Starting stream…</p>
-                ) : (
-                  <p className="text-white/40 text-xs">Connecting to Raspberry Pi…</p>
-                )}
+                <p className="text-white/40 text-xs">Starting stream…</p>
+                <p className="text-white/30 text-xs">{usingBackend ? 'YOLOv8m backend' : 'Local ONNX on Pi'}</p>
               </>
             )}
           </div>
         )}
 
         {/* LIVE badge */}
-        {(isStreaming || useMjpeg || useBackend) && (
+        {showLive && (
           <div className="absolute top-2 left-2 bg-black/70 rounded px-2 py-0.5 flex items-center gap-1.5">
             <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
           <span className="text-white text-xs font-medium">LIVE</span>
@@ -411,7 +394,7 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
         )}
 
         {/* Passenger count badge */}
-        {(isStreaming || useMjpeg || useBackend) && (
+        {showLive && (
           <div className="absolute top-2 right-2 bg-black/70 rounded px-2 py-0.5 flex items-center gap-1.5">
             <Users className="w-3 h-3 text-orange-400" />
           <span className="text-white text-xs font-bold">{passengerCount}</span>
@@ -471,13 +454,13 @@ const Dashboard = () => {
     usingWebSocket: piUsingWebSocket,
   } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
 
-  // Backend video connection for YOLOv8m processing - always auto-connect with discovery
+  // Backend video — disabled, Pi now does local ONNX detection
   const {
     isStreaming: backendStreaming,
     passengerCount: backendCount,
     videoRef: backendVideoRef,
     refresh: backendRefresh,
-  } = useBackendVideo({ autoConnect: true });
+  } = useBackendVideo({ autoConnect: false });
 
   // Backend video processing status (including trip ID)
   const [backendTripId, setBackendTripId] = useState(null);
@@ -1037,6 +1020,7 @@ const Dashboard = () => {
             videoRef={backendStreaming ? backendVideoRef : piVideoRef}
             refresh={backendStreaming ? backendRefresh : piRefresh}
             cameraActive={piCameraActive}
+            usingBackend={backendStreaming}
           />
         </div>
 
@@ -1070,10 +1054,12 @@ const Dashboard = () => {
                 <Camera className="w-4 h-4 text-blue-400" />
                 <p className="text-white/60 text-xs">Camera</p>
               </div>
-              <p className={`text-base sm:text-lg font-bold ${backendStreaming ? 'text-green-400' : 'text-red-400'}`}>
-                {backendStreaming ? 'Streaming' : 'Inactive'}
+              <p className={`text-base sm:text-lg font-bold ${(backendStreaming || piIsStreaming || piCameraActive) ? 'text-green-400' : 'text-red-400'}`}>
+                {(backendStreaming || piIsStreaming) ? 'Streaming' : piCameraActive ? 'Ready' : 'Inactive'}
               </p>
-              <p className="text-white/40 text-xs mt-1">{backendStreaming ? 'Pi sending frames' : 'No stream'}</p>
+              <p className="text-white/40 text-xs mt-1">
+                {backendStreaming ? 'Backend YOLO' : piIsStreaming ? 'Pi ONNX' : 'No stream'}
+              </p>
             </div>
             <div className="bg-white/5 p-3 sm:p-4 rounded-xl">
               <div className="flex items-center gap-2 mb-2">

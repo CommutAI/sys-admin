@@ -427,6 +427,7 @@ export function useRaspberryPi(options = {}) {
           safeSet(setPassengerCount, data.count);
           safeSet(setAverageCount,   data.average_count != null ? Number(data.average_count).toFixed(1) : '0');
           safeSet(setLastUpdate,     new Date().toLocaleTimeString());
+          safeSet(setIsStreaming, true); // count arriving = stream is live
         }
         if (data.camera_active !== undefined) safeSet(setCameraActive,  data.camera_active);
         if (data.current_trip_id !== undefined) safeSet(setCurrentTripId, data.current_trip_id);
