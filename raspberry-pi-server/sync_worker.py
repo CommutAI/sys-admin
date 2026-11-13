@@ -38,7 +38,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from cloud_gateway import gateway_request
 from local_store import (
     fetch_unsynced_passenger_counts,
     fetch_unsynced_gps,
@@ -49,6 +48,14 @@ from local_store import (
     db_stats,
     init_db,
 )
+
+try:
+    from cloud_gateway import gateway_request
+    _GATEWAY_AVAILABLE = True
+except ImportError:
+    _GATEWAY_AVAILABLE = False
+    def gateway_request(*args, **kwargs):
+        raise RuntimeError("cloud_gateway not available")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -164,30 +171,33 @@ def _aggregate_gps(rows: list) -> tuple[list, list]:
     return aggregates, ids
 
 
-# ── Gateway push ──────────────────────────────────────────────────────────────
+# ── Direct Supabase push ──────────────────────────────────────────────────────
 
 def _push(action: str, rows: list, table_name: str) -> bool:
-    """
-    Send aggregated rows to Supabase via the scoped gateway.
-    Returns True on success.
-
-    The Edge Function expects:
-        { "action": "insert-batch", "table": "...", "rows": [...] }
-    """
+    """Push aggregated rows directly to Supabase — no gateway needed."""
     if not rows:
-        return True   # nothing to do — not a failure
+        return True
 
-    if not GATEWAY_URL or not PI_TOKEN:
-        print(f"[SyncWorker] Gateway not configured — {len(rows)} {table_name} rows buffered locally")
+    if not SUPABASE_URL or not PI_TOKEN:
+        print(f"[SyncWorker] Supabase not configured — {len(rows)} {table_name} rows buffered locally")
         return False
 
     try:
-        result = gateway_request(
-            GATEWAY_URL, PI_TOKEN, action,
-            table=table_name, rows=rows
+        import json, urllib.request
+        url = f"{SUPABASE_URL}/rest/v1/{table_name}"
+        data = json.dumps(rows).encode()
+        req = urllib.request.Request(
+            url, data=data, method='POST',
+            headers={
+                'Content-Type': 'application/json',
+                'apikey': PI_TOKEN,
+                'Authorization': f'Bearer {PI_TOKEN}',
+                'Prefer': 'resolution=merge-duplicates',
+            }
         )
-        print(f"[SyncWorker] ✓ Pushed {len(rows)} {table_name} rows — {result}")
-        return True
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            print(f"[SyncWorker] ✓ Pushed {len(rows)} {table_name} rows (HTTP {resp.status})")
+            return True
     except Exception as exc:
         print(f"[SyncWorker] ✗ Push failed for {table_name}: {exc}")
         return False
