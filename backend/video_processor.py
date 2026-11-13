@@ -136,7 +136,9 @@ class VideoProcessor:
                 urls = [
                     'https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.onnx',
                     'https://github.com/ultralytics/ultralytics/releases/download/v8.0.0/yolov8n.onnx',
-                    'https://github.com/ultralytics/assets/raw/main/yolov8n.onnx'
+                    'https://github.com/ultralytics/assets/raw/main/yolov8n.onnx',
+                    'https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n.onnx',
+                    'https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.onnx'
                 ]
                 downloaded = False
                 for url in urls:
@@ -150,7 +152,9 @@ class VideoProcessor:
                         continue
                 if not downloaded:
                     print("[Video Processor] All download attempts failed, detection disabled")
-                    return False
+                    print("[Video Processor] Will stream raw frames without detection")
+                    self.model = None  # Allow streaming without detection
+                    return True  # Return True to allow operation without model
 
             self.model = ort.InferenceSession(
                 onnx_path,
@@ -162,7 +166,9 @@ class VideoProcessor:
 
         except Exception as e:
             print(f"[Video Processor] Model initialization error: {e}")
-            return False
+            print("[Video Processor] Will stream raw frames without detection")
+            self.model = None  # Allow streaming without model
+            return True  # Return True to allow operation without model
     
     def decode_frame(self, frame_data: str) -> Optional[np.ndarray]:
         """Decode base64-encoded frame to numpy array"""
