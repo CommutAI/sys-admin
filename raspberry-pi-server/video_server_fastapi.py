@@ -22,6 +22,8 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from hardware_integration import HardwareManager
+from local_store import init_db, write_passenger_count
+from sync_worker import start_sync_worker, stop_sync_worker, sync_status
 import socket
 import httpx
 import websockets
@@ -171,6 +173,9 @@ async def lifespan(app: FastAPI):
         print("   Database operations will be disabled")
     else:
         print("✓ Environment variables validated")
+
+    # Start SQLite-backed sync worker (buffers writes, pushes 1-min aggregates)
+    start_sync_worker()
 
     enable_camera = os.getenv('ENABLE_CAMERA', 'true').lower() == 'true'
 
@@ -352,6 +357,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     print("Cleaning up hardware resources...")
+    stop_sync_worker()
     if enable_camera:
         video_processor.stop()
     if hardware_manager:
@@ -1324,17 +1330,10 @@ class VideoProcessor:
             return None
     
     def save_passenger_count_to_db(self, count):
-        """Save passenger count to Supabase database.
-        - Sets ai_count and source so the admin dashboard can distinguish
-          camera counts from manual ones.
-        - Only writes when a trip is active (trip_id NOT NULL constraint).
-        - The live WebSocket count is always sent regardless of trip state.
-        - Triggers anomaly detection after saving count to compare with scanned passengers.
+        """Write raw passenger count to local SQLite (zero network calls).
+        sync_worker.py aggregates these rows every minute and pushes one
+        aggregate row to Supabase — cutting API calls by ~12×.
         """
-        if not supabase:
-            print(f"[DB] Supabase not initialized - cannot save count")
-            return
-
         if not self.current_trip_id:
             print(f"[DB] No trip_id set - cannot save count (trip_id required for database)")
             return  # live count still streams via WebSocket — DB write needs a trip
@@ -1345,24 +1344,20 @@ class VideoProcessor:
             if current_time - self.last_db_save < self.db_save_interval:
                 return
 
-            data = {
-                'trip_id': self.current_trip_id,
-                'bus_id': self.current_bus_id,
-                'count': count,
-                'ai_count': count,          # same value — ai_count is the camera estimate
-                'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(current_time))
-            }
+            write_passenger_count(
+                count=count,
+                trip_id=self.current_trip_id,
+                bus_id=self.current_bus_id,
+                ai_count=count,
+                source="yolo_pi",
+            )
+            self.last_db_save = current_time
+            print(f"[DB] ✓ Buffered count={count} trip={self.current_trip_id} → SQLite")
 
-            result = supabase.table('passenger_counts').insert(data).execute()
-            if result:
-                self.last_db_save = current_time
-                print(f"[DB] ✓ Saved count={count} trip={self.current_trip_id}")
-
-                # Trigger anomaly detection after saving count
-                # This compares AI camera count with scanned (boarded) passengers
-                self.trigger_anomaly_detection()
+            # Trigger anomaly detection after saving count
+            self.trigger_anomaly_detection()
         except Exception as e:
-            print(f"[DB] ✗ Error saving passenger count to database: {e}")
+            print(f"[DB] ✗ Error writing passenger count to SQLite: {e}")
     
     def trigger_anomaly_detection(self):
         """Trigger anomaly detection via backend API for the current trip.
@@ -1964,6 +1959,7 @@ async def health():
             'bus_id': ASSIGNED_BUS_ID,
             'bus_number': BUS_NUMBER,
             'bus_plate': ASSIGNED_BUS_PLATE,
+            'sync': sync_status(),
         })
     except Exception as e:
         return JSONResponse({

@@ -15,6 +15,12 @@ from dataclasses import dataclass
 import RPi.GPIO as GPIO
 import asyncio
 
+try:
+    from local_store import write_gps
+    _LOCAL_STORE_AVAILABLE = True
+except ImportError:
+    _LOCAL_STORE_AVAILABLE = False
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -333,10 +339,25 @@ class NEO6M:
             import threading
             def log_to_db():
                 try:
-                    db_client.table('gps_locations').insert(data).execute()
-                    logger.debug(f"GPS location logged to database")
+                    # Prefer local SQLite (zero network, sync_worker batches to Supabase)
+                    if _LOCAL_STORE_AVAILABLE:
+                        write_gps(
+                            latitude=data['latitude'],
+                            longitude=data['longitude'],
+                            trip_id=str(trip_id) if trip_id else None,
+                            altitude=data.get('altitude'),
+                            speed=data.get('speed'),
+                            accuracy=data.get('accuracy'),
+                            source=data.get('source', 'gps'),
+                            satellite_count=data.get('satellite_count'),
+                            fix_quality=data.get('fix_quality'),
+                        )
+                        logger.debug(f"GPS location buffered to SQLite")
+                    elif db_client:
+                        db_client.table('gps_locations').insert(data).execute()
+                        logger.debug(f"GPS location logged to Supabase (fallback)")
                 except Exception as e:
-                    logger.error(f"Failed to log GPS location to database: {e}")
+                    logger.error(f"Failed to log GPS location: {e}")
 
             threading.Thread(target=log_to_db, daemon=True).start()
         except Exception as e:
@@ -860,10 +881,23 @@ class HardwareManager:
             import threading
             def log_to_db():
                 try:
-                    db_client.table('gps_locations').insert(data).execute()
-                    logger.debug(f"Geolocation logged to database")
+                    # Prefer local SQLite (zero network, sync_worker batches to Supabase)
+                    if _LOCAL_STORE_AVAILABLE:
+                        write_gps(
+                            latitude=data['latitude'],
+                            longitude=data['longitude'],
+                            trip_id=str(trip_id) if trip_id else None,
+                            altitude=data.get('altitude'),
+                            speed=data.get('speed'),
+                            accuracy=data.get('accuracy'),
+                            source=data.get('source', 'geolocation'),
+                        )
+                        logger.debug(f"Geolocation buffered to SQLite")
+                    elif db_client:
+                        db_client.table('gps_locations').insert(data).execute()
+                        logger.debug(f"Geolocation logged to Supabase (fallback)")
                 except Exception as e:
-                    logger.error(f"Failed to log geolocation to database: {e}")
+                    logger.error(f"Failed to log geolocation: {e}")
             
             threading.Thread(target=log_to_db, daemon=True).start()
         except Exception as e:
