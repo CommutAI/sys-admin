@@ -559,8 +559,8 @@ IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.45'))  # Keep at 0.45 for st
 JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '60'))
 
 # YOLO-specific confidence threshold for person detection
-# This is higher than the general CONFIDENCE_THRESHOLD to reduce false positives
-YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.60'))
+YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.25'))
+MAX_DET = int(os.getenv('MAX_DET', '50'))
 
 # Video Recording configuration
 ENABLE_VIDEO_RECORDING = os.getenv('ENABLE_VIDEO_RECORDING', 'false').lower() == 'true'
@@ -1055,7 +1055,7 @@ class VideoProcessor:
                         indices = cv2.dnn.NMSBoxes(raw_boxes, [float(c) for c in confidences], conf_thresh, IOU_THRESHOLD)
                         if hasattr(indices, 'flatten'):
                             indices = indices.flatten()
-                        for idx in indices:
+                        for idx in indices[:MAX_DET]:
                             rb = raw_boxes[int(idx)]
                             detections.append({
                                 'bbox': [rb[0], rb[1], rb[0] + rb[2], rb[1] + rb[3]],
@@ -1070,7 +1070,7 @@ class VideoProcessor:
                                 'confidence': float(confidences[k]),
                                 'class': 'person'
                             })
-                        detections = self._apply_nms(detections, iou_threshold=IOU_THRESHOLD)
+                        detections = self._apply_nms(detections, iou_threshold=IOU_THRESHOLD)[:MAX_DET]
             
             return detections
         except Exception as e:

@@ -55,11 +55,11 @@ DETECTION_METHOD = os.getenv('DETECTION_METHOD', 'yolo').lower()
 # Model configuration — yolov8n.pt (nano) for minimum memory on Render free tier
 # nano = ~6MB model, ~100MB RAM vs medium = ~50MB model, ~400MB RAM
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.pt')
-CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.35'))
+CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.45'))
 YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.25'))
 DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '640'))
-MAX_DET = int(os.getenv('MAX_DET', '10'))
+MAX_DET = int(os.getenv('MAX_DET', '50'))
 
 # Update Roboflow client with API key from env
 if ROBOFLOW_AVAILABLE:
@@ -407,7 +407,7 @@ class VideoProcessor:
                 return []
             if hasattr(indices, 'flatten'):
                 indices = indices.flatten()
-            return [detections[int(i)] for i in indices]
+            return [detections[int(i)] for i in indices][:MAX_DET]
         except Exception as e:
             print(f"[Video Processor] cv2.dnn.NMSBoxes fallback: {e}")
 
@@ -423,7 +423,7 @@ class VideoProcessor:
                 if iou < iou_threshold:
                     remaining.append(det)
             detections_sorted = remaining
-        return final_detections
+        return final_detections[:MAX_DET]
     
     def _calculate_iou(self, box1: List[int], box2: List[int]) -> float:
         """Calculate Intersection over Union (IoU) between two bounding boxes"""
