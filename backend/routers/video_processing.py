@@ -69,12 +69,17 @@ class ConnectionManager:
         print(f"[Video Router] Frontend disconnected")
 
     async def broadcast_to_frontends(self, message: dict):
-        """Broadcast processed video frame to all frontend clients"""
+        """Broadcast to all frontend clients, removing dead connections"""
+        dead = set()
         for connection in self.frontend_connections:
             try:
                 await connection.send_json(message)
-            except:
-                pass
+            except Exception:
+                dead.add(connection)
+        # Remove dead connections to prevent unbounded growth
+        self.frontend_connections -= dead
+        if dead:
+            print(f"[Video Router] Removed {len(dead)} dead frontend connection(s)")
 
 manager = ConnectionManager()
 
@@ -290,39 +295,23 @@ async def get_trip_video(trip_id: str):
     Get video recording information for a specific trip
     Returns the video URL and metadata if available
     """
-    from supabase import create_client
-    import os
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_KEY", ""))
-
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return {'status': 'error', 'message': 'Supabase not configured'}
-
     try:
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-        # Fetch trip with video recording info
         result = supabase.table('trips').select(
             'id, video_recording_url, video_recording_duration, video_recording_status, video_recording_file_size, video_recording_uploaded_at'
-        ).eq('id', trip_id).single()
+        ).eq('id', trip_id).single().execute()
 
         if not result.data:
             return {'status': 'error', 'message': 'Trip not found'}
 
         trip = result.data
-
         return {
             'status': 'success',
             'video_url': trip.get('video_recording_url'),
             'duration': trip.get('video_recording_duration'),
-            'status': trip.get('video_recording_status'),
+            'recording_status': trip.get('video_recording_status'),
             'file_size': trip.get('video_recording_file_size'),
             'uploaded_at': trip.get('video_recording_uploaded_at')
         }
-
     except Exception as e:
         print(f"[Video Router] Error fetching trip video: {e}")
         return {'status': 'error', 'message': str(e)}
@@ -380,37 +369,12 @@ async def get_recordings(trip_id: str = None, limit: int = 50, offset: int = 0):
     Get list of video recordings from video_recordings table
     Optionally filter by trip_id
     """
-    from supabase import create_client
-    import os
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_KEY", ""))
-
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return {'status': 'error', 'message': 'Supabase not configured'}
-
     try:
-        supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-        query = supabase_client.table('video_recordings').select('*')
-
+        query = supabase.table('video_recordings').select('*')
         if trip_id:
             query = query.eq('trip_id', trip_id)
-
-        query = query.order('recorded_at', {'ascending': False}).range(offset, offset + limit - 1)
-
-        result = query.execute()
-
-        if not result.data:
-            return {'status': 'success', 'data': []}
-
-        return {
-            'status': 'success',
-            'data': result.data
-        }
-
+        result = query.order('recorded_at', {'ascending': False}).range(offset, offset + limit - 1).execute()
+        return {'status': 'success', 'data': result.data or []}
     except Exception as e:
         print(f"[Video Router] Error fetching recordings: {e}")
         return {'status': 'error', 'message': str(e)}

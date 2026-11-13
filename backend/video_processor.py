@@ -29,13 +29,6 @@ except ImportError:
     ONNX_AVAILABLE = False
     print("Warning: onnxruntime not installed - AI detection disabled")
 
-# Keep ultralytics as optional fallback for model download only
-try:
-    from ultralytics import YOLO
-    YOLO_AVAILABLE = True
-except ImportError:
-    YOLO_AVAILABLE = False
-
 # Roboflow client import
 try:
     from roboflow_client import roboflow_client, RoboflowWorkflowError
@@ -101,13 +94,17 @@ print(f"[Video Processor] Detection method: {DETECTION_METHOD}")
 
 
 class VideoProcessor:
-    """Processes video frames from Raspberry Pi with YOLOv8 or Roboflow"""
+    """Processes video frames from Raspberry Pi with YOLOv8 ONNX"""
+
+    _HISTORY_MAX = 30  # keep last 30 detections only
 
     def __init__(self):
         self.model = None
+        self.input_name = None
         self.running = False
         self.current_trip_id = None
         self.last_db_save = 0
+        self.last_gps_save = 0
         self.detection_history = []
         self.frame_count = 0
 
@@ -123,7 +120,7 @@ class VideoProcessor:
         self.last_passenger_count = 0
 
     def initialize_model(self):
-        """Initialize ONNX model for detection — lightweight, no torch needed"""
+        """Initialize ONNX model — downloads yolov8n.onnx if not present"""
         if not ONNX_AVAILABLE:
             print("[Video Processor] onnxruntime not available - detection disabled")
             return False
@@ -131,24 +128,20 @@ class VideoProcessor:
         try:
             onnx_path = 'yolov8n.onnx'
 
-            # Download ONNX model if not present using ultralytics
+            # Download ONNX directly from Ultralytics GitHub if not present
             if not os.path.exists(onnx_path):
-                print(f"[Video Processor] ONNX model not found, exporting from ultralytics...")
-                if YOLO_AVAILABLE:
-                    yolo = YOLO('yolov8n.pt')
-                    yolo.export(format='onnx', imgsz=DETECTION_SIZE, opset=12, simplify=True)
-                    print(f"[Video Processor] ONNX model exported to {onnx_path}")
-                else:
-                    print("[Video Processor] Cannot export ONNX — ultralytics not available")
-                    return False
+                print("[Video Processor] Downloading yolov8n.onnx...")
+                import urllib.request
+                url = 'https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.onnx'
+                urllib.request.urlretrieve(url, onnx_path)
+                print(f"[Video Processor] Downloaded {onnx_path}")
 
             self.model = ort.InferenceSession(
                 onnx_path,
                 providers=['CPUExecutionProvider']
             )
             self.input_name = self.model.get_inputs()[0].name
-            print(f"[Video Processor] ONNX model loaded: {onnx_path}")
-            print(f"[Video Processor] Detection size: {DETECTION_SIZE}px")
+            print(f"[Video Processor] ONNX model loaded: {onnx_path} ({DETECTION_SIZE}px)")
             return True
 
         except Exception as e:
@@ -205,36 +198,38 @@ class VideoProcessor:
             return []
 
     def _detect_onnx(self, frame: np.ndarray) -> List[Dict]:
-        """ONNX YOLOv8 inference"""
+        """ONNX YOLOv8 inference — vectorized numpy, no Python loops"""
         h, w = frame.shape[:2]
         sz = DETECTION_SIZE
 
         # Preprocess
-        img = cv2.resize(frame, (sz, sz))
-        img = img.astype(np.float32) / 255.0
-        img = np.transpose(img, (2, 0, 1))
-        img = np.expand_dims(img, 0)
+        img = cv2.resize(frame, (sz, sz)).astype(np.float32) / 255.0
+        img = np.ascontiguousarray(img.transpose(2, 0, 1)[np.newaxis])
 
         # Inference
-        outputs = self.model.run(None, {self.input_name: img})
-        predictions = outputs[0][0].T  # (8400, 84)
+        preds = self.model.run(None, {self.input_name: img})[0][0].T  # (8400, 84)
 
-        detections = []
-        for pred in predictions:
-            person_conf = float(pred[4])
-            if person_conf < YOLO_CONFIDENCE_THRESHOLD:
-                continue
-            cx, cy, bw, bh = pred[:4]
-            x1 = int((cx - bw / 2) * w / sz)
-            y1 = int((cy - bh / 2) * h / sz)
-            x2 = int((cx + bw / 2) * w / sz)
-            y2 = int((cy + bh / 2) * h / sz)
-            detections.append({
-                'bbox': [x1, y1, x2, y2],
-                'confidence': person_conf,
-                'class': 'person'
-            })
+        # Vectorized confidence filter — no Python loop over 8400 rows
+        conf = preds[:, 4]
+        mask = conf >= YOLO_CONFIDENCE_THRESHOLD
+        if not mask.any():
+            return []
 
+        filtered = preds[mask]
+        cx, cy, bw, bh = filtered[:, 0], filtered[:, 1], filtered[:, 2], filtered[:, 3]
+        sx, sy = w / sz, h / sz
+
+        x1 = ((cx - bw / 2) * sx).astype(int)
+        y1 = ((cy - bh / 2) * sy).astype(int)
+        x2 = ((cx + bw / 2) * sx).astype(int)
+        y2 = ((cy + bh / 2) * sy).astype(int)
+
+        detections = [
+            {'bbox': [int(x1[i]), int(y1[i]), int(x2[i]), int(y2[i])],
+             'confidence': float(filtered[i, 4]),
+             'class': 'person'}
+            for i in range(len(filtered))
+        ]
         return self._apply_nms(detections)
 
     def _detect_with_yolo(self, frame: np.ndarray) -> List[Dict]:
@@ -417,70 +412,56 @@ class VideoProcessor:
         return frame
     
     def save_passenger_count_to_db(self, count: int):
-        """Save passenger count to Supabase database"""
+        """Save passenger count — throttled, non-blocking via thread"""
         if not supabase or not self.current_trip_id:
             return
-        
-        try:
-            current_time = time.time()
-            # Throttle: only write once every DB_SAVE_INTERVAL seconds
-            if current_time - self.last_db_save < DB_SAVE_INTERVAL:
-                return
-            
-            data = {
-                'trip_id': self.current_trip_id,
-                'count': count,
-                'ai_count': count,
-                'source': 'yolo_backend',  # Indicates processing on backend
-                'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(current_time))
-            }
-            
-            result = supabase.table('passenger_counts').insert(data).execute()
-            if result:
-                self.last_db_save = current_time
-                print(f"[Video Processor] Saved count={count} trip={self.current_trip_id}")
-                
-        except Exception as e:
-            print(f"[Video Processor] Error saving to database: {e}")
-    
-    def save_gps_to_db(self, gps_data: dict, trip_id: str = None):
-        """Save GPS location to Supabase database"""
-        if not supabase:
-            print("[Video Processor] ERROR: Supabase client not initialized")
+        current_time = time.time()
+        if current_time - self.last_db_save < DB_SAVE_INTERVAL:
             return
+        self.last_db_save = current_time
+        # Keep detection history bounded
+        self.detection_history.append(count)
+        if len(self.detection_history) > self._HISTORY_MAX:
+            self.detection_history.pop(0)
+        import threading
+        def _write():
+            try:
+                supabase.table('passenger_counts').insert({
+                    'trip_id': self.current_trip_id,
+                    'count': count,
+                    'ai_count': count,
+                    'source': 'yolo_backend',
+                    'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(current_time))
+                }).execute()
+            except Exception as e:
+                print(f"[Video Processor] DB write error: {e}")
+        threading.Thread(target=_write, daemon=True).start()
 
-        try:
-            current_time = time.time()
-            # Throttle GPS saves to avoid overwhelming database
-            if not hasattr(self, 'last_gps_save'):
-                self.last_gps_save = 0
-            if current_time - self.last_gps_save < 2.0:  # Save GPS every 2 seconds max
-                print(f"[Video Processor] GPS throttled (last save {current_time - self.last_gps_save:.1f}s ago)")
-                return
-
-            data = {
-                'latitude': gps_data.get('latitude'),
-                'longitude': gps_data.get('longitude'),
-                'altitude': gps_data.get('altitude'),
-                'speed': gps_data.get('speed'),
-                'source': gps_data.get('source', 'gps'),
-                'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(current_time))
-            }
-
-            # Only include trip_id if it exists (nullable in schema)
-            if trip_id:
-                data['trip_id'] = trip_id
-
-            print(f"[Video Processor] Attempting to save GPS: {gps_data.get('latitude'):.6f}, {gps_data.get('longitude'):.6f}")
-            result = supabase.table('gps_locations').insert(data).execute()
-            if result:
-                self.last_gps_save = current_time
-                print(f"[Video Processor] ✓ Saved GPS: {gps_data.get('latitude'):.6f}, {gps_data.get('longitude'):.6f} (trip_id: {trip_id})")
-            else:
-                print(f"[Video Processor] ✗ GPS insert returned no data")
-
-        except Exception as e:
-            print(f"[Video Processor] ✗ Error saving GPS to database: {e}")
+    def save_gps_to_db(self, gps_data: dict, trip_id: str = None):
+        """Save GPS location — throttled, non-blocking via thread"""
+        if not supabase:
+            return
+        current_time = time.time()
+        if current_time - self.last_gps_save < 2.0:
+            return
+        self.last_gps_save = current_time
+        import threading
+        def _write():
+            try:
+                data = {
+                    'latitude': gps_data.get('latitude'),
+                    'longitude': gps_data.get('longitude'),
+                    'altitude': gps_data.get('altitude'),
+                    'speed': gps_data.get('speed'),
+                    'source': gps_data.get('source', 'gps'),
+                    'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(current_time))
+                }
+                if trip_id:
+                    data['trip_id'] = trip_id
+                supabase.table('gps_locations').insert(data).execute()
+            except Exception as e:
+                print(f"[Video Processor] GPS write error: {e}")
+        threading.Thread(target=_write, daemon=True).start()
     
     def set_current_trip(self, trip_id: str):
         """Set the current trip ID for database recording"""

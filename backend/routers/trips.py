@@ -62,20 +62,19 @@ async def create_trip(
         )
 
 @router.get("/api/trips")
-async def get_trips():
-    """
-    Get all trips. No authentication required for Pi polling.
-    """
+async def get_trips(limit: int = 100):
+    """Get trips with limit to prevent full-table scans"""
     try:
-        response = supabase.table('trips').select('id, status, bus_id, conductor_id, driver_id, started_at, video_recording_url, video_recording_duration, video_recording_status, video_recording_file_size, video_recording_uploaded_at').order('started_at', desc=True).execute()
+        response = supabase.table('trips').select(
+            'id, status, bus_id, conductor_id, driver_id, started_at, '
+            'video_recording_url, video_recording_duration, video_recording_status, '
+            'video_recording_file_size, video_recording_uploaded_at'
+        ).order('started_at', desc=True).limit(limit).execute()
         print(f"[Trips] Fetched {len(response.data) if response.data else 0} trips")
         return {"trips": response.data}
     except Exception as e:
         print(f"[Trips] Error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error fetching trips: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error fetching trips: {str(e)}")
 
 @router.get("/api/trips/{trip_id}")
 async def get_trip(

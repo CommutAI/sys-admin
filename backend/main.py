@@ -34,19 +34,21 @@ except ImportError:
 limiter = Limiter(key_func=get_remote_address)
 
 # Background task for anomaly detection
+_scheduler_task: asyncio.Task = None
+
 async def anomaly_detection_scheduler():
-    """Run anomaly detection every 30 seconds and store results in database"""
+    """Run anomaly detection every 5 minutes"""
     while True:
         try:
+            await asyncio.sleep(300)  # sleep FIRST so startup isn't blocked
             print("Running scheduled anomaly detection...")
             from routers.anomaly_detection import run_anomaly_detection
             result = await run_anomaly_detection()
-            print(f"Anomaly detection completed: {result.total_anomalies_detected} anomalies detected, {result.total_irregularities_created} irregularities created")
+            print(f"Anomaly detection: {result.total_anomalies_detected} anomalies, {result.total_irregularities_created} irregularities")
 
-            # Store snapshot in database for historical comparison
-            from datetime import datetime
+            # Store snapshot — limit results_summary to avoid huge JSON blobs
             snapshot_data = {
-                'checked_at': datetime.now().isoformat(),
+                'checked_at': datetime.utcnow().isoformat(),
                 'total_trips_checked': result.total_trips_checked,
                 'anomalies_detected': result.total_anomalies_detected,
                 'irregularities_created': result.total_irregularities_created,
@@ -59,21 +61,19 @@ async def anomaly_detection_scheduler():
                         'discrepancy': r.discrepancy,
                         'anomaly_detected': r.total_anomalies > 0
                     }
-                    for r in result.results
+                    for r in result.results[:20]  # cap at 20 to avoid huge blobs
                 ]
             }
-
             try:
                 supabase.table('anomaly_detection_snapshots').insert(snapshot_data).execute()
-                print("Anomaly detection snapshot stored in database")
             except Exception as db_error:
-                print(f"Error storing anomaly detection snapshot: {db_error}")
+                print(f"Anomaly snapshot error: {db_error}")
 
+        except asyncio.CancelledError:
+            print("Anomaly detection scheduler cancelled")
+            break
         except Exception as e:
-            print(f"Error in anomaly detection scheduler: {e}")
-
-        # Wait 5 minutes before next run (was 30s — saves significant Render CPU/memory)
-        await asyncio.sleep(300)
+            print(f"Anomaly detection scheduler error: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -92,12 +92,20 @@ async def lifespan(app: FastAPI):
     print("Initializing video processor...")
     video_processor.initialize_model()
 
-    # Start anomaly detection scheduler as background task
-    asyncio.create_task(anomaly_detection_scheduler())
-    print("Anomaly detection scheduler started (every 30s)")
+    # Start anomaly detection scheduler — store handle for clean shutdown
+    global _scheduler_task
+    _scheduler_task = asyncio.create_task(anomaly_detection_scheduler())
+    print("Anomaly detection scheduler started (every 5 min)")
 
     yield
-    # Shutdown
+
+    # Shutdown — cancel scheduler cleanly
+    if _scheduler_task and not _scheduler_task.done():
+        _scheduler_task.cancel()
+        try:
+            await _scheduler_task
+        except asyncio.CancelledError:
+            pass
     print("Shutting down FastAPI backend service...")
 
 app = FastAPI(

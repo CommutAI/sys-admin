@@ -69,9 +69,9 @@ async def get_passenger_trends(
         start_iso = start_date.isoformat()
         end_iso = (end_date + timedelta(days=1)).isoformat()
         
-        # Optimize: Select only needed fields instead of '*'
-        result = supabase.table('passenger_counts').select('count, created_at').gte('created_at', start_iso).lt('created_at', end_iso).range(offset, offset + limit - 1).execute()
-        passenger_counts = result[1] if result[1] else []
+        # Optimize: Select only needed fields, use recorded_at (correct column name)
+        result = supabase.table('passenger_counts').select('count, recorded_at').gte('recorded_at', start_iso).lt('recorded_at', end_iso).range(offset, offset + limit - 1).execute()
+        passenger_counts = result.data if result.data else []
         
         if not passenger_counts:
             return []
@@ -80,7 +80,7 @@ async def get_passenger_trends(
         grouped_data = {}
         
         for record in passenger_counts:
-            timestamp = datetime.fromisoformat(record['created_at'])
+            timestamp = datetime.fromisoformat(record['recorded_at'])
             
             if group_by == "day":
                 key = timestamp.date().isoformat()
@@ -159,11 +159,11 @@ async def get_route_performance(
         # Get passenger counts for these trips - optimize field selection
         trip_ids = [trip['id'] for trip in trips]
         passenger_result = supabase.table('passenger_counts').select('trip_id, count').in_('trip_id', trip_ids).execute()
-        passenger_data = passenger_result[1] if passenger_result[1] else []
+        passenger_data = passenger_result.data if passenger_result.data else []
         
-        # Get transactions for revenue - optimize field selection
+        # Get transactions for revenue
         transaction_result = supabase.table('transactions').select('trip_id, amount').in_('trip_id', trip_ids).execute()
-        transaction_data = transaction_result[1] if transaction_result[1] else []
+        transaction_data = transaction_result.data if transaction_result.data else []
         
         # Group by route
         route_data = {}
