@@ -209,24 +209,15 @@ def _run_sync_cycle() -> bool:
     """
     Pull unsynced rows, aggregate, push, mark synced.
     Returns True if both pushes succeeded (or had nothing to push).
+
+    NOTE: Passenger counts are handled by backend (yolo_backend), not Pi.
+    Only GPS locations are synced from Pi.
     """
     all_ok = True
 
     # ── Passenger counts ──────────────────────────────────────────────────────
-    pc_rows = fetch_unsynced_passenger_counts(limit=1000)
-    if pc_rows:
-        aggregates, ids = _aggregate_passenger_counts(pc_rows)
-        ok = _push("insert-batch", aggregates, "passenger_counts")
-        if ok:
-            mark_passenger_counts_synced(ids)
-            write_sync_log("passenger_counts", len(aggregates))
-            print(f"[SyncWorker] passenger_counts: {len(pc_rows)} raw → {len(aggregates)} aggregates")
-        else:
-            write_sync_log("passenger_counts", 0, status="error",
-                           error="gateway push failed")
-            all_ok = False
-    else:
-        print("[SyncWorker] passenger_counts: nothing pending")
+    # SKIP: Backend handles passenger count detection and storage
+    print("[SyncWorker] passenger_counts: handled by backend, skipping Pi sync")
 
     # ── GPS ───────────────────────────────────────────────────────────────────
     gps_rows = fetch_unsynced_gps(limit=1000)

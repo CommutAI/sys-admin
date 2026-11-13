@@ -13,9 +13,13 @@ Why SQLite here:
 
 Tables
 ------
-passenger_counts_raw   raw count per 5-s DB save interval
+passenger_counts_raw   DEPRECATED - backend now handles passenger count detection
 gps_raw                every GPS fix logged by hardware_integration
 sync_log               one row per successful Supabase push (audit trail)
+
+NOTE: With cloud video streaming, the backend processes video frames and
+      saves passenger counts directly to Supabase. The Pi only streams raw
+      frames and buffers GPS data locally.
 """
 
 import sqlite3

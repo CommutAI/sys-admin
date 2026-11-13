@@ -311,14 +311,8 @@ class VideoStreamer:
                         self.last_passenger_count = count
                         self.last_detection_time = time.time()
 
-                        # Store passenger count locally in SQLite for offline resilience
-                        if _SQLITE_AVAILABLE and self.current_trip_id:
-                            write_passenger_count(
-                                count=count,
-                                trip_id=self.current_trip_id,
-                                bus_id=ASSIGNED_BUS_ID,
-                                source="yolo_backend"
-                            )
+                        # NOTE: Backend handles passenger count saving to Supabase
+                        # Pi only streams frames - no local buffering needed
             except asyncio.CancelledError:
                 break
             except Exception as e:
