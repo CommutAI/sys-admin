@@ -128,17 +128,14 @@ class VideoProcessor:
         try:
             onnx_path = 'yolov8n.onnx'
 
-            # Download ONNX directly from Ultralytics GitHub if not present
+            # Download ONNX from HuggingFace if not present (Ultralytics doesn't provide direct ONNX downloads)
             if not os.path.exists(onnx_path):
                 print("[Video Processor] Downloading yolov8n.onnx...")
                 import urllib.request
-                # Use multiple fallback URLs for reliability
+                # Use HuggingFace as reliable source for ONNX model
                 urls = [
-                    'https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.onnx',
-                    'https://github.com/ultralytics/ultralytics/releases/download/v8.0.0/yolov8n.onnx',
-                    'https://github.com/ultralytics/assets/raw/main/yolov8n.onnx',
-                    'https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n.onnx',
-                    'https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.onnx'
+                    'https://huggingface.co/Kalray/yolov8/resolve/main/yolov8n.onnx',
+                    'https://huggingface.co/ultralytics-assets/yolov8/resolve/main/yolov8n.onnx'
                 ]
                 downloaded = False
                 for url in urls:
