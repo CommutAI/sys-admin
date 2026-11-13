@@ -454,11 +454,13 @@ const Dashboard = () => {
     usingWebSocket: piUsingWebSocket,
   } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
 
-  // Backend video disabled — Pi handles ONNX detection locally
-  const backendStreaming = false;
-  const backendCount = 0;
-  const backendVideoRef = null;
-  const backendRefresh = () => {};
+  // Backend video connection — Render processes frames with YOLO and streams to dashboard
+  const {
+    isStreaming: backendStreaming,
+    passengerCount: backendCount,
+    videoRef: backendVideoRef,
+    refresh: backendRefresh,
+  } = useBackendVideo({ autoConnect: true });
 
   // Backend video processing status — not used in Pi ONNX mode
   const [backendTripId, setBackendTripId] = useState(null);
