@@ -197,19 +197,19 @@ async def lifespan(app: FastAPI):
     # current address even after a network change (DHCP re-lease, new Wi-Fi, etc.)
     async def periodic_register():
         while True:
-            await asyncio.sleep(30)   # re-check every 30 seconds
+            await asyncio.sleep(300)   # re-check every 5 minutes (was 30s)
             register_device()
 
     asyncio.create_task(periodic_register())
 
     # Poll backend for active trips and automatically set trip_id
     async def poll_active_trips():
-        """Poll backend every 10 seconds for active trips and set trip_id"""
+        """Poll backend every 60 seconds for active trips and set trip_id"""
         import requests
 
         while True:
             try:
-                await asyncio.sleep(10)  # Check every 10 seconds
+                await asyncio.sleep(60)  # Check every 60 seconds (was 10s)
 
                 # Try to re-discover backend if using localhost
                 current_url = get_backend_url()
@@ -310,8 +310,8 @@ async def lifespan(app: FastAPI):
                                         if frame_count % 30 == 0:  # Log every 30 frames (every 3 seconds)
                                             print(f"[Backend Stream] Sent {frame_count} frames to backend")
 
-                                        # Limit to 10 FPS for backend recording
-                                        await asyncio.sleep(0.1)
+                                        # Limit to 2 FPS for backend — reduces Render load by 5×
+                                        await asyncio.sleep(0.5)
                                     else:
                                         await asyncio.sleep(0.01)
                                 except Exception as e:
@@ -559,7 +559,9 @@ class VideoProcessor:
         self.current_trip_id = None
         self.current_bus_id = None
         self.last_db_save = 0
-        self.db_save_interval = 5  # Save to database every 5 seconds
+        self.db_save_interval = 30  # Save to SQLite every 30 seconds (was 5s)
+        self.last_anomaly_check = 0
+        self.anomaly_check_interval = 300  # Anomaly detection every 5 minutes (was every save)
         self.camera_reconnect_attempts = 0
         self.max_reconnect_attempts = 5
         self.reconnect_delay = 2  # seconds
@@ -1354,8 +1356,10 @@ class VideoProcessor:
             self.last_db_save = current_time
             print(f"[DB] ✓ Buffered count={count} trip={self.current_trip_id} → SQLite")
 
-            # Trigger anomaly detection after saving count
-            self.trigger_anomaly_detection()
+            # Trigger anomaly detection only every 5 minutes
+            if current_time - self.last_anomaly_check >= self.anomaly_check_interval:
+                self.last_anomaly_check = current_time
+                self.trigger_anomaly_detection()
         except Exception as e:
             print(f"[DB] ✗ Error writing passenger count to SQLite: {e}")
     
