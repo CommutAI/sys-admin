@@ -454,38 +454,14 @@ const Dashboard = () => {
     usingWebSocket: piUsingWebSocket,
   } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
 
-  // Backend video — disabled, Pi now does local ONNX detection
-  const {
-    isStreaming: backendStreaming,
-    passengerCount: backendCount,
-    videoRef: backendVideoRef,
-    refresh: backendRefresh,
-  } = useBackendVideo({ autoConnect: false });
+  // Backend video disabled — Pi handles ONNX detection locally
+  const backendStreaming = false;
+  const backendCount = 0;
+  const backendVideoRef = null;
+  const backendRefresh = () => {};
 
-  // Backend video processing status (including trip ID)
+  // Backend video processing status — not used in Pi ONNX mode
   const [backendTripId, setBackendTripId] = useState(null);
-  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
-
-  // Periodically fetch backend video processing status to get active trip
-  useEffect(() => {
-    const fetchBackendStatus = async () => {
-      try {
-        const response = await fetch(`${backendUrl}/api/video-processing/status`);
-        if (response.ok) {
-          const data = await response.json();
-          setBackendTripId(data.current_trip_id);
-        }
-      } catch (err) {
-        // Silently fail - this is not critical, Pi provides the trip ID
-        console.debug('Backend video status unavailable (rate limited or offline)');
-      }
-    };
-
-    fetchBackendStatus();
-    const interval = setInterval(fetchBackendStatus, 60000); // Check every 60 seconds instead of 10
-
-    return () => clearInterval(interval);
-  }, [backendUrl]);
 
   useEffect(() => {
     fetchDashboardData();
