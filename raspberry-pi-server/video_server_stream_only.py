@@ -214,9 +214,8 @@ class VideoStreamer:
             if self.camera is not None:
                 self.camera.release()
 
-            # Open with explicit V4L2 backend using integer index (not device path)
-            # V4L2 requires integer index on some OpenCV builds
-            self.camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_V4L2)
+            # Open camera with default backend (V4L2 can cause issues)
+            self.camera = cv2.VideoCapture(CAMERA_INDEX)
 
             if not self.camera.isOpened():
                 print(f"❌ CAMERA ERROR: Could not open camera at index {CAMERA_INDEX} (/dev/video{CAMERA_INDEX})")
@@ -264,7 +263,7 @@ class VideoStreamer:
         print("Attempting to find available cameras...")
         for i in range(4):
             try:
-                test_cam = cv2.VideoCapture(i, cv2.CAP_V4L2)
+                test_cam = cv2.VideoCapture(i)
                 if test_cam.isOpened():
                     ret, frame = test_cam.read()
                     if ret and frame is not None:
@@ -336,14 +335,14 @@ class VideoStreamer:
                 if idx == CAMERA_INDEX:
                     continue
                 try:
-                    test_cam = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+                    test_cam = cv2.VideoCapture(idx)
                     if test_cam.isOpened():
                         ret, _ = test_cam.read()
                         if ret:
                             print(f"Camera found at index {idx} (configured {CAMERA_INDEX} failed)")
                             test_cam.release()
                             # Try to initialize with this index
-                            self.camera = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+                            self.camera = cv2.VideoCapture(idx)
                             if self.camera.isOpened():
                                 # Apply settings
                                 self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
