@@ -22,12 +22,15 @@ load_dotenv()
 
 # ONNX Runtime — lightweight, no torch/torchvision needed
 try:
-    import onnxruntime as ort
+    import onnxruntime as ort  # pyright: ignore [reportMissingImports]
     ONNX_AVAILABLE = True
     print("ONNX Runtime available for inference")
 except ImportError:
     ONNX_AVAILABLE = False
+    ort = None  # type: ignore
     print("Warning: onnxruntime not installed - AI detection disabled")
+
+YOLO_AVAILABLE = True
 
 # Roboflow client import
 try:
@@ -56,7 +59,7 @@ DETECTION_METHOD = os.getenv('DETECTION_METHOD', 'yolo').lower()
 # nano = ~6MB model, ~100MB RAM vs medium = ~50MB model, ~400MB RAM
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.pt')
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))
-IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.45'))
+IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.35'))
 YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.25'))
 DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '640'))
 MAX_DET = int(os.getenv('MAX_DET', '50'))
@@ -93,6 +96,82 @@ print(f"[Video Processor] Detection size: {DETECTION_SIZE}px")
 print(f"[Video Processor] Detection method: {DETECTION_METHOD}")
 
 
+class PassengerTracker:
+    """Temporal tracking and box smoothing to eliminate bounding box flicker and count jitter."""
+    def __init__(self, hit_thresh: float = 0.25, keep_thresh: float = 0.20, max_missed: int = 3):
+        self.hit_thresh = hit_thresh
+        self.keep_thresh = keep_thresh
+        self.max_missed = max_missed
+        self.tracks = []
+        self.next_id = 1
+
+    @staticmethod
+    def _iou(box1: List[int], box2: List[int]) -> float:
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+        inter = (x2 - x1) * (y2 - y1)
+        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        denom = area1 + area2 - inter
+        return inter / float(denom) if denom > 0 else 0.0
+
+    def update(self, raw_detections: List[Dict]) -> List[Dict]:
+        matched_track_indices = set()
+        unmatched_dets = []
+
+        for det in raw_detections:
+            conf = det['confidence']
+            bbox = det['bbox']
+
+            best_iou = 0.0
+            best_t_idx = -1
+            for idx, track in enumerate(self.tracks):
+                if idx in matched_track_indices:
+                    continue
+                iou = self._iou(bbox, track['bbox'])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_t_idx = idx
+
+            if best_iou >= 0.25 and conf >= self.keep_thresh:
+                track = self.tracks[best_t_idx]
+                track['missed'] = 0
+                track['conf'] = conf
+                track['bbox'] = [
+                    int(0.70 * bbox[i] + 0.30 * track['bbox'][i])
+                    for i in range(4)
+                ]
+                matched_track_indices.add(best_t_idx)
+            else:
+                unmatched_dets.append(det)
+
+        for idx, track in enumerate(self.tracks):
+            if idx not in matched_track_indices:
+                track['missed'] += 1
+
+        self.tracks = [t for t in self.tracks if t['missed'] < self.max_missed]
+
+        for det in unmatched_dets:
+            if det['confidence'] >= self.hit_thresh:
+                self.tracks.append({
+                    'id': self.next_id,
+                    'bbox': det['bbox'],
+                    'conf': det['confidence'],
+                    'missed': 0
+                })
+                self.next_id += 1
+
+        return [{
+            'bbox': t['bbox'],
+            'confidence': float(t['conf']),
+            'class': 'person'
+        } for t in self.tracks]
+
+
 class VideoProcessor:
     """Processes video frames from Raspberry Pi with YOLOv8 ONNX"""
 
@@ -100,6 +179,7 @@ class VideoProcessor:
 
     def __init__(self):
         self.model = None
+        self.tracker = PassengerTracker(hit_thresh=YOLO_CONFIDENCE_THRESHOLD, keep_thresh=0.20, max_missed=3)
         self.input_name = None
         self.input_width = DETECTION_SIZE
         self.input_height = DETECTION_SIZE
@@ -235,48 +315,60 @@ class VideoProcessor:
         if self.model is None:
             return []
         try:
-            detections = self._detect_onnx(frame)
-            self.last_passenger_count = len(detections)
-            return detections
+            raw_detections = self._detect_onnx(frame)
+            stable_detections = self.tracker.update(raw_detections)
+            self.last_passenger_count = len(stable_detections)
+            return stable_detections
         except Exception as e:
             print(f"[Video Processor] Detection error: {e}")
             return []
 
     def _detect_onnx(self, frame: np.ndarray) -> List[Dict]:
-        """ONNX YOLOv8 inference — vectorized numpy, no Python loops"""
+        """ONNX YOLOv8 inference — vectorized numpy, accurate person detection"""
         h, w = frame.shape[:2]
-        in_w = getattr(self, 'input_width', DETECTION_SIZE)
-        in_h = getattr(self, 'input_height', DETECTION_SIZE)
+        in_w, in_h = 640, 480
 
-        # Preprocess
-        img = cv2.resize(frame, (in_w, in_h)).astype(np.float32) / 255.0
+        # Preprocess: convert BGR to RGB (YOLOv8 was trained on RGB)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if w != in_w or h != in_h:
+            rgb = cv2.resize(rgb, (in_w, in_h))
+        img = rgb.astype(np.float32) / 255.0
         img = np.ascontiguousarray(img.transpose(2, 0, 1)[np.newaxis])
 
         # Inference
-        preds = self.model.run(None, {self.input_name: img})[0][0].T  # (8400, 84)
+        preds = self.model.run(None, {self.input_name: img})[0][0].T  # (anchors, 84)
 
-        # Vectorized confidence filter — class 0 is person at index 4
-        conf = preds[:, 4]
-        mask = conf >= YOLO_CONFIDENCE_THRESHOLD
+        # Filter: Class 0 is person, must be the top class to eliminate false positives
+        class_scores = preds[:, 4:]
+        max_class_ids = np.argmax(class_scores, axis=1)
+        person_scores = preds[:, 4]
+
+        conf_thresh = YOLO_CONFIDENCE_THRESHOLD if YOLO_CONFIDENCE_THRESHOLD > 0.05 else 0.40
+        mask = (max_class_ids == 0) & (person_scores >= conf_thresh)
         if not mask.any():
             return []
 
         filtered = preds[mask]
+        conf = person_scores[mask]
         cx, cy, bw, bh = filtered[:, 0], filtered[:, 1], filtered[:, 2], filtered[:, 3]
-        sx, sy = w / in_w, h / in_h
+        sx, sy = w / float(in_w), h / float(in_h)
 
         x1 = np.clip(((cx - bw / 2) * sx).astype(int), 0, w)
         y1 = np.clip(((cy - bh / 2) * sy).astype(int), 0, h)
         x2 = np.clip(((cx + bw / 2) * sx).astype(int), 0, w)
         y2 = np.clip(((cy + bh / 2) * sy).astype(int), 0, h)
 
-        detections = [
-            {'bbox': [int(x1[i]), int(y1[i]), int(x2[i]), int(y2[i])],
-             'confidence': float(filtered[i, 4]),
-             'class': 'person'}
-            for i in range(len(filtered))
-        ]
-        return self._apply_nms(detections)
+        raw_detections = []
+        for i in range(len(filtered)):
+            bbox = [int(x1[i]), int(y1[i]), int(x2[i]), int(y2[i])]
+            if self._is_valid_person_box(bbox, w, h):
+                raw_detections.append({
+                    'bbox': bbox,
+                    'confidence': float(conf[i]),
+                    'class': 'person'
+                })
+
+        return self._apply_nms(raw_detections, iou_threshold=IOU_THRESHOLD)[:MAX_DET]
 
     def _detect_with_yolo(self, frame: np.ndarray) -> List[Dict]:
         """Detect passengers using local YOLO model"""
@@ -332,9 +424,8 @@ class VideoProcessor:
                         if box_area < frame_area * 0.008:
                             continue
 
-                        # Aspect ratio check: people are taller than wide (relaxed)
-                        aspect_ratio = box_height / box_width if box_width > 0 else 0
-                        if aspect_ratio < 0.4 or aspect_ratio > 4.0:
+                        bbox = [int(x1), int(y1), int(x2), int(y2)]
+                        if not self._is_valid_person_box(bbox, frame.shape[1], frame.shape[0]):
                             continue
                         
                         filtered_detections.append({
@@ -389,29 +480,60 @@ class VideoProcessor:
             print(f"[Video Processor] Roboflow detection error: {e}")
             return []
     
-    def _apply_nms(self, detections: List[Dict], iou_threshold: float = 0.45) -> List[Dict]:
-        """Apply Non-Maximum Suppression to remove overlapping detections"""
+    @staticmethod
+    def _is_valid_person_box(bbox: List[int], frame_w: int, frame_h: int) -> bool:
+        """Reject non-human objects, materials, and ceiling/wall-hung clothes.
+        A real passenger is standing or seated, extending down into the seating/floor area.
+        Hanging clothes, curtains, and objects floating in the upper half of the view
+        are strictly rejected."""
+        x1, y1, x2, y2 = bbox
+        w = x2 - x1
+        h = y2 - y1
+
+        # 1. Minimum person dimensions
+        if h < 80 or w < 40:
+            return False
+
+        # 2. Ceiling / wall-hung object rejection:
+        # Real passengers stand on the floor or sit on seats (y2 > 0.58 * frame_h).
+        # Any detection whose bottom edge ends in mid-air in the upper half (y2 <= 0.58 * frame_h)
+        # while originating near the top/wall (y1 < 0.25 * frame_h) is a hanging object
+        # (clothes on hangers, hooks, bags, curtains, overhead gear).
+        if y2 <= int(frame_h * 0.58) and y1 < int(frame_h * 0.25):
+            return False
+
+        # 3. Reject abnormally wide composite boxes (e.g. mega box covering table + clothes)
+        if w > int(frame_w * 0.50) and h < int(frame_h * 0.85):
+            return False
+
+        # 4. Aspect ratio: human passengers are vertically oriented or seated (h/w >= 0.65)
+        if (h / float(w)) < 0.65:
+            return False
+
+        return True
+
+    def _calculate_ios(self, box1: List[int], box2: List[int]) -> float:
+        """Intersection over Smaller Box Area — detects when one box engulfs or contains another."""
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+
+        inter_area = (x2 - x1) * (y2 - y1)
+        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        smaller_area = min(area1, area2)
+
+        return inter_area / float(smaller_area) if smaller_area > 0 else 0.0
+
+    def _apply_nms(self, detections: List[Dict], iou_threshold: float = 0.35) -> List[Dict]:
+        """Apply Non-Maximum Suppression with containment suppression to remove overlapping detections"""
         if not detections:
             return detections
 
-        try:
-            boxes = []
-            scores = []
-            for d in detections:
-                bx = d['bbox']
-                boxes.append([bx[0], bx[1], bx[2] - bx[0], bx[3] - bx[1]])
-                scores.append(float(d['confidence']))
-
-            indices = cv2.dnn.NMSBoxes(boxes, scores, YOLO_CONFIDENCE_THRESHOLD, iou_threshold)
-            if len(indices) == 0:
-                return []
-            if hasattr(indices, 'flatten'):
-                indices = indices.flatten()
-            return [detections[int(i)] for i in indices][:MAX_DET]
-        except Exception as e:
-            print(f"[Video Processor] cv2.dnn.NMSBoxes fallback: {e}")
-
-        # Fallback manual NMS
         detections_sorted = sorted(detections, key=lambda x: x['confidence'], reverse=True)
         final_detections = []
         while detections_sorted:
@@ -420,7 +542,8 @@ class VideoProcessor:
             remaining = []
             for det in detections_sorted:
                 iou = self._calculate_iou(current['bbox'], det['bbox'])
-                if iou < iou_threshold:
+                ios = self._calculate_ios(current['bbox'], det['bbox'])
+                if iou < iou_threshold and ios < 0.65:
                     remaining.append(det)
             detections_sorted = remaining
         return final_detections[:MAX_DET]

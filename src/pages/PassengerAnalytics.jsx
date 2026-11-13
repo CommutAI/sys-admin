@@ -273,7 +273,7 @@ const PassengerAnalytics = () => {
     const matchesSearch = irr.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          irr.trips?.bus_id?.plate_number?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = filterStatus === 'all' || (filterStatus === 'resolved' ? irr.resolved : !irr.resolved);
-    const matchesType = filterType === 'all' || irr.type === filterType;
+    const matchesType = filterType === 'all' || irr.type === filterType || irr.anomaly_type === filterType;
     return matchesSearch && matchesStatus && matchesType;
   });
 
@@ -289,17 +289,45 @@ const PassengerAnalytics = () => {
   }, []);
 
   const typeColors = {
-    double_scan: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
-    count_mismatch: 'bg-orange-500/20 text-orange-400 border-orange-500/50',
     fare_evasion: 'bg-red-500/20 text-red-400 border-red-500/50',
+    count_mismatch: 'bg-amber-500/20 text-amber-400 border-amber-500/50',
+    camera_malfunction: 'bg-rose-500/20 text-rose-400 border-rose-500/50',
+    hardware_error: 'bg-pink-500/20 text-pink-400 border-pink-500/50',
+    overcrowding: 'bg-orange-500/20 text-orange-400 border-orange-500/50',
+    double_scan: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
+    staff_absence: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50',
+    passenger_spike: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
+    trip_duration: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/50',
+    route_deviation: 'bg-red-600/20 text-red-300 border-red-600/50',
+    boarding_rate: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/50',
+    passenger_dispute: 'bg-amber-600/20 text-amber-300 border-amber-600/50',
+    wrong_route: 'bg-purple-600/20 text-purple-300 border-purple-600/50',
+    overshooting: 'bg-teal-500/20 text-teal-400 border-teal-500/50',
+    underpayment: 'bg-red-400/20 text-red-300 border-red-400/50',
+    card_sharing: 'bg-violet-500/20 text-violet-400 border-violet-500/50',
+    unauthorized_passenger: 'bg-rose-600/20 text-rose-300 border-rose-600/50',
     other: 'bg-gray-500/20 text-gray-400 border-gray-500/50',
   };
 
   const typeLabels = {
-    double_scan: 'Double Scan',
-    count_mismatch: 'Count Mismatch',
-    fare_evasion: 'Fare Evasion',
-    other: 'Other',
+    fare_evasion: 'Unpaid Passenger (Fare Evasion)',
+    count_mismatch: 'Count Discrepancy (AI vs QR)',
+    camera_malfunction: 'Camera / Video Feed Issue',
+    hardware_error: 'Hardware Device Error',
+    overcrowding: 'Overcapacity Alert',
+    double_scan: 'Duplicate QR Scan',
+    staff_absence: 'Staff Missing (No Conductor)',
+    passenger_spike: 'Sudden Passenger Surge',
+    trip_duration: 'Trip Duration Exceeded',
+    route_deviation: 'Route Deviation Alert',
+    boarding_rate: 'Abnormal Boarding Rate',
+    passenger_dispute: 'Passenger Dispute',
+    wrong_route: 'Wrong Route Logged',
+    overshooting: 'Passenger Overshooting',
+    underpayment: 'Fare Underpayment',
+    card_sharing: 'Card Sharing Detected',
+    unauthorized_passenger: 'Unauthorized Boarding',
+    other: 'System Discrepancy',
   };
 
   if (loading) {
@@ -393,7 +421,7 @@ const PassengerAnalytics = () => {
               <p className="text-white text-2xl font-bold">{stats.anomaliesDetected}</p>
             </div>
           </div>
-          <p className="text-green-400 text-sm">Fare irregularities</p>
+          <p className="text-amber-400 text-sm">System & fare alerts</p>
         </div>
       </div>
 
@@ -579,7 +607,7 @@ const PassengerAnalytics = () => {
       <div className="glass-card p-6">
         <h2 className="text-white text-xl font-bold mb-4 flex items-center gap-2">
           <XCircle className="text-orange-400" />
-          Fare Irregularities Management
+          System Anomalies & Irregularity Alerts
         </h2>
         
         <div className="flex items-center gap-4 mb-6 flex-wrap">
@@ -587,7 +615,7 @@ const PassengerAnalytics = () => {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
             <input
               type="text"
-              placeholder="Search irregularities..."
+              placeholder="Search alerts by description or bus plate..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-orange-500"
@@ -607,11 +635,15 @@ const PassengerAnalytics = () => {
             onChange={(e) => setFilterType(e.target.value)}
             className="bg-gray-800 border border-white/20 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-orange-500"
           >
-            <option value="all" className="bg-gray-800 text-white">All Types</option>
-            <option value="double_scan" className="bg-gray-800 text-white">Double Scan</option>
-            <option value="count_mismatch" className="bg-gray-800 text-white">Count Mismatch</option>
-            <option value="fare_evasion" className="bg-gray-800 text-white">Fare Evasion</option>
-            <option value="other" className="bg-gray-800 text-white">Other</option>
+            <option value="all" className="bg-gray-800 text-white">All Alert Types</option>
+            <option value="fare_evasion" className="bg-gray-800 text-white">Unpaid Passenger (Fare Evasion)</option>
+            <option value="count_mismatch" className="bg-gray-800 text-white">Count Discrepancy (AI vs QR)</option>
+            <option value="camera_malfunction" className="bg-gray-800 text-white">Camera / Video Feed Issue</option>
+            <option value="overcrowding" className="bg-gray-800 text-white">Overcapacity Alert</option>
+            <option value="double_scan" className="bg-gray-800 text-white">Duplicate QR Scan</option>
+            <option value="staff_absence" className="bg-gray-800 text-white">Missing Staff</option>
+            <option value="hardware_error" className="bg-gray-800 text-white">Hardware Error</option>
+            <option value="other" className="bg-gray-800 text-white">Other Discrepancies</option>
           </select>
         </div>
 
@@ -629,19 +661,23 @@ const PassengerAnalytics = () => {
             </thead>
             <tbody>
               {filteredIrregularities.length > 0 ? (
-                filteredIrregularities.map((irr) => (
-                  <tr key={irr.id} className="border-b border-white/5 hover:bg-white/5">
-                    <td className="py-4">
-                      <span className={`px-3 py-1 rounded-full text-xs border ${typeColors[irr.type]}`}>
-                        {typeLabels[irr.type]}
-                      </span>
-                    </td>
-                    <td className="py-4 text-white/70">{irr.description}</td>
-                    <td className="py-4 text-white/70">{irr.trips?.bus_id?.plate_number || 'N/A'}</td>
-                    <td className="py-4 text-white/60 text-sm">
-                      {new Date(irr.detected_at).toLocaleString()}
-                    </td>
-                    <td className="py-4">
+                filteredIrregularities.map((irr) => {
+                  const alertKey = irr.anomaly_type || irr.type;
+                  const badgeColor = typeColors[alertKey] || typeColors[irr.type] || typeColors.other;
+                  const badgeLabel = typeLabels[alertKey] || typeLabels[irr.type] || (alertKey || 'Alert').replace(/_/g, ' ');
+                  return (
+                    <tr key={irr.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="py-4">
+                        <span className={`px-3 py-1 rounded-full text-xs border ${badgeColor}`}>
+                          {badgeLabel}
+                        </span>
+                      </td>
+                      <td className="py-4 text-white/70">{irr.description}</td>
+                      <td className="py-4 text-white/70">{irr.trips?.bus_id?.plate_number || 'N/A'}</td>
+                      <td className="py-4 text-white/60 text-sm">
+                        {new Date(irr.detected_at).toLocaleString()}
+                      </td>
+                      <td className="py-4">
                       <span className={`flex items-center gap-2 ${irr.resolved ? 'text-green-400' : 'text-red-400'}`}>
                         {irr.resolved ? (
                           <>
@@ -667,12 +703,13 @@ const PassengerAnalytics = () => {
                       )}
                     </td>
                   </tr>
-                ))
+                );
+              })
               ) : (
                 <tr>
                   <td colSpan={6} className="py-12 text-center">
                     <AlertTriangle className="w-16 h-16 text-white/20 mx-auto mb-4" />
-                    <p className="text-white/60">No fare irregularities found</p>
+                    <p className="text-white/60">No system anomalies or irregularities found</p>
                   </td>
                 </tr>
               )}

@@ -233,7 +233,7 @@ def detect_fare_evasion(trip: Dict, ai_count: int, boarded_count: int, staff_cou
     )
 
 
-def detect_overcrowding(trip: Dict, ai_count: int, bus_capacity: int = 50) -> AnomalyResult:
+def detect_overcrowding(trip: Dict, ai_count: int, bus_capacity: int = 35) -> AnomalyResult:
     """Scenario 2: Overcrowding - AI count exceeds bus capacity"""
     detected = ai_count > bus_capacity
     over_by = ai_count - bus_capacity
@@ -361,42 +361,60 @@ def detect_staff_absence(trip: Dict, ai_count: int) -> AnomalyResult:
 
 
 def detect_camera_malfunction(trip_id: str) -> AnomalyResult:
-    """Scenario 4: Camera Malfunction - Zero counts for >5 minutes"""
+    """Scenario 4: Camera Malfunction - Verified against passenger boardings and feed status"""
     five_minutes_ago = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     
-    count_result = supabase.table('passenger_counts').select('count, recorded_at').eq('trip_id', trip_id).gte('recorded_at', five_minutes_ago).execute()
+    count_result = supabase.table('passenger_counts').select('count, ai_count, recorded_at').eq('trip_id', trip_id).gte('recorded_at', five_minutes_ago).execute()
+    boarded_result = supabase.table('boarded_passengers').select('id').eq('trip_id', trip_id).gte('boarded_at', five_minutes_ago).execute()
+    
+    recent_boardings = len(boarded_result.data) if boarded_result.data else 0
+    data_points = len(count_result.data) if count_result.data else 0
     
     detected = False
-    duration_minutes = 0.0
+    duration_minutes = 5.0
     confidence = 0.0
     
-    if count_result.data:
-        all_zero = all(c.get('count', 0) == 0 for c in count_result.data)
-        detected = all_zero and len(count_result.data) > 0
-        duration_minutes = 5.0
-        confidence = 0.9 if len(count_result.data) > 10 else 0.6
+    # A true camera malfunction occurs only if passengers actively boarded via QR tickets
+    # in the last 5 minutes, but the camera reported 0 passengers or produced 0 data points
+    if recent_boardings > 0:
+        if data_points == 0:
+            detected = True
+            confidence = 0.90
+            description = (
+                f"Camera Malfunction Alert: {recent_boardings} passenger(s) scanned QR cards in the last 5 minutes, "
+                f"but the camera produced 0 data points. Video feed may be disconnected."
+            )
+        else:
+            all_zero = all((c.get('ai_count') or c.get('count', 0)) == 0 for c in count_result.data)
+            if all_zero:
+                detected = True
+                confidence = 0.85
+                description = (
+                    f"Camera Sensor Alert: {recent_boardings} passenger(s) boarded via QR scans, "
+                    f"but camera detected 0 passengers across {data_points} data points. Possible lens obstruction or alignment issue."
+                )
+            else:
+                detected = False
+                confidence = 0.95
+                description = f"Camera Status: FUNCTIONING NORMALLY. Tracking {data_points} frames with active boardings."
     else:
-        # No counts in last 5 minutes
-        detected = True
-        duration_minutes = 5.0
-        confidence = 0.8
+        # No QR boardings in the last 5 minutes — normal idle or empty bus, NOT a malfunction
+        detected = False
+        confidence = 0.90
+        description = (
+            f"Camera Status: FUNCTIONING NORMALLY (Bus idle/empty). "
+            f"0 QR scans in the last 5 minutes. Data points recorded: {data_points}."
+        )
     
     severity = "high" if detected else "low"
-    
-    description = (
-        f"Camera Status: {'MALFUNCTION DETECTED' if detected else 'FUNCTIONING NORMALLY'}. "
-        f"Zero counts reported for {duration_minutes:.0f} minutes. "
-        f"Data points in last 5 min: {len(count_result.data) if count_result.data else 0}. "
-        f"Confidence: {confidence:.0%}."
-    )
     
     if detected:
         recommendation = AnomalyRecommendation(
             priority="HIGH",
             action="Inspect camera hardware and connection",
-            details=f"Camera may be malfunctioning or disconnected. "
+            details=f"Camera may be malfunctioning or disconnected while passengers are actively boarding. "
                     f"Check physical connection, power supply, and restart camera service.",
-            estimated_impact="No passenger counting, fare evasion undetected"
+            estimated_impact="Passenger counting inactive during active boardings"
         )
     else:
         recommendation = None
@@ -408,7 +426,7 @@ def detect_camera_malfunction(trip_id: str) -> AnomalyResult:
         historical_average=None,
         trend=None,
         duration_minutes=duration_minutes,
-        affected_passengers=0
+        affected_passengers=recent_boardings if detected else 0
     )
     
     return AnomalyResult(

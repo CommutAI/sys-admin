@@ -39,18 +39,20 @@ except ImportError:
 
 # ONNX Runtime for CPU-optimized inference
 try:
-    import onnxruntime as ort
+    import onnxruntime as ort  # pyright: ignore [reportMissingImports]
     ONNX_AVAILABLE = True
 except ImportError:
     ONNX_AVAILABLE = False
+    ort = None  # type: ignore
     print("Warning: onnxruntime not installed - ONNX detection disabled")
 
 # TensorFlow Lite for ARM64-optimized inference
 try:
-    import tensorflow.lite as tflite
+    import tensorflow.lite as tflite  # pyright: ignore [reportMissingImports]
     TFLITE_AVAILABLE = True
 except ImportError:
     TFLITE_AVAILABLE = False
+    tflite = None  # type: ignore
     print("Warning: tensorflow-lite not installed - TFLite detection disabled")
 
 # Roboflow API for cloud-based detection
@@ -571,13 +573,13 @@ DISABLE_DB_WRITES = os.getenv('DISABLE_DB_WRITES', 'false').lower() == 'true'
 SKIP_WEBSOCKET_THROTTLE = os.getenv('SKIP_WEBSOCKET_THROTTLE', 'false').lower() == 'true'
 DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '160'))  # Match ONNX export imgsz (160 = fastest on Pi)
 
-# AI Model configuration
+# AI Model configuration — strictly YOLO/ONNX person detection
 DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
-_count_method_default = 'backend' if not DISABLE_AI else 'mog2'  # Use backend by default
+_count_method_default = 'onnx' if ONNX_AVAILABLE else 'backend'
 COUNT_METHOD = os.getenv('COUNT_METHOD', _count_method_default)
-MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.pt')
-CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))  # Keep at 0.25 for better detection
-IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.45'))  # Keep at 0.45 for standard NMS
+MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.onnx')
+CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))  # 0.25 captures seated/dim passengers; _is_valid_person_box rejects objects
+IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.35'))  # 0.35 NMS IoU to eliminate duplicate bounding boxes on same person
 JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '60'))
 
 # YOLO-specific confidence threshold for person detection
@@ -591,9 +593,6 @@ MAX_VIDEO_DURATION = int(os.getenv('MAX_VIDEO_DURATION', '300'))
 VIDEO_FORMAT = os.getenv('VIDEO_FORMAT', 'mp4')
 VIDEO_BITRATE = int(os.getenv('VIDEO_BITRATE', '1000000'))
 
-# Minimum contour area (pixels²) for MOG2 to count as a person
-MOG2_MIN_AREA = int(os.getenv('MOG2_MIN_AREA', '1500'))
-
 # Passenger detection classes (COCO dataset)
 PASSENGER_CLASSES = ['person']
 
@@ -603,12 +602,91 @@ print(f"Ultra-low latency settings: ENABLE_REALTIME_MODE={ENABLE_REALTIME_MODE},
 print(f"Camera settings: {CAMERA_WIDTH}x{CAMERA_HEIGHT} @ {FPS}fps, JPEG_QUALITY={JPEG_QUALITY}")
 print(f"Performance optimizations: DISABLE_DRAWING={DISABLE_DRAWING}, DISABLE_DB_WRITES={DISABLE_DB_WRITES}, FRAME_QUEUE_SIZE={FRAME_QUEUE_SIZE}")
 
+class PassengerTracker:
+    """Temporal tracking and box smoothing to eliminate bounding box flicker and count jitter."""
+    def __init__(self, hit_thresh=0.25, keep_thresh=0.20, max_missed=3):
+        self.hit_thresh = hit_thresh
+        self.keep_thresh = keep_thresh
+        self.max_missed = max_missed
+        self.tracks = []
+        self.next_id = 1
+
+    @staticmethod
+    def _iou(box1, box2):
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+        inter = (x2 - x1) * (y2 - y1)
+        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        denom = area1 + area2 - inter
+        return inter / float(denom) if denom > 0 else 0.0
+
+    def update(self, raw_detections):
+        matched_track_indices = set()
+        unmatched_dets = []
+
+        for det in raw_detections:
+            conf = det['confidence']
+            bbox = det['bbox']
+
+            best_iou = 0.0
+            best_t_idx = -1
+            for idx, track in enumerate(self.tracks):
+                if idx in matched_track_indices:
+                    continue
+                iou = self._iou(bbox, track['bbox'])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_t_idx = idx
+
+            # If matching an active passenger, keep tracking down to keep_thresh (0.28)
+            if best_iou >= 0.25 and conf >= self.keep_thresh:
+                track = self.tracks[best_t_idx]
+                track['missed'] = 0
+                track['conf'] = conf
+                # Exponential Moving Average for jitter-free bounding box (alpha = 0.70)
+                track['bbox'] = [
+                    int(0.70 * bbox[i] + 0.30 * track['bbox'][i])
+                    for i in range(4)
+                ]
+                matched_track_indices.add(best_t_idx)
+            else:
+                unmatched_dets.append(det)
+
+        # Increment missed counter for unobserved tracks
+        for idx, track in enumerate(self.tracks):
+            if idx not in matched_track_indices:
+                track['missed'] += 1
+
+        # Remove tracks that have departed (missed for >= max_missed frames)
+        self.tracks = [t for t in self.tracks if t['missed'] < self.max_missed]
+
+        # Only create a NEW passenger track if confidence meets the strict hit_thresh (0.40)
+        for det in unmatched_dets:
+            if det['confidence'] >= self.hit_thresh:
+                self.tracks.append({
+                    'id': self.next_id,
+                    'bbox': det['bbox'],
+                    'conf': det['confidence'],
+                    'missed': 0
+                })
+                self.next_id += 1
+
+        return [{
+            'bbox': t['bbox'],
+            'confidence': float(t['conf']),
+            'class': 'person'
+        } for t in self.tracks]
+
 class VideoProcessor:
     def __init__(self):
         self.camera = None
         self.model = None
-        self.bg_subtractor = None   # used when COUNT_METHOD == 'mog2'
-        self.hog = None             # used when COUNT_METHOD == 'hog'
+        self.tracker = PassengerTracker(hit_thresh=YOLO_CONFIDENCE_THRESHOLD, keep_thresh=0.20, max_missed=3)
         self.frame_queue = queue.Queue(maxsize=FRAME_QUEUE_SIZE)  # Optimized queue size
         self.latest_frame = None
         self.running = False
@@ -742,29 +820,18 @@ class VideoProcessor:
             # Backend detection mode - no local model needed
             print("Backend detection mode - frames sent to backend for AI processing")
             return True
-        if COUNT_METHOD == 'mog2':
-            # MOG2 background subtraction — detects movement only, not still people
-            self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-                history=500, varThreshold=50, detectShadows=False
-            )
-            print("MOG2 background subtractor initialized (motion-based counting mode)")
-            return True
-        if COUNT_METHOD == 'hog':
-            # HOG person detector — built into OpenCV, detects still people, no model file needed
-            self.hog = cv2.HOGDescriptor()
-            self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-            print("HOG person detector initialized (counts still and moving people, no model file needed)")
-            return True
         if COUNT_METHOD == 'onnx':
             # ONNX Runtime for CPU-optimized YOLO inference
             if not ONNX_AVAILABLE:
-                print("ONNX Runtime not installed - falling back to MOG2")
-                # Initialize MOG2 as fallback
-                self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-                    history=500, varThreshold=50, detectShadows=False
-                )
-                print("MOG2 background subtractor initialized (fallback mode)")
-                return True
+                print("ONNX Runtime not installed - falling back to YOLO PyTorch model")
+                try:
+                    from ultralytics import YOLO
+                    self.model = YOLO(MODEL_PATH)
+                    print(f"YOLO model loaded from {MODEL_PATH}")
+                    return True
+                except Exception as e:
+                    print(f"YOLO loading error: {e}")
+                    return False
             try:
                 import os
                 onnx_model_path = MODEL_PATH if MODEL_PATH.endswith('.onnx') else MODEL_PATH.replace('.pt', '.onnx')
@@ -825,24 +892,14 @@ class VideoProcessor:
         if COUNT_METHOD == 'tflite':
             # TensorFlow Lite for ARM64-optimized YOLO inference
             if not TFLITE_AVAILABLE:
-                print("TensorFlow Lite not installed - falling back to MOG2")
-                self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-                    history=500, varThreshold=50, detectShadows=False
-                )
-                print("MOG2 background subtractor initialized (fallback mode)")
-                return True
+                print("TensorFlow Lite not installed")
+                return False
             try:
                 import os
                 tflite_model_path = MODEL_PATH if MODEL_PATH.endswith('.tflite') else MODEL_PATH.replace('.pt', '.tflite')
                 if not os.path.exists(tflite_model_path):
-                    print(f"TFLite model not found at {tflite_model_path} - generating from YOLO")
-                    if YOLO_AVAILABLE:
-                        yolo_model = YOLO('yolov8s.pt')
-                        yolo_model.export(format='tflite', int8=True)
-                        tflite_model_path = 'yolov8s_int8.tflite'
-                    else:
-                        print("YOLO not available to convert to TFLite")
-                        return False
+                    print(f"TFLite model not found at {tflite_model_path}")
+                    return False
                 self.interpreter = tflite.Interpreter(model_path=tflite_model_path)
                 self.interpreter.allocate_tensors()
                 self.input_details = self.interpreter.get_input_details()
@@ -854,60 +911,27 @@ class VideoProcessor:
                 return False
         if COUNT_METHOD == 'roboflow':
             # Roboflow cloud-based detection for 90%+ accuracy
-            if not ROBOFLOW_AVAILABLE:
-                print("Roboflow API not available - falling back to MOG2")
-                self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-                    history=500, varThreshold=50, detectShadows=False
-                )
-                print("MOG2 background subtractor initialized (fallback mode)")
-                return True
-            if not ROBOFLOW_API_KEY:
-                print("ROBOFLOW_API_KEY not set - falling back to MOG2")
-                self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-                    history=500, varThreshold=50, detectShadows=False
-                )
-                print("MOG2 background subtractor initialized (fallback mode)")
-                return True
+            if not ROBOFLOW_AVAILABLE or not ROBOFLOW_API_KEY:
+                print("Roboflow API not configured")
+                return False
             print(f"Roboflow cloud detection initialized (model: {ROBOFLOW_MODEL})")
             return True
         if COUNT_METHOD == 'opencv_dnn':
-            # OpenCV DNN with MobileNet-SSD for 70-80% accuracy
+            # OpenCV DNN with MobileNet-SSD
             if not OPENCV_DNN_AVAILABLE:
-                print("OpenCV DNN not available - falling back to MOG2")
-                self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-                    history=500, varThreshold=50, detectShadows=False
-                )
-                print("MOG2 background subtractor initialized (fallback mode)")
-                return True
+                print("OpenCV DNN not available")
+                return False
             try:
                 import os
-                # Download model files if not present
                 if not os.path.exists(OPENCV_DNN_MODEL_PATH) or not os.path.exists(OPENCV_DNN_WEIGHTS_PATH):
-                    print("MobileNet-SSD model files not found - downloading...")
-                    import urllib.request
-                    # Download model files
-                    urllib.request.urlretrieve(
-                        "https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20170830/MobileNetSSD_deploy.prototxt",
-                        OPENCV_DNN_MODEL_PATH
-                    )
-                    urllib.request.urlretrieve(
-                        "https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20170830/MobileNetSSD_deploy.caffemodel",
-                        OPENCV_DNN_WEIGHTS_PATH
-                    )
-                    print("MobileNet-SSD model files downloaded successfully")
-                
-                # Load the model
+                    print("MobileNet-SSD model files not found")
+                    return False
                 self.net = cv2.dnn.readNetFromCaffe(OPENCV_DNN_MODEL_PATH, OPENCV_DNN_WEIGHTS_PATH)
                 print(f"OpenCV DNN MobileNet-SSD loaded successfully")
                 return True
             except Exception as e:
                 print(f"OpenCV DNN initialization error: {e}")
-                print("Falling back to MOG2")
-                self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-                    history=500, varThreshold=50, detectShadows=False
-                )
-                print("MOG2 background subtractor initialized (fallback mode)")
-                return True
+                return False
         if DISABLE_AI:
             print("AI detection disabled via DISABLE_AI env var — skipping model load")
             return False
@@ -923,120 +947,30 @@ class VideoProcessor:
             return False
 
     def detect_passengers(self, frame):
-        """Detect/count passengers. Uses HOG, MOG2, ONNX, TFLite, Roboflow, OpenCV DNN, or YOLO depending on COUNT_METHOD."""
+        """Strictly YOLO-based passenger detection. No MOG or HOG."""
         if COUNT_METHOD == 'backend':
             # Backend detection mode - don't process locally, wait for backend results
-            # Return empty list since backend will handle detection
             return []
-        if COUNT_METHOD == 'hog' and hasattr(self, 'hog'):
-            return self._detect_hog(frame)
-        if COUNT_METHOD == 'mog2' and self.bg_subtractor is not None:
-            return self._detect_mog2(frame)
-        if COUNT_METHOD == 'onnx' and hasattr(self, 'onnx_session'):
+        if hasattr(self, 'onnx_session') and self.onnx_session is not None:
             return self._detect_onnx(frame)
-        if COUNT_METHOD == 'onnx' and self.bg_subtractor is not None:
-            # Fallback to MOG2 if ONNX session failed
-            return self._detect_mog2(frame)
-        if COUNT_METHOD == 'tflite' and hasattr(self, 'interpreter'):
-            return self._detect_tflite(frame)
-        if COUNT_METHOD == 'tflite' and self.bg_subtractor is not None:
-            # Fallback to MOG2 if TFLite session failed
-            return self._detect_mog2(frame)
-        if COUNT_METHOD == 'roboflow' and ROBOFLOW_AVAILABLE and ROBOFLOW_API_KEY:
-            return self._detect_roboflow(frame)
-        if COUNT_METHOD == 'roboflow' and self.bg_subtractor is not None:
-            # Fallback to MOG2 if Roboflow fails
-            return self._detect_mog2(frame)
-        if COUNT_METHOD == 'opencv_dnn' and hasattr(self, 'net'):
-            return self._detect_opencv_dnn(frame)
-        if COUNT_METHOD == 'opencv_dnn' and self.bg_subtractor is not None:
-            # Fallback to MOG2 if OpenCV DNN fails
-            return self._detect_mog2(frame)
-        if self.model is None:
-            return []
-        return self._detect_yolo(frame)
-
-    def _detect_hog(self, frame):
-        """HOG-based person detection — built into OpenCV, detects still and moving people.
-        No model file required, very low RAM usage (~50MB), works on any Pi.
-        Tuned for speed on Pi 4: aggressive downscale + larger winStride.
-        """
-        try:
-            # Downscale to 320x240 — HOG only needs to find rough person shapes
-            small = cv2.resize(frame, (320, 240))
-            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-            # Equalise histogram so detection works in dim bus lighting
-            gray = cv2.equalizeHist(gray)
-
-            # winStride=(16,16) is ~4x faster than (8,8) with minor accuracy loss
-            # scale=1.1 fewer pyramid levels = faster
-            rects, _ = self.hog.detectMultiScale(
-                gray,
-                winStride=(16, 16),
-                padding=(8, 8),
-                scale=1.1,
-                hitThreshold=0.0,   # lower = more sensitive, raise to 0.5 if too many false positives
-                finalThreshold=2,   # require a rect to appear in >=2 pyramid levels
-            )
-
-            # Scale bounding boxes back to original frame dimensions
-            scale_x = frame.shape[1] / 320
-            scale_y = frame.shape[0] / 240
-
-            detections = []
-            for (x, y, w, h) in rects:
-                detections.append({
-                    'bbox': [int(x * scale_x), int(y * scale_y),
-                             int((x + w) * scale_x), int((y + h) * scale_y)],
-                    'confidence': 1.0,
-                    'class': 'person'
-                })
-            return detections
-        except Exception as e:
-            print(f"HOG detection error: {e}")
-            return []
-
-    def _detect_mog2(self, frame):
-        """Lightweight person counting via background subtraction (MOG2).
-        Works on any Pi without loading PyTorch/YOLO.
-        Counts moving blobs that are roughly person-shaped.
-        """
-        try:
-            fg_mask = self.bg_subtractor.apply(frame)
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-            fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel)
-            fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel)
-            contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            detections = []
-            for contour in contours:
-                area = cv2.contourArea(contour)
-                if area < MOG2_MIN_AREA:
-                    continue
-                x, y, w, h = cv2.boundingRect(contour)
-                if h > w * 0.8:  # roughly person-shaped (taller than wide)
-                    detections.append({
-                        'bbox': [x, y, x + w, y + h],
-                        'confidence': 1.0,
-                        'class': 'person'
-                    })
-            return detections
-        except Exception as e:
-            print(f"MOG2 detection error: {e}")
-            return []
+        if hasattr(self, 'model') and self.model is not None:
+            return self._detect_yolo(frame)
+        return []
 
     def _detect_onnx(self, frame):
-        """ONNX Runtime-based YOLO detection — size must match the loaded ONNX input."""
+        """ONNX Runtime-based YOLO detection — accurate aspect-ratio preserving inference."""
         try:
             import numpy as np
 
-            # Prefer size read from the ONNX graph (avoids 160 vs 640 mismatch)
-            sz = getattr(self, 'onnx_input_size', None) or DETECTION_SIZE
-            input_shape = (sz, sz)
             original_h, original_w = frame.shape[:2]
+            # Use 4:3 640x480 matching the camera frame proportions
+            in_w, in_h = 640, 480
 
-            # Resize and pad
-            img = cv2.resize(frame, input_shape)
-            img = img.astype(np.float32) / 255.0
+            # Convert BGR to RGB (YOLOv8 was trained on RGB)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            if original_w != in_w or original_h != in_h:
+                rgb = cv2.resize(rgb, (in_w, in_h))
+            img = rgb.astype(np.float32) / 255.0
             img = np.transpose(img, (2, 0, 1))  # HWC to CHW
             img = np.expand_dims(img, axis=0)   # add batch dim
 
@@ -1046,22 +980,29 @@ class VideoProcessor:
                 {self.onnx_session.get_inputs()[0].name: img},
             )
             
-            # Parse outputs (YOLOv8 format: 1, 84, 8400)
+            # Parse outputs (YOLOv8 format: 1, 84, anchors)
             detections = []
             if len(outputs) > 0:
-                output = outputs[0]  # Shape: (1, 84, 8400)
-                predictions = output[0].T  # Shape: (8400, 84)
+                output = outputs[0]
+                predictions = output[0].T  # Shape: (anchors, 84)
                 
-                scores = predictions[:, 4]
+                # Class scores start at index 4; class 0 is person
+                class_scores = predictions[:, 4:]
+                max_class_ids = np.argmax(class_scores, axis=1)
+                person_scores = predictions[:, 4]
+                
                 conf_thresh = YOLO_CONFIDENCE_THRESHOLD if (YOLO_CONFIDENCE_THRESHOLD and YOLO_CONFIDENCE_THRESHOLD > 0.05) else 0.25
-                mask = scores >= conf_thresh
+                
+                # Strict check: object's TOP predicted class must be person (class 0)
+                # This prevents chairs, helmets, and hanging clothes from false-triggering
+                mask = (max_class_ids == 0) & (person_scores >= conf_thresh)
                 if mask.any():
                     filtered = predictions[mask]
-                    confidences = scores[mask]
+                    confidences = person_scores[mask]
                     cx, cy, bw, bh = filtered[:, 0], filtered[:, 1], filtered[:, 2], filtered[:, 3]
-                    sx, sy = original_w / sz, original_h / sz
+                    sx, sy = original_w / float(in_w), original_h / float(in_h)
 
-                    raw_boxes = []
+                    raw_detections = []
                     for k in range(len(filtered)):
                         bx1 = int((cx[k] - bw[k] / 2) * sx)
                         by1 = int((cy[k] - bh[k] / 2) * sy)
@@ -1071,28 +1012,17 @@ class VideoProcessor:
                         by1 = max(0, min(original_h, by1))
                         bx2 = max(0, min(original_w, bx2))
                         by2 = max(0, min(original_h, by2))
-                        raw_boxes.append([bx1, by1, bx2 - bx1, by2 - by1])
-
-                    try:
-                        indices = cv2.dnn.NMSBoxes(raw_boxes, [float(c) for c in confidences], conf_thresh, IOU_THRESHOLD)
-                        if hasattr(indices, 'flatten'):
-                            indices = indices.flatten()
-                        for idx in indices[:MAX_DET]:
-                            rb = raw_boxes[int(idx)]
-                            detections.append({
-                                'bbox': [rb[0], rb[1], rb[0] + rb[2], rb[1] + rb[3]],
-                                'confidence': float(confidences[int(idx)]),
-                                'class': 'person'
-                            })
-                    except Exception:
-                        for k in range(len(raw_boxes)):
-                            rb = raw_boxes[k]
-                            detections.append({
-                                'bbox': [rb[0], rb[1], rb[0] + rb[2], rb[1] + rb[3]],
+                        
+                        bbox = [bx1, by1, bx2, by2]
+                        # Reject non-human objects, materials, ceiling-hung clothes, and ghost boxes
+                        if self._is_valid_person_box(bbox, original_w, original_h):
+                            raw_detections.append({
+                                'bbox': bbox,
                                 'confidence': float(confidences[k]),
                                 'class': 'person'
                             })
-                        detections = self._apply_nms(detections, iou_threshold=IOU_THRESHOLD)[:MAX_DET]
+
+                    detections = self._apply_nms(raw_detections, iou_threshold=IOU_THRESHOLD)[:MAX_DET]
             
             return detections
         except Exception as e:
@@ -1267,8 +1197,8 @@ class VideoProcessor:
                 show_conf=False,
                 line_width=None,
                 show_boxes=False,
-                imgsz=320,
-                max_det=20  # Limit maximum detections to avoid overcounting
+                imgsz=DETECTION_SIZE,
+                max_det=MAX_DET  # Match MAX_DET threshold
             )
             
             raw_person_detections = []
@@ -1316,9 +1246,8 @@ class VideoProcessor:
                         if box_area < frame_area * 0.02:
                             continue
                         
-                        # Aspect ratio check: people are typically taller than wide
-                        aspect_ratio = box_height / box_width if box_width > 0 else 0
-                        if aspect_ratio < 0.5 or aspect_ratio > 4.0:
+                        bbox = [int(x1), int(y1), int(x2), int(y2)]
+                        if not self._is_valid_person_box(bbox, frame.shape[1], frame.shape[0]):
                             continue
 
                         all_person_detections.append({
@@ -1354,8 +1283,58 @@ class VideoProcessor:
             print(f"[YOLO] Detection error: {e}")
             return []
 
-    def _apply_nms(self, detections, iou_threshold=0.45):
-        """Apply Non-Maximum Suppression to remove overlapping detections."""
+    @staticmethod
+    def _is_valid_person_box(bbox, frame_w, frame_h):
+        """Reject non-human objects, materials, and ceiling/wall-hung clothes.
+        A real passenger is standing or seated, extending down into the seating/floor area.
+        Hanging clothes, curtains, and objects floating in the upper half of the view
+        are strictly rejected."""
+        x1, y1, x2, y2 = bbox
+        w = x2 - x1
+        h = y2 - y1
+
+        # 1. Minimum person dimensions (must have sufficient pixels)
+        if h < 80 or w < 40:
+            return False
+
+        # 2. Ceiling / wall-hung object rejection:
+        # Real passengers stand on the floor or sit on seats (y2 > 0.58 * frame_h).
+        # Any detection whose bottom edge ends in mid-air in the upper half (y2 <= 0.58 * frame_h)
+        # while originating near the top/wall (y1 < 0.25 * frame_h) is a hanging object
+        # (clothes on hangers, hooks, bags, curtains, overhead gear).
+        if y2 <= int(frame_h * 0.58) and y1 < int(frame_h * 0.25):
+            return False
+
+        # 3. Reject abnormally wide composite boxes (e.g. mega box covering table + clothes)
+        if w > int(frame_w * 0.50) and h < int(frame_h * 0.85):
+            return False
+
+        # 4. Aspect ratio: human passengers are vertically oriented or seated (h/w >= 0.65)
+        # Flat horizontal inanimate objects (countertops, benches, blankets) are rejected
+        if (h / float(w)) < 0.65:
+            return False
+
+        return True
+
+    def _calculate_ios(self, box1, box2):
+        """Intersection over Smaller Box Area — detects when one box engulfs or contains another."""
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+
+        inter_area = (x2 - x1) * (y2 - y1)
+        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        smaller_area = min(area1, area2)
+
+        return inter_area / float(smaller_area) if smaller_area > 0 else 0.0
+
+    def _apply_nms(self, detections, iou_threshold=0.35):
+        """Apply Non-Maximum Suppression with containment suppression to remove overlapping detections."""
         if not detections:
             return detections
         
@@ -1368,11 +1347,12 @@ class VideoProcessor:
             current = detections_sorted.pop(0)
             final_detections.append(current)
             
-            # Remove detections that overlap significantly with current
+            # Remove detections that overlap significantly or are engulfed by current
             remaining = []
             for det in detections_sorted:
                 iou = self._calculate_iou(current['bbox'], det['bbox'])
-                if iou < iou_threshold:
+                ios = self._calculate_ios(current['bbox'], det['bbox'])
+                if iou < iou_threshold and ios < 0.65:
                     remaining.append(det)
             
             detections_sorted = remaining
@@ -1404,7 +1384,7 @@ class VideoProcessor:
     
     def draw_detections(self, frame, detections):
         """Draw bounding boxes on detected passengers in bright green"""
-        dets = detections if detections is not None and len(detections) > 0 else getattr(self, 'last_detections', [])
+        dets = detections if detections is not None else getattr(self, 'last_detections', [])
         for i, detection in enumerate(dets or [], 1):
             bbox = detection.get('bbox')
             if not bbox or len(bbox) < 4:
@@ -1799,52 +1779,30 @@ class VideoProcessor:
                     frame_counter = 0
                     last_fps_time = current_time
                 
-                # Real-time optimization: Skip detection on some frames
-                if ENABLE_REALTIME_MODE and SKIP_DETECTION_FRAMES > 0:
-                    if self.frame_count % (SKIP_DETECTION_FRAMES + 1) == 0:
-                        # Only run detection if NOT in backend mode
-                        if COUNT_METHOD != 'backend':
-                            # Detect passengers only on specified frames (use deep copy to prevent YOLO drawing)
-                            import copy
-                            detection_frame = copy.deepcopy(frame)
-                            detections = self.detect_passengers(detection_frame)
-                            
-                            # SAFEGUARD: Double-check that all detections meet confidence threshold
-                            if COUNT_METHOD == 'yolo':
-                                valid_detections = [d for d in detections if d.get('confidence', 0) >= YOLO_CONFIDENCE_THRESHOLD]
-                                if len(valid_detections) != len(detections):
-                                    print(f"[SAFEGUARD] Found {len(detections) - len(valid_detections)} low-confidence detections that slipped through!")
-                                    detections = valid_detections
-                            
-                            self.passenger_count = len(detections)
-                            self.last_detections = detections
-                            self.last_detection_count = self.frame_count
-                        else:
-                            # Backend mode: use last known detections from backend response
-                            detections = self.last_detections
-                    else:
-                        # Use last known detections
-                        detections = self.last_detections
+                # Real-time optimization: Run detection asynchronously in worker thread without blocking video stream
+                if COUNT_METHOD != 'backend':
+                    if not getattr(self, '_is_detecting', False):
+                        self._is_detecting = True
+                        detection_frame = frame.copy()
+                        
+                        async def _run_detection_async(det_frame):
+                            try:
+                                raw_dets = await asyncio.to_thread(self.detect_passengers, det_frame)
+                                stable_dets = self.tracker.update(raw_dets)
+                                self.passenger_count = len(stable_dets)
+                                self.last_detections = stable_dets
+                                self.last_detection_count = self.frame_count
+                            except Exception as det_err:
+                                print(f"[DETECTION ERROR] {det_err}")
+                            finally:
+                                self._is_detecting = False
+                        
+                        asyncio.create_task(_run_detection_async(detection_frame))
+                    
+                    detections = getattr(self, 'last_detections', [])
                 else:
-                    # Only run detection if NOT in backend mode
-                    if COUNT_METHOD != 'backend':
-                        # Detect passengers on every frame (use deep copy to prevent YOLO drawing)
-                        import copy
-                        detection_frame = copy.deepcopy(frame)
-                        detections = self.detect_passengers(detection_frame)
-                        
-                        # SAFEGUARD: Double-check that all detections meet confidence threshold
-                        if COUNT_METHOD == 'yolo':
-                            valid_detections = [d for d in detections if d.get('confidence', 0) >= YOLO_CONFIDENCE_THRESHOLD]
-                            if len(valid_detections) != len(detections):
-                                print(f"[SAFEGUARD] Found {len(detections) - len(valid_detections)} low-confidence detections that slipped through!")
-                                detections = valid_detections
-                        
-                        self.passenger_count = len(detections)
-                        self.last_detections = detections
-                    else:
-                        # Backend mode: use last known detections from backend response
-                        detections = self.last_detections
+                    # Backend mode: use last known detections from backend response
+                    detections = getattr(self, 'last_detections', [])
                 
                 # Only print passenger count periodically to reduce overhead
                 if self.frame_count % 30 == 0:
@@ -1986,6 +1944,7 @@ async def health():
             'status': 'healthy',
             'camera_active': camera_active,
             'passenger_count': video_processor.passenger_count,
+            'detections': getattr(video_processor, 'last_detections', []),
             'connected_clients': len(video_processor.websocket_clients),
             'current_trip_id': video_processor.current_trip_id,
             'bus_id': ASSIGNED_BUS_ID,

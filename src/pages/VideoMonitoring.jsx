@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Video, Users, AlertCircle, Wifi, WifiOff, RefreshCw, CheckCircle, Loader2 } from 'lucide-react';
 import { useBackendVideo } from '../hooks/useBackendVideo';
+import { useRaspberryPi } from '../hooks/useRaspberryPi';
 
 // Connection stages and their progress %
 const CONNECTION_STAGES = {
@@ -12,21 +13,33 @@ const CONNECTION_STAGES = {
 };
 
 const VideoMonitoring = ({ autoConnect = true }) => {
-  // Backend video streaming (YOLOv8n processed)
+  const sharedVideoRef = useRef(null);
+
+  // Direct Raspberry Pi stream (Local ONNX or Cloudflare tunnel)
+  const {
+    online: piOnline,
+    connectionStatus: piConnectionStatus,
+    passengerCount: piCount,
+    isStreaming: piIsStreaming,
+    refresh: piRefresh,
+  } = useRaspberryPi({ autoConnect: autoConnect, enableHealthCheck: true, videoRef: sharedVideoRef });
+
+  // Backend video streaming (Render YOLOv8n processed)
   const {
     isStreaming: backendStreaming,
     passengerCount: backendCount,
     connectionStatus: backendStatus,
-    videoRef: backendVideoRef,
     refresh: backendRefresh,
-  } = useBackendVideo({ autoConnect: autoConnect });
+  } = useBackendVideo({ autoConnect: autoConnect, videoRef: sharedVideoRef });
 
-  // Use backend values
-  const isStreaming = backendStreaming;
-  const passengerCount = backendCount;
-  const connectionStatus = backendStatus;
-  const videoRef = backendVideoRef;
-  const refresh = backendRefresh;
+  const isStreaming = backendStreaming || piIsStreaming;
+  const passengerCount = backendStreaming ? backendCount : piCount;
+  const connectionStatus = isStreaming ? 'connected' : backendStatus === 'connecting' || piConnectionStatus === 'connecting' ? 'connecting' : (piOnline ? 'connected' : 'disconnected');
+  const videoRef = sharedVideoRef;
+  const refresh = () => {
+    piRefresh();
+    backendRefresh();
+  };
 
   // displayStage drives the progress bar — stream starts automatically inside the hook
   const displayStage = isStreaming
@@ -131,9 +144,9 @@ const VideoMonitoring = ({ autoConnect = true }) => {
                   <>
                     <Loader2 className="w-12 h-12 text-orange-400 animate-spin mx-auto mb-4" />
                     <p className="text-white/60 text-lg">
-                      {connectionStatus === 'connecting' ? 'Connecting to backend…' : 'Starting stream…'}
+                      {connectionStatus === 'connecting' ? 'Connecting to video stream…' : 'Starting stream…'}
                     </p>
-                    <p className="text-white/30 text-sm mt-1">Backend YOLOv8n processing</p>
+                    <p className="text-white/30 text-sm mt-1">{backendStreaming ? 'Backend YOLOv8n processing' : 'Local ONNX on Pi'}</p>
                   </>
                 )}
               </div>
