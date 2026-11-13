@@ -505,11 +505,12 @@ const Dashboard = () => {
   }, []);
 
   // Keep Render backend alive — ping every 10 minutes to prevent spin-down
+  // Note: Browser may show ERR_BLOCKED_BY_CLIENT for /health - this is from ad blockers and can be ignored
   useEffect(() => {
     const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
     const keepAlive = () => {
-      fetch(`${backendUrl}/health`, { method: 'GET' })
-        .catch(() => {}); // silent fail
+      fetch(`${backendUrl}/health`, { method: 'GET', mode: 'no-cors' })
+        .catch(() => {}); // silent fail - may be blocked by ad blocker
     };
     keepAlive(); // ping immediately on mount
     const interval = setInterval(keepAlive, 10 * 60 * 1000); // every 10 min

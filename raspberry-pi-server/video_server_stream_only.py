@@ -214,8 +214,8 @@ class VideoStreamer:
             if self.camera is not None:
                 self.camera.release()
 
-            # Open camera with default backend (V4L2 can cause issues)
-            self.camera = cv2.VideoCapture(CAMERA_INDEX)
+            # Open camera with V4L2 backend (same as working video_server_fastapi.py)
+            self.camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_V4L2)
 
             if not self.camera.isOpened():
                 print(f"❌ CAMERA ERROR: Could not open camera at index {CAMERA_INDEX} (/dev/video{CAMERA_INDEX})")
@@ -543,6 +543,81 @@ async def send_gps_to_backend():
         await asyncio.sleep(5)
 
 
+async def start_cloudflare_tunnel():
+    """Start Cloudflare tunnel and return the URL"""
+    import subprocess
+    import shutil
+    import re
+
+    # Check if cloudflared is installed
+    if not shutil.which('cloudflared'):
+        print("[Cloudflare] cloudflared not found, installing...")
+        arch = os.uname().machine
+        if arch == 'aarch64':
+            cf_arch = 'arm64'
+        elif arch == 'armv7l':
+            cf_arch = 'arm'
+        else:
+            print(f"[Cloudflare] Unsupported architecture: {arch}")
+            return None
+
+        try:
+            subprocess.run([
+                'curl', '-fsSL',
+                f'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{cf_arch}',
+                '-o', '/tmp/cloudflared'
+            ], check=True)
+            subprocess.run(['chmod', '+x', '/tmp/cloudflared'], check=True)
+            subprocess.run(['sudo', 'mv', '/tmp/cloudflared', '/usr/local/bin/cloudflared'], check=True)
+            print("[Cloudflare] cloudflared installed successfully")
+        except subprocess.CalledProcessError as e:
+            print(f"[Cloudflare] Failed to install cloudflared: {e}")
+            return None
+
+    # Check if tunnel is already running via systemd
+    try:
+        result = subprocess.run(['systemctl', 'is-active', 'cloudflared-tunnel'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("[Cloudflare] Tunnel already running via systemd, fetching URL...")
+            result = subprocess.run([
+                'sudo', 'journalctl', '-u', 'cloudflared-tunnel', '-n', '50', '--no-pager'
+            ], capture_output=True, text=True)
+            match = re.search(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', result.stdout)
+            if match:
+                url = match.group(0)
+                print(f"[Cloudflare] Existing tunnel URL: {url}")
+                return url
+    except Exception as e:
+        print(f"[Cloudflare] Error checking systemd tunnel: {e}")
+
+    # Start tunnel in background if not running
+    print("[Cloudflare] Starting tunnel...")
+    try:
+        process = subprocess.Popen(
+            ['cloudflared', 'tunnel', '--no-autoupdate', '--url', 'http://127.0.0.1:8080'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True
+        )
+
+        # Wait for URL in output
+        for _ in range(45):
+            line = process.stdout.readline()
+            if 'trycloudflare.com' in line:
+                match = re.search(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
+                if match:
+                    url = match.group(0)
+                    print(f"[Cloudflare] Tunnel started: {url}")
+                    return url
+            await asyncio.sleep(1)
+
+        print("[Cloudflare] Tunnel started but URL not found")
+        return None
+    except Exception as e:
+        print(f"[Cloudflare] Failed to start tunnel: {e}")
+        return None
+
+
 async def main():
     """Main entry point"""
     gps_task = None
@@ -552,6 +627,11 @@ async def main():
             init_db()
             start_sync_worker()
             print("[Stream Mode] SQLite local storage initialized")
+
+        # Start Cloudflare tunnel for local access (optional)
+        tunnel_url = await start_cloudflare_tunnel()
+        if tunnel_url:
+            print(f"[Cloudflare] Tunnel URL available: {tunnel_url}")
 
         # Start GPS upload task independently
         gps_task = asyncio.create_task(send_gps_to_backend())
