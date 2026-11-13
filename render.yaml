@@ -14,5 +14,4 @@ services:
         sync: false
       - key: VITE_RASPBERRY_PI_URL
         sync: false
-        defaultValue: "https://asbestos-controlled-rebel-subsidiaries.trycloudflare.com"
     autoDeploy: true

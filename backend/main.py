@@ -138,7 +138,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
     max_age=600,
@@ -158,7 +158,7 @@ app.include_router(trips.router, tags=["Trips"])
 app.include_router(sms.router, tags=["SMS"])
 app.include_router(videos.router, tags=["Videos"])
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 @limiter.limit("100/minute")
 async def root(request: Request):
     return {
@@ -167,7 +167,7 @@ async def root(request: Request):
         "status": "running"
     }
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 @limiter.limit("100/minute")
 async def health_check(request: Request):
     return {

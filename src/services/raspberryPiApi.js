@@ -9,15 +9,13 @@
 
 import { supabase } from '../lib/supabase';
 
-const CLOUDFLARE_TUNNEL_URL = 'https://asbestos-controlled-rebel-subsidiaries.trycloudflare.com';
-const FALLBACK_URL   = import.meta.env.VITE_RASPBERRY_PI_URL || CLOUDFLARE_TUNNEL_URL;
+const LAN_HINT_URL    = 'http://192.168.1.54:8080';
+const FALLBACK_URL   = (import.meta.env.VITE_RASPBERRY_PI_URL || '').replace(/\/$/, '') || LAN_HINT_URL;
 const DEFAULT_TIMEOUT = 8000;
 const BUS_NUMBER      = 1; // this dashboard manages bus 001
-const LAN_HINT_URL    = 'http://192.168.1.54:8080';
 
 // ── URL cache ────────────────────────────────────────────────────────────────
-// Pre-seed with the env-var so the first WebSocket attempt is instant.
-let _resolvedUrl  = FALLBACK_URL;
+let _resolvedUrl  = '';
 let _resolving    = null;
 let _lastResolved = 0;
 const REDISCOVER_INTERVAL = 10_000;
@@ -38,25 +36,13 @@ async function probePiUrl(url, timeoutMs = 2500) {
 /**
  * Resolve the Pi's base HTTP URL.
  * 1. Prefer a reachable VITE_RASPBERRY_PI_URL (LAN or live tunnel).
- * 2. On HTTP origins, try pi_devices LAN IP from Supabase.
- * 3. Last resort: known LAN hint, then env fallback.
+ * 2. On HTTPS origins, try dynamic Cloudflare/ngrok tunnel from Supabase pi_devices (backend_url).
+ * 3. On HTTP origins, try pi_devices LAN IP from Supabase, then tunnel, then LAN hint.
  */
 export async function resolvePiUrl() {
   const now = Date.now();
   const envUrl = (import.meta.env.VITE_RASPBERRY_PI_URL || '').replace(/\/$/, '');
   const isHttpsPage = typeof window !== 'undefined' && window.location.protocol === 'https:';
-
-  // HTTPS pages cannot use http://192.168.x.x (mixed content) — need a live https tunnel
-  if (isHttpsPage) {
-    const secureUrl = envUrl.startsWith('https://') ? envUrl : CLOUDFLARE_TUNNEL_URL;
-    if (secureUrl.startsWith('https://') && await probePiUrl(secureUrl)) {
-      _resolvedUrl = secureUrl;
-      _lastResolved = Date.now();
-      return secureUrl;
-    }
-    console.warn('[Pi] No reachable HTTPS tunnel — camera feed needs a live Cloudflare/ngrok URL');
-    return secureUrl;
-  }
 
   // Return cache if still fresh and still reachable
   if (_resolvedUrl && now - _lastResolved < REDISCOVER_INTERVAL) {
@@ -66,43 +52,79 @@ export async function resolvePiUrl() {
   if (_resolving) return _resolving;
 
   _resolving = (async () => {
-    // 1) Env URL (LAN for local Vite)
-    if (envUrl && await probePiUrl(envUrl)) {
-      console.log('[Pi] Using env URL:', envUrl);
-      _resolvedUrl = envUrl;
-      _lastResolved = Date.now();
-      return envUrl;
+    // 1) Explicit env URL if provided
+    if (envUrl) {
+      if (!isHttpsPage || envUrl.startsWith('https://')) {
+        if (await probePiUrl(envUrl)) {
+          console.log('[Pi] Using env URL:', envUrl);
+          _resolvedUrl = envUrl;
+          _lastResolved = Date.now();
+          return envUrl;
+        }
+      }
     }
 
-    // 2) Supabase registration
+    // 2) Supabase registration (holds LAN IP, port, and Cloudflare tunnel in backend_url)
     try {
       const { data, error } = await supabase
         .from('pi_devices')
-        .select('ip_address, port')
+        .select('ip_address, port, backend_url')
         .eq('bus_number', BUS_NUMBER)
         .maybeSingle();
 
-      if (!error && data?.ip_address) {
-        const url = `http://${data.ip_address}:${data.port || 8080}`;
-        if (await probePiUrl(url)) {
-          console.log('[Pi] Using pi_devices URL:', url);
-          _resolvedUrl = url;
-          _lastResolved = Date.now();
-          return url;
+      if (!error && data) {
+        // If on HTTPS, we MUST use a secure HTTPS tunnel URL to avoid mixed-content blocking
+        if (isHttpsPage) {
+          if (data.backend_url && data.backend_url.startsWith('https://')) {
+            if (await probePiUrl(data.backend_url)) {
+              console.log('[Pi] Using Supabase tunnel URL:', data.backend_url);
+              _resolvedUrl = data.backend_url;
+              _lastResolved = Date.now();
+              return data.backend_url;
+            }
+          }
+        } else {
+          // If on HTTP origin (localhost / LAN dev), try LAN IP first
+          if (data.ip_address) {
+            const url = `http://${data.ip_address}:${data.port || 8080}`;
+            if (await probePiUrl(url)) {
+              console.log('[Pi] Using pi_devices LAN URL:', url);
+              _resolvedUrl = url;
+              _lastResolved = Date.now();
+              return url;
+            }
+          }
+          // Also try tunnel URL on HTTP if LAN isn't directly reachable
+          if (data.backend_url && data.backend_url.startsWith('https://')) {
+            if (await probePiUrl(data.backend_url)) {
+              console.log('[Pi] Using pi_devices tunnel URL:', data.backend_url);
+              _resolvedUrl = data.backend_url;
+              _lastResolved = Date.now();
+              return data.backend_url;
+            }
+          }
         }
       } else if (error && error.code !== '42P01') {
         console.warn('[Pi] pi_devices lookup error:', error.message);
       }
     } catch (e) {
-      console.warn('[Pi] pi_devices lookup threw:', e.message);
+      console.warn('[Pi] pi_devices lookup threw:', e?.message || e);
     }
 
-    // 3) Known LAN hint used by this project
-    if (await probePiUrl(LAN_HINT_URL)) {
+    // 3) On HTTP pages only: try known LAN hint used by this project
+    if (!isHttpsPage && await probePiUrl(LAN_HINT_URL)) {
       console.log('[Pi] Using LAN hint URL:', LAN_HINT_URL);
       _resolvedUrl = LAN_HINT_URL;
       _lastResolved = Date.now();
       return LAN_HINT_URL;
+    }
+
+    // If on HTTPS and no tunnel was reachable, return empty string cleanly
+    if (isHttpsPage) {
+      console.warn('[Pi] No reachable HTTPS tunnel found — running in database/backend mode on HTTPS');
+      _resolvedUrl = '';
+      _lastResolved = Date.now();
+      return '';
     }
 
     console.warn('[Pi] Falling back to', FALLBACK_URL, '(may be unreachable)');
@@ -116,7 +138,7 @@ export async function resolvePiUrl() {
 
 /** Force re-discovery on the next call (e.g. after a manual refresh) */
 export function invalidatePiUrl() {
-  _resolvedUrl  = FALLBACK_URL;  // reset to fallback, not null
+  _resolvedUrl  = '';  // reset to empty, force discovery
   _lastResolved = 0;
 }
 

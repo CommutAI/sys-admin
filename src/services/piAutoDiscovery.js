@@ -107,7 +107,7 @@ async function checkRaspberryPi(ip) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), DISCOVERY_TIMEOUT);
 
-    const response = await fetch(`http://${ip}:5000/`, {
+    const response = await fetch(`http://${ip}:8080/health`, {
       signal: controller.signal,
       mode: 'cors'
     });
@@ -116,8 +116,8 @@ async function checkRaspberryPi(ip) {
 
     if (response.ok) {
       const data = await response.json();
-      // Verify it's our GPS/video server by checking the message
-      if (data.message === 'Bus Monitoring Video Server Running (FastAPI)') {
+      // Verify it's our Pi video server
+      if (data.status === 'healthy' || data.service === 'commutai-pi-service') {
         return ip;
       }
     }
@@ -128,14 +128,14 @@ async function checkRaspberryPi(ip) {
 }
 
 /**
- * Check if a specific IP is running the SMS API server
+ * Check if a specific IP is running the SMS API server (integrated on port 8080)
  */
 async function checkSmsApi(ip) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), DISCOVERY_TIMEOUT);
 
-    const response = await fetch(`http://${ip}:8001/health`, {
+    const response = await fetch(`http://${ip}:8080/health`, {
       signal: controller.signal,
       mode: 'cors'
     });
@@ -143,11 +143,7 @@ async function checkSmsApi(ip) {
     clearTimeout(timeoutId);
 
     if (response.ok) {
-      const data = await response.json();
-      // Verify it's our SMS API by checking the service field
-      if (data.service === 'SMS API Server') {
-        return ip;
-      }
+      return ip;
     }
     return null;
   } catch (error) {
@@ -278,7 +274,7 @@ export async function getRaspberryPiUrl(forceDiscovery = false) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 2000);
 
-        const response = await fetch(`http://${persistedIp}:5000/`, {
+        const response = await fetch(`http://${persistedIp}:8080/health`, {
           signal: controller.signal,
           mode: 'cors'
         });
@@ -286,7 +282,7 @@ export async function getRaspberryPiUrl(forceDiscovery = false) {
         clearTimeout(timeoutId);
 
         if (response.ok) {
-          return `http://${persistedIp}:5000`;
+          return `http://${persistedIp}:8080`;
         }
       } catch (error) {
         clearPersistedIp(); // Clear invalid cached IP
@@ -297,12 +293,11 @@ export async function getRaspberryPiUrl(forceDiscovery = false) {
   // Perform discovery
   const discoveredIp = await discoverRaspberryPi();
   if (discoveredIp) {
-    return `http://${discoveredIp}:5000`;
+    return `http://${discoveredIp}:8080`;
   }
 
-  // Fallback to localhost for local development only
-  console.warn('No Raspberry Pi found, falling back to localhost (for development only)');
-  return 'http://localhost:5000';
+  // Fallback to known Pi LAN IP
+  return 'http://192.168.1.54:8080';
 }
 
 /**
@@ -422,7 +417,7 @@ export async function getSmsApiUrl(forceDiscovery = false) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 2000);
 
-        const response = await fetch(`http://${persistedIp}:8001/health`, {
+        const response = await fetch(`http://${persistedIp}:8080/health`, {
           signal: controller.signal,
           mode: 'cors'
         });
@@ -430,7 +425,7 @@ export async function getSmsApiUrl(forceDiscovery = false) {
         clearTimeout(timeoutId);
 
         if (response.ok) {
-          return `http://${persistedIp}:8001`;
+          return `http://${persistedIp}:8080`;
         }
       } catch (error) {
         clearPersistedSmsApiIp(); // Clear invalid cached IP
@@ -441,10 +436,8 @@ export async function getSmsApiUrl(forceDiscovery = false) {
   // Perform discovery
   const discoveredIp = await discoverSmsApi();
   if (discoveredIp) {
-    return `http://${discoveredIp}:8001`;
+    return `http://${discoveredIp}:8080`;
   }
 
-  // Fallback to localhost for local development only
-  console.warn('No SMS API found, falling back to localhost (for development only)');
-  return 'http://localhost:8001';
+  return 'http://192.168.1.54:8080';
 }

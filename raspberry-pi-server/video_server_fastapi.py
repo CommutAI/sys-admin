@@ -430,6 +430,23 @@ def resolve_assigned_bus():
         print(f"[Bus] Failed to resolve bus assignment: {e}")
 
 
+def get_live_tunnel_url():
+    """Detect live Cloudflare Quick Tunnel URL if cloudflared is running."""
+    try:
+        import subprocess, re
+        out = subprocess.check_output(
+            ["journalctl", "-u", "cloudflared-tunnel.service", "-n", "60", "--no-pager"],
+            stderr=subprocess.DEVNULL,
+            timeout=2.0
+        ).decode()
+        matches = re.findall(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", out)
+        if matches:
+            return matches[-1]
+    except Exception:
+        pass
+    return None
+
+
 def register_device():
     """Upsert this Pi's current LAN IP into pi_devices so the admin
     dashboard can discover the Pi automatically — no hardcoded IP needed."""
@@ -446,16 +463,21 @@ def register_device():
         finally:
             s.close()
 
-        supabase.table("pi_devices").upsert({
+        tunnel_url = get_live_tunnel_url()
+        record = {
             "bus_number": BUS_NUMBER,
             "bus_id": ASSIGNED_BUS_ID,
             "ip_address": lan_ip,
             "port": SERVER_PORT,
             "last_seen": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
             "hostname": hostname,
-        }, on_conflict="bus_number").execute()
+        }
+        if tunnel_url:
+            record["backend_url"] = tunnel_url
 
-        print(f"[Device] Registered: bus={BUS_NUMBER} ip={lan_ip}:{SERVER_PORT} hostname={hostname}")
+        supabase.table("pi_devices").upsert(record, on_conflict="bus_number").execute()
+
+        print(f"[Device] Registered: bus={BUS_NUMBER} ip={lan_ip}:{SERVER_PORT} hostname={hostname} tunnel={tunnel_url}")
     except Exception as e:
         print(f"[Device] Failed to register: {e}")
 

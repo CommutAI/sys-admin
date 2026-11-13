@@ -283,20 +283,16 @@ export function useRaspberryPi(options = {}) {
     safeSet(setPiReachable, null);
     setUsingWebSocket(true);
 
-    // Resolve URL from Supabase pi_devices
+    // Resolve URL from Supabase pi_devices (LAN or Cloudflare tunnel)
     let wsUrl, httpBase;
     try {
-      // On HTTPS origins, skip local Pi connection UNLESS a secure public URL
-      // is configured (e.g. ngrok https:// tunnel via VITE_RASPBERRY_PI_URL).
-      const piEnvUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://asbestos-controlled-rebel-subsidiaries.trycloudflare.com';
-      if (isSecureOrigin() && (!piEnvUrl || !piEnvUrl.startsWith('https://'))) {
-        console.log('[Pi] Skipping WebSocket — running on HTTPS with no secure Pi URL configured');
+      const { resolvePiUrl } = await import('../services/raspberryPiApi');
+      httpBase = await resolvePiUrl();
+      if (!httpBase) {
+        console.log('[Pi] No reachable Pi URL resolved, switching to database mode');
         switchToDatabaseMode();
         return;
       }
-
-      const { resolvePiUrl } = await import('../services/raspberryPiApi');
-      httpBase = await resolvePiUrl();
       wsUrl = httpBase.replace(/^http/, 'ws').replace(/\/?$/, '/ws');
       safeSet(setCurrentPiUrl, httpBase);
       console.log('[Pi] Connecting →', wsUrl);
