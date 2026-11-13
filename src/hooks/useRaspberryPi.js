@@ -31,6 +31,7 @@ export function useRaspberryPi(options = {}) {
   const {
     autoConnect       = true,
     enableLocation    = false,
+    videoRef: externalVideoRef,
   } = options;
 
   // ── UI state ──────────────────────────────────────────────────────────────
@@ -55,7 +56,8 @@ export function useRaspberryPi(options = {}) {
 
   // ── Refs ───────────────────────────────────────────────────────────────────
   const wsRef             = useRef(null);
-  const videoRef          = useRef(null);
+  const internalVideoRef  = useRef(null);
+  const videoRef          = externalVideoRef || internalVideoRef;
   const reconnectTimer    = useRef(null);
   const heartbeatTimer    = useRef(null);
   const connectTimer      = useRef(null);
@@ -366,7 +368,6 @@ export function useRaspberryPi(options = {}) {
       }, HEARTBEAT_MS);
 
       ws.send(JSON.stringify({ action: 'start_stream' }));
-      safeSet(setIsStreaming, true);
 
       try {
         const health = await getPiHealth();
@@ -419,15 +420,21 @@ export function useRaspberryPi(options = {}) {
       try {
         const data = JSON.parse(event.data);
 
+        if (data.error) {
+          console.error('[Pi] Error from camera server:', data.error);
+          safeSet(setCameraActive, false);
+          safeSet(setIsStreaming, false);
+        }
+
         if (data.video_frame && videoRef.current) {
           videoRef.current.src = `data:image/jpeg;base64,${data.video_frame}`;
           safeSet(setIsStreaming, true);
+          safeSet(setCameraActive, true);
         }
         if (data.count !== undefined) {
           safeSet(setPassengerCount, data.count);
           safeSet(setAverageCount,   data.average_count != null ? Number(data.average_count).toFixed(1) : '0');
           safeSet(setLastUpdate,     new Date().toLocaleTimeString());
-          safeSet(setIsStreaming, true); // count arriving = stream is live
         }
         if (data.camera_active !== undefined) safeSet(setCameraActive,  data.camera_active);
         if (data.current_trip_id !== undefined) safeSet(setCurrentTripId, data.current_trip_id);

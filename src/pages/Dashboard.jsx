@@ -436,6 +436,8 @@ const Dashboard = () => {
   const [alertSearchTerm, setAlertSearchTerm] = useState('');
   const [routeCoordinates, setRouteCoordinates] = useState(ROUTE_COORDINATES);
 
+  const sharedVideoRef = useRef(null);
+
   // Single Raspberry Pi connection — shared between status indicators and the video widget
   // Always use backend video (Pi -> backend -> dashboard) with auto-discovery
   const {
@@ -447,20 +449,19 @@ const Dashboard = () => {
     emergencyStatus: piEmergencyStatus,
     hardwareStatus: piHardwareStatus,
     isStreaming: piIsStreaming,
-    videoRef: piVideoRef,
     refresh: piRefresh,
     assignedBus: piAssignedBus,
     activeTripId: piActiveTripId,
     usingWebSocket: piUsingWebSocket,
-  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true });
+  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true, videoRef: sharedVideoRef });
 
   // Backend video connection — Render processes frames with YOLO and streams to dashboard
   const {
     isStreaming: backendStreaming,
+    connectionStatus: backendConnectionStatus,
     passengerCount: backendCount,
-    videoRef: backendVideoRef,
     refresh: backendRefresh,
-  } = useBackendVideo({ autoConnect: true });
+  } = useBackendVideo({ autoConnect: true, videoRef: sharedVideoRef });
 
   // Backend video processing status — not used in Pi ONNX mode
   const [backendTripId, setBackendTripId] = useState(null);
@@ -1005,11 +1006,11 @@ const Dashboard = () => {
         {/* Live Video Monitoring — compact widget */}
         <div className="glass-card p-3 sm:p-4 rounded-xl lg:col-span-2">
           <CompactVideoFeed
-            online={backendStreaming || piOnline}
-            connectionStatus={backendStreaming ? 'connected' : piConnectionStatus}
+            online={backendStreaming || backendConnectionStatus === 'connected' || piOnline}
+            connectionStatus={backendStreaming ? 'connected' : backendConnectionStatus === 'connected' ? 'connected' : piConnectionStatus}
             passengerCount={backendCount || piPassengerCount}
             isStreaming={backendStreaming || piIsStreaming}
-            videoRef={backendStreaming ? backendVideoRef : piVideoRef}
+            videoRef={sharedVideoRef}
             refresh={backendStreaming ? backendRefresh : piRefresh}
             cameraActive={piCameraActive}
             usingBackend={backendStreaming}
@@ -1036,10 +1037,12 @@ const Dashboard = () => {
                 <Video className="w-4 h-4 text-indigo-400" />
                 <p className="text-white/60 text-xs">Backend</p>
               </div>
-              <p className={`text-base sm:text-lg font-bold ${backendStreaming ? 'text-green-400' : 'text-red-400'}`}>
-                {backendStreaming ? 'Online' : 'Offline'}
+              <p className={`text-base sm:text-lg font-bold ${(backendStreaming || backendConnectionStatus === 'connected') ? 'text-green-400' : 'text-red-400'}`}>
+                {(backendStreaming || backendConnectionStatus === 'connected') ? 'Online' : 'Offline'}
               </p>
-              <p className="text-white/40 text-xs mt-1">{backendStreaming ? 'Processing frames' : 'Disconnected'}</p>
+              <p className="text-white/40 text-xs mt-1">
+                {backendStreaming ? 'Processing frames' : backendConnectionStatus === 'connected' ? 'Connected' : 'Disconnected'}
+              </p>
             </div>
             <div className="bg-white/5 p-3 sm:p-4 rounded-xl">
               <div className="flex items-center gap-2 mb-2">

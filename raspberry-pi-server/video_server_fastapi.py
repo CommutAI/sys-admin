@@ -289,11 +289,6 @@ async def lifespan(app: FastAPI):
 
         while True:
             try:
-                # Only connect if there's an active trip
-                if not video_processor.current_trip_id:
-                    await asyncio.sleep(1)
-                    continue
-
                 # Build backend WebSocket URL
                 backend_url = get_backend_url()
                 if not backend_url:
@@ -308,22 +303,22 @@ async def lifespan(app: FastAPI):
                     async with websockets.connect(backend_ws_url) as ws:
                         print(f"[Backend Stream] ✓ Connected to backend successfully")
 
-                        # Send trip info
-                        await ws.send(json.dumps({
-                            'type': 'set_trip',
-                            'trip_id': video_processor.current_trip_id
-                        }))
-                        print(f"[Backend Stream] Sent trip ID: {video_processor.current_trip_id}")
+                        # Send trip info if active
+                        if video_processor.current_trip_id:
+                            await ws.send(json.dumps({
+                                'type': 'set_trip',
+                                'trip_id': video_processor.current_trip_id
+                            }))
+                            print(f"[Backend Stream] Sent trip ID: {video_processor.current_trip_id}")
 
                         # Create tasks for sending and receiving
                         async def send_frames():
                             """Send frames to backend"""
                             frame_count = 0
-                            while video_processor.current_trip_id:
+                            while True:
                                 try:
-                                    if not video_processor.frame_queue.empty():
-                                        frame_base64 = video_processor.frame_queue.get_nowait()
-
+                                    frame_base64 = getattr(video_processor, 'latest_frame', None)
+                                    if frame_base64:
                                         await ws.send(json.dumps({
                                             'type': 'frame',
                                             'frame': frame_base64,
@@ -332,20 +327,20 @@ async def lifespan(app: FastAPI):
                                         }))
                                         
                                         frame_count += 1
-                                        if frame_count % 30 == 0:  # Log every 30 frames (every 3 seconds)
+                                        if frame_count % 30 == 0:  # Log every 30 frames (every 15 seconds)
                                             print(f"[Backend Stream] Sent {frame_count} frames to backend")
 
                                         # Limit to 2 FPS for backend — reduces Render load by 5×
                                         await asyncio.sleep(0.5)
                                     else:
-                                        await asyncio.sleep(0.01)
+                                        await asyncio.sleep(0.05)
                                 except Exception as e:
                                     print(f"[Backend Stream] Error sending frame: {e}")
                                     break
 
                         async def receive_detections():
                             """Receive detection results from backend"""
-                            while video_processor.current_trip_id:
+                            while True:
                                 try:
                                     response = await ws.recv()
                                     data = json.loads(response)
@@ -592,6 +587,7 @@ class VideoProcessor:
         self.bg_subtractor = None   # used when COUNT_METHOD == 'mog2'
         self.hog = None             # used when COUNT_METHOD == 'hog'
         self.frame_queue = queue.Queue(maxsize=FRAME_QUEUE_SIZE)  # Optimized queue size
+        self.latest_frame = None
         self.running = False
         self.passenger_count = 0
         self.detection_history = []
@@ -651,6 +647,7 @@ class VideoProcessor:
             if self.camera is not None:
                 self.camera.release()
                 self.camera = None
+                time.sleep(0.3)
 
             candidates = []
             primary_idx = _camera_index_from_value(CAMERA_ID)
@@ -1851,6 +1848,7 @@ class VideoProcessor:
                 frame_base64 = self.encode_frame(annotated_frame)
                 
                 if frame_base64:
+                    self.latest_frame = frame_base64
                     # Put frame in queue for streaming (drop old frames if queue is full)
                     if self.frame_queue.full():
                         try:

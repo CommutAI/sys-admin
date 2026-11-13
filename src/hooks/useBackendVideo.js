@@ -9,14 +9,15 @@ const HEARTBEAT_MS    = 25_000;
 const RECONNECT_BASE  = 3_000;   // first retry after 3 s
 const RECONNECT_MAX   = 30_000;  // cap at 30 s
 
-export function useBackendVideo({ autoConnect = true } = {}) {
+export function useBackendVideo({ autoConnect = true, videoRef: externalVideoRef } = {}) {
   const [isStreaming,      setIsStreaming]      = useState(false);
   const [passengerCount,   setPassengerCount]   = useState(0);
   const [error,            setError]            = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
 
   const wsRef           = useRef(null);
-  const videoRef        = useRef(null);
+  const internalVideoRef = useRef(null);
+  const videoRef        = externalVideoRef || internalVideoRef;
   const heartbeatTimer  = useRef(null);
   const reconnectTimer  = useRef(null);
   const attemptsRef     = useRef(0);
@@ -93,14 +94,18 @@ export function useBackendVideo({ autoConnect = true } = {}) {
         const data = JSON.parse(event.data);
 
         // Backend sends: { type:'video_frame', frame:'<base64>', count: N }
-        if (data.type === 'video_frame' && data.frame && videoRef.current) {
-          videoRef.current.src = `data:image/jpeg;base64,${data.frame}`;
+        if (data.type === 'video_frame' && data.frame) {
+          if (videoRef.current) {
+            videoRef.current.src = `data:image/jpeg;base64,${data.frame}`;
+          }
           setIsStreaming(true);
         }
 
         // Also handle flat format from Pi direct: { video_frame:'<base64>' }
-        if (data.video_frame && videoRef.current) {
-          videoRef.current.src = `data:image/jpeg;base64,${data.video_frame}`;
+        if (data.video_frame) {
+          if (videoRef.current) {
+            videoRef.current.src = `data:image/jpeg;base64,${data.video_frame}`;
+          }
           setIsStreaming(true);
         }
 
