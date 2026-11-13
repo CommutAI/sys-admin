@@ -12,6 +12,7 @@ const RECONNECT_MAX   = 30_000;  // cap at 30 s
 export function useBackendVideo({ autoConnect = true, videoRef: externalVideoRef } = {}) {
   const [isStreaming,      setIsStreaming]      = useState(false);
   const [passengerCount,   setPassengerCount]   = useState(0);
+  const [tripId,           setTripId]           = useState(null);
   const [error,            setError]            = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
 
@@ -112,6 +113,10 @@ export function useBackendVideo({ autoConnect = true, videoRef: externalVideoRef
         if (data.count !== undefined) {
           setPassengerCount(data.count);
         }
+
+        if (data.trip_id) {
+          setTripId(data.trip_id);
+        }
       } catch (e) {
         console.error('[Backend Video] Message parse error:', e);
       }
@@ -190,6 +195,7 @@ export function useBackendVideo({ autoConnect = true, videoRef: externalVideoRef
   return {
     isStreaming,
     passengerCount,
+    tripId,
     error,
     connectionStatus,
     videoRef,

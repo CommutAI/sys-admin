@@ -57,8 +57,8 @@ DETECTION_METHOD = os.getenv('DETECTION_METHOD', 'yolo').lower()
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.pt')
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.35'))
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.45'))
-YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.35'))
-DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '224'))
+YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.25'))
+DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '640'))
 MAX_DET = int(os.getenv('MAX_DET', '10'))
 
 # Update Roboflow client with API key from env
@@ -101,6 +101,8 @@ class VideoProcessor:
     def __init__(self):
         self.model = None
         self.input_name = None
+        self.input_width = DETECTION_SIZE
+        self.input_height = DETECTION_SIZE
         self.running = False
         self.current_trip_id = None
         self.last_db_save = 0
@@ -118,6 +120,20 @@ class VideoProcessor:
         self.last_roboflow_detection_time = 0
         self.roboflow_frame_counter = 0
         self.last_passenger_count = 0
+
+    def get_or_fetch_active_trip(self) -> Optional[str]:
+        """Return cached trip_id, or fetch active in-progress trip from Supabase"""
+        if self.current_trip_id:
+            return self.current_trip_id
+        if supabase:
+            try:
+                res = supabase.table('trips').select('id').eq('status', 'in_progress').order('started_at', desc=True).limit(1).execute()
+                if res.data and len(res.data) > 0:
+                    self.current_trip_id = res.data[0]['id']
+                    print(f"[Video Processor] Auto-detected active trip from DB: {self.current_trip_id}")
+            except Exception as e:
+                print(f"[Video Processor] Error fetching active trip: {e}")
+        return self.current_trip_id
 
     def initialize_model(self):
         """Initialize ONNX model — downloads yolov8n.onnx if not present"""
@@ -157,8 +173,16 @@ class VideoProcessor:
                 onnx_path,
                 providers=['CPUExecutionProvider']
             )
-            self.input_name = self.model.get_inputs()[0].name
-            print(f"[Video Processor] ONNX model loaded: {onnx_path} ({DETECTION_SIZE}px)")
+            model_inputs = self.model.get_inputs()
+            self.input_name = model_inputs[0].name
+            input_shape = model_inputs[0].shape
+            if len(input_shape) >= 4 and isinstance(input_shape[2], int) and isinstance(input_shape[3], int):
+                self.input_height = input_shape[2]
+                self.input_width = input_shape[3]
+            else:
+                self.input_height = DETECTION_SIZE
+                self.input_width = DETECTION_SIZE
+            print(f"[Video Processor] ONNX model loaded: {onnx_path} (input shape: {self.input_width}x{self.input_height})")
             return True
 
         except Exception as e:
@@ -211,7 +235,9 @@ class VideoProcessor:
         if self.model is None:
             return []
         try:
-            return self._detect_onnx(frame)
+            detections = self._detect_onnx(frame)
+            self.last_passenger_count = len(detections)
+            return detections
         except Exception as e:
             print(f"[Video Processor] Detection error: {e}")
             return []
@@ -219,16 +245,17 @@ class VideoProcessor:
     def _detect_onnx(self, frame: np.ndarray) -> List[Dict]:
         """ONNX YOLOv8 inference — vectorized numpy, no Python loops"""
         h, w = frame.shape[:2]
-        sz = DETECTION_SIZE
+        in_w = getattr(self, 'input_width', DETECTION_SIZE)
+        in_h = getattr(self, 'input_height', DETECTION_SIZE)
 
         # Preprocess
-        img = cv2.resize(frame, (sz, sz)).astype(np.float32) / 255.0
+        img = cv2.resize(frame, (in_w, in_h)).astype(np.float32) / 255.0
         img = np.ascontiguousarray(img.transpose(2, 0, 1)[np.newaxis])
 
         # Inference
         preds = self.model.run(None, {self.input_name: img})[0][0].T  # (8400, 84)
 
-        # Vectorized confidence filter — no Python loop over 8400 rows
+        # Vectorized confidence filter — class 0 is person at index 4
         conf = preds[:, 4]
         mask = conf >= YOLO_CONFIDENCE_THRESHOLD
         if not mask.any():
@@ -236,12 +263,12 @@ class VideoProcessor:
 
         filtered = preds[mask]
         cx, cy, bw, bh = filtered[:, 0], filtered[:, 1], filtered[:, 2], filtered[:, 3]
-        sx, sy = w / sz, h / sz
+        sx, sy = w / in_w, h / in_h
 
-        x1 = ((cx - bw / 2) * sx).astype(int)
-        y1 = ((cy - bh / 2) * sy).astype(int)
-        x2 = ((cx + bw / 2) * sx).astype(int)
-        y2 = ((cy + bh / 2) * sy).astype(int)
+        x1 = np.clip(((cx - bw / 2) * sx).astype(int), 0, w)
+        y1 = np.clip(((cy - bh / 2) * sy).astype(int), 0, h)
+        x2 = np.clip(((cx + bw / 2) * sx).astype(int), 0, w)
+        y2 = np.clip(((cy + bh / 2) * sy).astype(int), 0, h)
 
         detections = [
             {'bbox': [int(x1[i]), int(y1[i]), int(x2[i]), int(y2[i])],
@@ -366,25 +393,36 @@ class VideoProcessor:
         """Apply Non-Maximum Suppression to remove overlapping detections"""
         if not detections:
             return detections
-        
-        # Sort by confidence (highest first)
+
+        try:
+            boxes = []
+            scores = []
+            for d in detections:
+                bx = d['bbox']
+                boxes.append([bx[0], bx[1], bx[2] - bx[0], bx[3] - bx[1]])
+                scores.append(float(d['confidence']))
+
+            indices = cv2.dnn.NMSBoxes(boxes, scores, YOLO_CONFIDENCE_THRESHOLD, iou_threshold)
+            if len(indices) == 0:
+                return []
+            if hasattr(indices, 'flatten'):
+                indices = indices.flatten()
+            return [detections[int(i)] for i in indices]
+        except Exception as e:
+            print(f"[Video Processor] cv2.dnn.NMSBoxes fallback: {e}")
+
+        # Fallback manual NMS
         detections_sorted = sorted(detections, key=lambda x: x['confidence'], reverse=True)
-        
         final_detections = []
         while detections_sorted:
-            # Keep the highest confidence detection
             current = detections_sorted.pop(0)
             final_detections.append(current)
-            
-            # Remove detections that overlap significantly with current
             remaining = []
             for det in detections_sorted:
                 iou = self._calculate_iou(current['bbox'], det['bbox'])
                 if iou < iou_threshold:
                     remaining.append(det)
-            
             detections_sorted = remaining
-        
         return final_detections
     
     def _calculate_iou(self, box1: List[int], box2: List[int]) -> float:
@@ -432,7 +470,8 @@ class VideoProcessor:
     
     def save_passenger_count_to_db(self, count: int):
         """Save passenger count — throttled, non-blocking via thread"""
-        if not supabase or not self.current_trip_id:
+        trip_id = self.get_or_fetch_active_trip()
+        if not supabase or not trip_id:
             return
         current_time = time.time()
         if current_time - self.last_db_save < DB_SAVE_INTERVAL:
@@ -446,7 +485,7 @@ class VideoProcessor:
         def _write():
             try:
                 supabase.table('passenger_counts').insert({
-                    'trip_id': self.current_trip_id,
+                    'trip_id': trip_id,
                     'count': count,
                     'ai_count': count,
                     'source': 'yolo_backend',

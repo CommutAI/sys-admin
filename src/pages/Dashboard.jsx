@@ -460,6 +460,7 @@ const Dashboard = () => {
     isStreaming: backendStreaming,
     connectionStatus: backendConnectionStatus,
     passengerCount: backendCount,
+    tripId: backendTripIdFromWs,
     refresh: backendRefresh,
   } = useBackendVideo({ autoConnect: true, videoRef: sharedVideoRef });
 
@@ -1070,7 +1071,7 @@ const Dashboard = () => {
                 <p className="text-white/60 text-xs">Trip ID</p>
               </div>
               <p className="text-base sm:text-lg font-bold text-white">
-                {(backendTripId || piCurrentTripId) ? `#${(backendTripId || piCurrentTripId).slice(0, 8)}` : 'None'}
+                {(backendTripIdFromWs || backendTripId || piCurrentTripId) ? `#${(backendTripIdFromWs || backendTripId || piCurrentTripId).slice(0, 8)}` : 'None'}
               </p>
               <p className="text-white/40 text-xs mt-1">Active trip</p>
             </div>

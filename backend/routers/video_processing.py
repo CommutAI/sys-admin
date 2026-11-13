@@ -49,7 +49,9 @@ class ConnectionManager:
             try:
                 await websocket.send_json({
                     'type': 'video_frame',
-                    'frame': self.latest_frame
+                    'frame': self.latest_frame,
+                    'count': getattr(video_processor, 'last_passenger_count', 0),
+                    'trip_id': getattr(video_processor, 'current_trip_id', None)
                 })
             except:
                 pass
@@ -132,6 +134,8 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
                     # Detect passengers (async for Roboflow support)
                     detections = await video_processor.detect_passengers(frame)
                     passenger_count = len(detections)
+                    video_processor.last_passenger_count = passenger_count
+                    active_trip = trip_id or video_processor.get_or_fetch_active_trip()
 
                     # Draw detection boxes on frame
                     frame_with_boxes = video_processor.draw_detections(frame, detections)
@@ -157,6 +161,7 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
                     response = {
                         'type': 'detection',
                         'count': passenger_count,
+                        'trip_id': active_trip,
                         'detections': detections,
                         'timestamp': message.get('timestamp')
                     }
@@ -167,6 +172,7 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
                         'type': 'video_frame',
                         'frame': frame_base64,
                         'count': passenger_count,
+                        'trip_id': active_trip,
                         'timestamp': message.get('timestamp')
                     })
 
