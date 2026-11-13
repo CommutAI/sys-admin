@@ -86,12 +86,7 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
     and return processed detection results
     """
     await manager.connect_pi(websocket, client_id)
-    
-    # Initialize model if not already done
-    if video_processor.model is None:
-        print("[Video Router] Initializing YOLO model...")
-        video_processor.initialize_model()
-    
+
     try:
         while True:
             # Receive frame data from Pi
@@ -140,9 +135,12 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
                     if video_processor.video_writer is not None:
                         video_processor.write_frame_to_recording(frame_with_boxes)
 
-                    # Encode frame with detections - very low quality for maximum speed
-                    _, buffer = cv2.imencode('.jpg', frame_with_boxes, [cv2.IMWRITE_JPEG_QUALITY, 40])
+                    # Encode frame — low quality to save memory and bandwidth
+                    _, buffer = cv2.imencode('.jpg', frame_with_boxes, [cv2.IMWRITE_JPEG_QUALITY, 30])
                     frame_base64 = base64.b64encode(buffer).decode('utf-8')
+
+                    # Explicitly release large objects to help GC
+                    del frame, frame_with_boxes, buffer
 
                     # Store latest frame for new frontend clients
                     manager.latest_frame = frame_base64

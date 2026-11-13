@@ -51,13 +51,14 @@ if SUPABASE_URL and SUPABASE_KEY:
 # Detection method: 'yolo' (local) or 'roboflow' (cloud workflow)
 DETECTION_METHOD = os.getenv('DETECTION_METHOD', 'yolo').lower()
 
-# Model configuration - Optimized for maximum speed (YOLOv8n)
-MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.pt')  # Nano model for maximum speed
-CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))  # Lower for speed
+# Model configuration - use ONNX for lower memory on Render free tier
+# ONNX uses ~60MB vs ~200MB for PyTorch YOLO
+MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.onnx')  # ONNX nano for minimum memory
+CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.45'))
-YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.35'))  # Lower for speed
-DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '320'))  # Smallest for maximum speed
-MAX_DET = int(os.getenv('MAX_DET', '30'))  # Maximum detections
+YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.35'))
+DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '224'))  # 224 uses ~40% less memory than 320
+MAX_DET = int(os.getenv('MAX_DET', '10'))  # Reduced from 30 — buses rarely have >10 people visible
 
 # Update Roboflow client with API key from env
 if ROBOFLOW_AVAILABLE:

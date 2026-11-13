@@ -72,8 +72,8 @@ async def anomaly_detection_scheduler():
         except Exception as e:
             print(f"Error in anomaly detection scheduler: {e}")
 
-        # Wait 30 seconds before next run
-        await asyncio.sleep(30)
+        # Wait 5 minutes before next run (was 30s — saves significant Render CPU/memory)
+        await asyncio.sleep(300)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
