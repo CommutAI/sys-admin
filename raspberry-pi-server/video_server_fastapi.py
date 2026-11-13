@@ -1360,91 +1360,39 @@ class VideoProcessor:
             print(f"[DB] ✗ Error writing passenger count to SQLite: {e}")
     
     def trigger_anomaly_detection(self):
-        """Trigger anomaly detection via backend API for the current trip.
-        This compares AI camera count with boarded (scanned) passengers to identify fare evasion.
-        Runs every 5 seconds when passenger count is saved to database.
-        """
+        """Trigger anomaly detection in a background thread — never blocks video streaming."""
         if not self.current_trip_id:
-            print(f"[Anomaly] No trip_id set - skipping anomaly detection")
             return
 
-        try:
-            import requests
-
-            # Use the globally resolved backend URL
-            detect_url = f"{BACKEND_URL}/api/anomaly-detection/detect"
-
-            # Call anomaly detection for this specific trip
-            payload = {
-                'threshold': 2,
-                'check_all_active': False,
-                'trip_id': self.current_trip_id,
-                'scenarios': ['count_mismatch', 'overcrowding', 'staff_absence', 'camera_malfunction', 
-                            'passenger_spike', 'trip_duration', 'route_deviation', 'boarding_rate']
-            }
-
-            # Fire and forget - don't block video processing
+        import threading
+        def _detect():
             try:
-                response = requests.post(detect_url, json=payload, timeout=2)
+                import requests
+                detect_url = f"{BACKEND_URL}/api/anomaly-detection/detect"
+                payload = {
+                    'threshold': 2,
+                    'check_all_active': False,
+                    'trip_id': self.current_trip_id,
+                    'scenarios': ['count_mismatch', 'overcrowding', 'staff_absence',
+                                  'camera_malfunction', 'passenger_spike', 'trip_duration',
+                                  'route_deviation', 'boarding_rate']
+                }
+                response = requests.post(detect_url, json=payload, timeout=10)
+                if response.status_code == 200:
+                    result = response.json()
+                    anomalies = result.get('total_anomalies_detected', 0)
+                    if anomalies > 0:
+                        print(f"[Anomaly] {anomalies} anomaly(s) detected for trip {self.current_trip_id}")
+            except Exception as e:
+                print(f"[Anomaly] Failed to trigger detection: {e}")
+
+        threading.Thread(target=_detect, daemon=True).start()
                 if response.status_code == 200:
                     result = response.json()
                     total_anomalies = result.get('total_anomalies_detected', 0)
                     total_irregularities = result.get('total_irregularities_created', 0)
                     
                     if total_anomalies > 0 or total_irregularities > 0:
-                        print(f"[Anomaly] Trip {self.current_trip_id}: {total_anomalies} anomaly(s) detected, {total_irregularities} irregularity(ies) created")
-                        
-                        # Show detailed anomaly information
-                        if result.get('results'):
-                            for trip_result in result['results']:
-                                print(f"  [Trip Summary] Bus: {trip_result.get('bus_plate')}, AI Count: {trip_result.get('ai_count')}, Boarded: {trip_result.get('boarded_count')}, Discrepancy: {trip_result.get('discrepancy')}")
-                                print(f"  [Severity Breakdown] Critical: {trip_result.get('critical_anomalies')}, High: {trip_result.get('high_anomalies')}, Medium: {trip_result.get('medium_anomalies')}, Low: {trip_result.get('low_anomalies')}")
-                                
-                                for anomaly in trip_result.get('anomalies', []):
-                                    if anomaly.get('detected'):
-                                        severity = anomaly.get('severity', 'unknown')
-                                        anomaly_type = anomaly.get('anomaly_type', 'unknown')
-                                        description = anomaly.get('description', '')
-                                        confidence = anomaly.get('confidence', 0.0)
-                                        print(f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                                        print(f"  [ANOMALY DETECTED] Type: {anomaly_type.upper()}")
-                                        print(f"  [Severity] {severity.upper()} (Confidence: {confidence:.0%})")
-                                        print(f"  [Description] {description}")
-                                        
-                                        # Show metrics if available
-                                        metrics = anomaly.get('metrics')
-                                        if metrics:
-                                            print(f"  [Metrics]")
-                                            print(f"    Current Value: {metrics.get('current_value')}")
-                                            print(f"    Threshold: {metrics.get('threshold_value')}")
-                                            print(f"    Above Threshold: {metrics.get('percentage_above_threshold', 0):.1f}%")
-                                            if metrics.get('historical_average'):
-                                                print(f"    Historical Avg: {metrics.get('historical_average'):.1f}")
-                                            if metrics.get('trend'):
-                                                print(f"    Trend: {metrics.get('trend')}")
-                                            if metrics.get('duration_minutes'):
-                                                print(f"    Duration: {metrics.get('duration_minutes'):.1f} min")
-                                            if metrics.get('affected_passengers'):
-                                                print(f"    Affected Passengers: {metrics.get('affected_passengers')}")
-                                        
-                                        # Show recommendation if available
-                                        recommendation = anomaly.get('recommendation')
-                                        if recommendation:
-                                            print(f"  [Recommendation]")
-                                            print(f"    Priority: {recommendation.get('priority')}")
-                                            print(f"    Action: {recommendation.get('action')}")
-                                            print(f"    Details: {recommendation.get('details')}")
-                                            print(f"    Impact: {recommendation.get('estimated_impact')}")
-                                        
-                                        # Show irregularity status
-                                        if anomaly.get('irregularity_created'):
-                                            print(f"  [Irregularity Created] ID: {anomaly.get('irregularity_id')}")
-                                        print(f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            except requests.RequestException as e:
-                print(f"[Anomaly] Failed to trigger detection: {e}")
-        except Exception as e:
-            print(f"[Anomaly] Error in detection trigger: {e}")
-    
     def set_current_trip(self, trip_id, bus_id=None):
         """Set the current trip ID for database recording"""
         self.current_trip_id = trip_id
