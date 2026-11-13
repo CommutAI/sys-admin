@@ -2,6 +2,7 @@ services:
   - type: web
     name: track2go-backend
     env: python
+    runtime: "3.13"
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
