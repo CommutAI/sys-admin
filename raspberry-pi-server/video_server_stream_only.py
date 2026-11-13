@@ -95,7 +95,9 @@ BACKEND_URL = discover_backend_ip() or os.getenv('BACKEND_URL', 'http://localhos
 BACKEND_WS_URL = BACKEND_URL.replace('https://', 'wss://').replace('http://', 'ws://')
 
 # Camera configuration - Optimized for 30-60 FPS
-CAMERA_DEVICE = os.getenv('CAMERA_DEVICE', '/dev/video0')
+# Use integer index for V4L2 compatibility (0 = /dev/video0, 1 = /dev/video1, etc.)
+CAMERA_DEVICE_STR = os.getenv('CAMERA_DEVICE', '/dev/video0')
+CAMERA_INDEX = int(os.getenv('CAMERA_INDEX', '0'))  # Use integer index for V4L2
 CAMERA_WIDTH = int(os.getenv('CAMERA_WIDTH', '640'))
 CAMERA_HEIGHT = int(os.getenv('CAMERA_HEIGHT', '480'))
 FPS = int(os.getenv('FPS', '30'))  # 30 FPS
@@ -212,11 +214,12 @@ class VideoStreamer:
             if self.camera is not None:
                 self.camera.release()
 
-            # Open with explicit V4L2 backend — required for USB cameras on Raspberry Pi/OpenCV builds
-            self.camera = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)
+            # Open with explicit V4L2 backend using integer index (not device path)
+            # V4L2 requires integer index on some OpenCV builds
+            self.camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_V4L2)
 
             if not self.camera.isOpened():
-                print(f"❌ CAMERA ERROR: Could not open camera at {CAMERA_DEVICE}")
+                print(f"❌ CAMERA ERROR: Could not open camera at index {CAMERA_INDEX} (/dev/video{CAMERA_INDEX})")
                 self._list_available_cameras()
                 print(f"   Troubleshooting steps:")
                 print(f"   1. Check if camera is connected to Raspberry Pi")
@@ -257,19 +260,18 @@ class VideoStreamer:
             return False
 
     def _list_available_cameras(self):
-        """List available camera devices"""
+        """List available camera devices using integer indices"""
         print("Attempting to find available cameras...")
         for i in range(4):
-            path = f'/dev/video{i}'
             try:
-                test_cam = cv2.VideoCapture(path, cv2.CAP_V4L2)
+                test_cam = cv2.VideoCapture(i, cv2.CAP_V4L2)
                 if test_cam.isOpened():
                     ret, frame = test_cam.read()
                     if ret and frame is not None:
-                        print(f"Found working camera at {path}")
+                        print(f"Found working camera at index {i} (/dev/video{i})")
                     test_cam.release()
             except Exception as e:
-                print(f"Error checking {path}: {e}")
+                print(f"Error checking index {i}: {e}")
 
     def encode_frame(self, frame):
         """Encode frame to base64"""
@@ -327,22 +329,21 @@ class VideoStreamer:
     async def stream_frames(self):
         """Stream frames to backend - non-blocking for maximum FPS"""
         if not self.initialize_camera():
-            # Try other video device paths before giving up
+            # Try other camera indices before giving up
             print("Attempting to find alternative camera device...")
             camera_found = False
             for idx in range(4):
-                path = f'/dev/video{idx}'
-                if path == CAMERA_DEVICE:
+                if idx == CAMERA_INDEX:
                     continue
                 try:
-                    test_cam = cv2.VideoCapture(path, cv2.CAP_V4L2)
+                    test_cam = cv2.VideoCapture(idx, cv2.CAP_V4L2)
                     if test_cam.isOpened():
                         ret, _ = test_cam.read()
                         if ret:
-                            print(f"Camera found at {path} (configured {CAMERA_DEVICE} failed)")
+                            print(f"Camera found at index {idx} (configured {CAMERA_INDEX} failed)")
                             test_cam.release()
-                            # Try to initialize with this path
-                            self.camera = cv2.VideoCapture(path, cv2.CAP_V4L2)
+                            # Try to initialize with this index
+                            self.camera = cv2.VideoCapture(idx, cv2.CAP_V4L2)
                             if self.camera.isOpened():
                                 # Apply settings
                                 self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
@@ -356,7 +357,7 @@ class VideoStreamer:
                                 for _ in range(3):
                                     ret, test_frame = self.camera.read()
                                 if ret and test_frame is not None:
-                                    print(f"✅ Camera initialized at {path}")
+                                    print(f"✅ Camera initialized at index {idx}")
                                     camera_found = True
                                     break
                                 else:
@@ -364,7 +365,7 @@ class VideoStreamer:
                         else:
                             test_cam.release()
                 except Exception as e:
-                    print(f"Error checking {path}: {e}")
+                    print(f"Error checking index {idx}: {e}")
                     continue
 
             if not camera_found:
