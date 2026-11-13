@@ -79,8 +79,15 @@ def discover_backend_ip():
     Returns the backend URL if found, None otherwise
     """
     # Check if BACKEND_URL is manually set in .env
-    manual_backend = os.getenv('BACKEND_URL')
-    if manual_backend and manual_backend != 'http://localhost:8000':
+    manual_backend = (os.getenv('BACKEND_URL') or '').strip()
+    # Empty BACKEND_URL = fully local (ONNX/GPS); skip discovery and backend YOLO
+    if not manual_backend:
+        print("[Discovery] BACKEND_URL empty — local-only mode (no backend discovery)")
+        return None
+    if manual_backend.lower() in ('none', 'local', 'off', 'disabled'):
+        print(f"[Discovery] BACKEND_URL={manual_backend} — local-only mode")
+        return None
+    if manual_backend != 'http://localhost:8000' and manual_backend.lower() != 'auto':
         print(f"[Discovery] Using manually configured backend: {manual_backend}")
         return manual_backend
 
@@ -133,8 +140,16 @@ def discover_backend_ip():
         return None
 
 # Backend configuration - auto-discover or use manual setting
-_BACKEND_URL = discover_backend_ip() or os.getenv('BACKEND_URL', 'http://localhost:8000')
-print(f"[Backend] Using URL: {_BACKEND_URL}")
+# Empty / local BACKEND_URL keeps Pi on ONNX without a remote YOLO backend
+_discovered = discover_backend_ip()
+_env_backend = (os.getenv('BACKEND_URL') or '').strip()
+if _discovered:
+    _BACKEND_URL = _discovered
+elif _env_backend and _env_backend.lower() not in ('none', 'local', 'off', 'disabled', 'auto'):
+    _BACKEND_URL = _env_backend
+else:
+    _BACKEND_URL = ''
+print(f"[Backend] Using URL: {_BACKEND_URL or '(none — local ONNX/GPS mode)'}")
 
 def get_backend_url():
     """Get current backend URL (allows for dynamic updates)"""
@@ -211,8 +226,11 @@ async def lifespan(app: FastAPI):
             try:
                 await asyncio.sleep(60)  # Check every 60 seconds (was 10s)
 
-                # Try to re-discover backend if using localhost
                 current_url = get_backend_url()
+                if not current_url:
+                    continue
+
+                # Try to re-discover backend if using localhost
                 if current_url == 'http://localhost:8000':
                     discovered_url = discover_backend_ip()
                     if discovered_url:
@@ -256,12 +274,16 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 print(f"[Trip Poll] Error: {e}")
 
-    asyncio.create_task(poll_active_trips())
-    print("[Trip Poll] Started automatic trip ID polling (every 10s)")
+    if get_backend_url():
+        asyncio.create_task(poll_active_trips())
+        print("[Trip Poll] Started automatic trip ID polling")
+    else:
+        print("[Trip Poll] Skipped — no BACKEND_URL (local ONNX mode)")
 
-    # Stream frames to backend for recording
+    # Stream frames to backend ONLY when COUNT_METHOD=backend (remote YOLO).
+    # Local ONNX must not send frames or accept backend counts (would overwrite).
     async def stream_frames_to_backend():
-        """Send video frames to backend WebSocket for recording"""
+        """Send video frames to backend WebSocket for remote YOLO / recording"""
         client_id = f"pi-{BUS_NUMBER}"
         print(f"[Backend Stream] Starting frame streaming to backend")
 
@@ -274,6 +296,9 @@ async def lifespan(app: FastAPI):
 
                 # Build backend WebSocket URL
                 backend_url = get_backend_url()
+                if not backend_url:
+                    await asyncio.sleep(5)
+                    continue
                 backend_ws_url = backend_url.replace('http://', 'ws://').replace('https://', 'wss://')
                 backend_ws_url = f"{backend_ws_url}/ws/video-stream/{client_id}"
 
@@ -350,8 +375,11 @@ async def lifespan(app: FastAPI):
                 print(f"[Backend Stream] Unexpected error: {e}")
                 await asyncio.sleep(5)
 
-    asyncio.create_task(stream_frames_to_backend())
-    print("[Backend Stream] Started frame streaming to backend")
+    if COUNT_METHOD == 'backend' and get_backend_url():
+        asyncio.create_task(stream_frames_to_backend())
+        print("[Backend Stream] Started frame streaming to backend")
+    else:
+        print(f"[Backend Stream] Skipped — COUNT_METHOD={COUNT_METHOD} (local detection)")
 
     yield
 
@@ -482,24 +510,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Camera configuration - Ultra-low latency
 # Camera configuration
-# CAMERA_DEVICE accepts either an integer index (0) or a full path ('/dev/video0')
-# On some Pi + OpenCV builds, opening by path is required when index fails.
-_camera_device_env = os.getenv('CAMERA_DEVICE', '')
-_camera_id_env = os.getenv('CAMERA_ID', '0')
-if _camera_device_env:
-    # Explicit device path takes priority
-    CAMERA_DEVICE = _camera_device_env        # e.g. '/dev/video0'
-    CAMERA_ID = _camera_device_env
-else:
-    # Try to parse as integer; fall back to path string
+# Prefer integer V4L2 index — OpenCV often fails with:
+#   "VIDEOIO(V4L2): backend is generally available but can't be used to capture by name"
+# when given a path like '/dev/video0'.
+import re as _re
+_camera_device_env = (os.getenv('CAMERA_DEVICE', '') or '').strip()
+_camera_id_env = (os.getenv('CAMERA_ID', '0') or '0').strip()
+
+def _camera_index_from_value(value):
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    match = _re.fullmatch(r'/dev/video(\d+)', text)
+    if match:
+        return int(match.group(1))
     try:
-        CAMERA_ID = int(_camera_id_env)
-        CAMERA_DEVICE = f'/dev/video{CAMERA_ID}'  # path equivalent
-    except ValueError:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+if _camera_device_env:
+    CAMERA_ID = _camera_index_from_value(_camera_device_env)
+    if CAMERA_ID is None:
+        CAMERA_ID = _camera_device_env
+    CAMERA_DEVICE = _camera_device_env
+else:
+    CAMERA_ID = _camera_index_from_value(_camera_id_env)
+    if CAMERA_ID is None:
         CAMERA_ID = _camera_id_env
-        CAMERA_DEVICE = _camera_id_env
+    CAMERA_DEVICE = f'/dev/video{CAMERA_ID}' if isinstance(CAMERA_ID, int) else _camera_id_env
 CAMERA_WIDTH = int(os.getenv('CAMERA_WIDTH', '640'))
 CAMERA_HEIGHT = int(os.getenv('CAMERA_HEIGHT', '480'))
 FPS = int(os.getenv('FPS', '30'))
@@ -511,7 +551,7 @@ FRAME_QUEUE_SIZE = int(os.getenv('FRAME_QUEUE_SIZE', '5'))
 DISABLE_DRAWING = os.getenv('DISABLE_DRAWING', 'false').lower() == 'true'
 DISABLE_DB_WRITES = os.getenv('DISABLE_DB_WRITES', 'false').lower() == 'true'
 SKIP_WEBSOCKET_THROTTLE = os.getenv('SKIP_WEBSOCKET_THROTTLE', 'false').lower() == 'true'
-DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '640'))  # ONNX model requires 640x640
+DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '160'))  # Match ONNX export imgsz (160 = fastest on Pi)
 
 # AI Model configuration
 DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
@@ -578,56 +618,70 @@ class VideoProcessor:
         self.current_video_path = None
         self.recording_frame_count = 0
         
+    def _open_camera_candidate(self, candidate):
+        """Try opening one camera candidate (int index preferred over path)."""
+        label = candidate if not isinstance(candidate, int) else f'/dev/video{candidate} (index {candidate})'
+        cam = cv2.VideoCapture(candidate, cv2.CAP_V4L2)
+        if not cam.isOpened():
+            cam.release()
+            return None
+
+        # Force MJPG before resolution — EMEET YUYV is unreliable on this OpenCV build
+        cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+        cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+        cam.set(cv2.CAP_PROP_FPS, FPS)
+        cam.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+
+        ret, test_frame = None, None
+        for _ in range(3):
+            ret, test_frame = cam.read()
+        if not ret or test_frame is None:
+            print(f"Opened {label} but could not read frames")
+            cam.release()
+            return None
+
+        print(f"Camera opened via {label}")
+        return cam
+
     def initialize_camera(self):
-        """Initialize the EMEET C60E webcam"""
+        """Initialize the EMEET C60E webcam (V4L2 index first, then path fallback)."""
         try:
             if self.camera is not None:
                 self.camera.release()
+                self.camera = None
 
-            # Open with explicit V4L2 backend — required for USB cameras on this Pi/OpenCV build.
-            self.camera = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)
+            candidates = []
+            primary_idx = _camera_index_from_value(CAMERA_ID)
+            if primary_idx is not None:
+                candidates.append(primary_idx)
+            # Keep configured path as secondary attempt
+            if CAMERA_DEVICE not in candidates:
+                candidates.append(CAMERA_DEVICE)
+            for i in range(4):
+                if i not in candidates:
+                    candidates.append(i)
 
-            if not self.camera.isOpened():
-                print(f"Error: Could not open camera at {CAMERA_DEVICE}")
-                self._list_available_cameras()
-                return False
+            print(f"Opening camera candidates: {candidates}")
+            for candidate in candidates:
+                cam = self._open_camera_candidate(candidate)
+                if cam is None:
+                    continue
+                self.camera = cam
+                actual_width = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+                actual_height = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                actual_fps = int(self.camera.get(cv2.CAP_PROP_FPS))
+                buffer_size = int(self.camera.get(cv2.CAP_PROP_BUFFERSIZE))
+                print(f"Camera initialized successfully: {actual_width}x{actual_height} @ {actual_fps}fps (buffer: {buffer_size})")
+                print(f"Requested resolution: {CAMERA_WIDTH}x{CAMERA_HEIGHT}, Actual: {actual_width}x{actual_height}")
+                print(f"Real-time mode: {ENABLE_REALTIME_MODE}, Skip frames: {SKIP_DETECTION_FRAMES}")
+                self.camera_reconnect_attempts = 0
+                return True
 
-            # Force MJPG pixel format BEFORE setting resolution/fps.
-            # The EMEET outputs YUYV by default which the ffmpeg backend
-            # can't decode cleanly — MJPG is natively supported and faster.
-            self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-
-            self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-            self.camera.set(cv2.CAP_PROP_FPS, FPS)
-            self.camera.set(cv2.CAP_PROP_AUTOFOCUS, 0)
-
-            if not self.camera.isOpened():
-                print("Error: Camera closed after setting properties")
-                return False
-
-            # Test read — discard first few frames (they can be garbage after format change)
-            for _ in range(3):
-                ret, test_frame = self.camera.read()
-            if not ret or test_frame is None:
-                print("Error: Could not read test frame from camera")
-                self.camera.release()
-                return False
-            
-            # Get actual camera settings
-            actual_width = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_height = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            actual_fps = int(self.camera.get(cv2.CAP_PROP_FPS))
-            buffer_size = int(self.camera.get(cv2.CAP_PROP_BUFFERSIZE))
-                
-            print(f"Camera initialized successfully: {actual_width}x{actual_height} @ {actual_fps}fps (buffer: {buffer_size})")
-            print(f"Requested resolution: {CAMERA_WIDTH}x{CAMERA_HEIGHT}, Actual: {actual_width}x{actual_height}")
-            if actual_width != CAMERA_WIDTH or actual_height != CAMERA_HEIGHT:
-                print(f"Note: Camera adjusted resolution (may not support requested {CAMERA_WIDTH}x{CAMERA_HEIGHT})")
-            print(f"Real-time mode: {ENABLE_REALTIME_MODE}, Skip frames: {SKIP_DETECTION_FRAMES}")
-            self.camera_reconnect_attempts = 0  # Reset counter on successful initialization
-            return True
+            print(f"Error: Could not open camera (configured {CAMERA_DEVICE})")
+            self._list_available_cameras()
+            return False
         except Exception as e:
             print(f"Camera initialization error: {e}")
             return False
@@ -638,11 +692,14 @@ class VideoProcessor:
         for i in range(4):
             path = f'/dev/video{i}'
             try:
-                test_cam = cv2.VideoCapture(path, cv2.CAP_V4L2)
+                # Probe by index first (avoids V4L2 capture-by-name failure)
+                test_cam = cv2.VideoCapture(i, cv2.CAP_V4L2)
                 if test_cam.isOpened():
                     ret, frame = test_cam.read()
                     if ret and frame is not None:
-                        print(f"Found working camera at {path}")
+                        print(f"Found working camera at index {i} ({path})")
+                    test_cam.release()
+                else:
                     test_cam.release()
             except Exception as e:
                 print(f"Error checking {path}: {e}")
@@ -691,17 +748,56 @@ class VideoProcessor:
             try:
                 import os
                 onnx_model_path = MODEL_PATH if MODEL_PATH.endswith('.onnx') else MODEL_PATH.replace('.pt', '.onnx')
+
+                def _export_onnx(path_hint: str) -> str:
+                    """Export YOLOv8n ONNX at DETECTION_SIZE so input dims match inference."""
+                    print(f"Exporting YOLOv8n ONNX @ {DETECTION_SIZE}px → {path_hint}")
+                    yolo_model = YOLO('yolov8n.pt')
+                    exported = yolo_model.export(format='onnx', imgsz=DETECTION_SIZE, opset=12)
+                    return exported if isinstance(exported, str) else path_hint
+
                 if not os.path.exists(onnx_model_path):
-                    print(f"ONNX model not found at {onnx_model_path} - generating from YOLO")
-                    if YOLO_AVAILABLE:
-                        yolo_model = YOLO('yolov8s.pt')
-                        yolo_model.export(format='onnx', opset=12)
-                        onnx_model_path = 'yolov8s.onnx'
-                    else:
-                        print("YOLO not available to convert to ONNX")
+                    if not YOLO_AVAILABLE:
+                        print("YOLO not available to convert to ONNX — place yolov8n.onnx in working directory")
                         return False
+                    onnx_model_path = _export_onnx(onnx_model_path)
+
                 self.onnx_session = ort.InferenceSession(onnx_model_path, providers=['CPUExecutionProvider'])
-                print(f"ONNX model loaded from {onnx_model_path} (CPU-optimized)")
+                in_shape = self.onnx_session.get_inputs()[0].shape
+                # YOLOv8 ONNX input is typically [N, 3, H, W]
+                model_h = in_shape[2] if len(in_shape) >= 4 and isinstance(in_shape[2], int) else None
+                model_w = in_shape[3] if len(in_shape) >= 4 and isinstance(in_shape[3], int) else None
+
+                if model_h and model_w and (model_h != DETECTION_SIZE or model_w != DETECTION_SIZE):
+                    print(
+                        f"ONNX input {model_h}x{model_w} != DETECTION_SIZE={DETECTION_SIZE} — "
+                        f"re-exporting at {DETECTION_SIZE}px"
+                    )
+                    if YOLO_AVAILABLE:
+                        # Replace mismatched (usually 640) model with one sized for the Pi
+                        bak = f"{onnx_model_path}.bak640"
+                        try:
+                            os.replace(onnx_model_path, bak)
+                        except OSError:
+                            pass
+                        onnx_model_path = _export_onnx(onnx_model_path)
+                        self.onnx_session = ort.InferenceSession(
+                            onnx_model_path, providers=['CPUExecutionProvider']
+                        )
+                        in_shape = self.onnx_session.get_inputs()[0].shape
+                        model_h = in_shape[2] if len(in_shape) >= 4 and isinstance(in_shape[2], int) else DETECTION_SIZE
+                        model_w = in_shape[3] if len(in_shape) >= 4 and isinstance(in_shape[3], int) else DETECTION_SIZE
+                    else:
+                        print(
+                            f"ultralytics not installed — falling back to model size {model_h}x{model_w}. "
+                            f"Run: yolo export model=yolov8n.pt format=onnx imgsz={DETECTION_SIZE}"
+                        )
+
+                self.onnx_input_size = int(model_h or model_w or DETECTION_SIZE)
+                print(
+                    f"ONNX model loaded from {onnx_model_path} "
+                    f"(CPU, input={in_shape}, inference_size={self.onnx_input_size})"
+                )
                 return True
             except Exception as e:
                 print(f"ONNX model initialization error: {e}")
@@ -909,12 +1005,12 @@ class VideoProcessor:
             return []
 
     def _detect_onnx(self, frame):
-        """ONNX Runtime-based YOLO detection — uses DETECTION_SIZE env var."""
+        """ONNX Runtime-based YOLO detection — size must match the loaded ONNX input."""
         try:
             import numpy as np
 
-            # Use configured detection size (160px = fastest on Pi)
-            sz = DETECTION_SIZE  # e.g. 160
+            # Prefer size read from the ONNX graph (avoids 160 vs 640 mismatch)
+            sz = getattr(self, 'onnx_input_size', None) or DETECTION_SIZE
             input_shape = (sz, sz)
             original_h, original_w = frame.shape[:2]
 
@@ -1847,22 +1943,10 @@ class VideoProcessor:
         """Start video processing. Returns (success, error_message)."""
         cam_ok = self.initialize_camera()
         if not cam_ok:
-            # Try other video device paths before giving up
-            for idx in range(4):
-                path = f'/dev/video{idx}'
-                if path == CAMERA_DEVICE:
-                    continue
-                self.camera = cv2.VideoCapture(path, cv2.CAP_V4L2)
-                if self.camera.isOpened():
-                    ret, _ = self.camera.read()
-                    if ret:
-                        print(f"Camera found at {path} (configured {CAMERA_DEVICE} failed)")
-                        cam_ok = True
-                        break
-                    self.camera.release()
-
-        if not cam_ok:
-            return False, f"Camera not found. Tried /dev/video0-3. Check USB connection and run: ls /dev/video*"
+            return False, (
+                "Camera not found. Tried V4L2 indexes 0-3 and /dev/video*. "
+                "Check USB connection and run: ls /dev/video*; v4l2-ctl --list-devices"
+            )
 
         # Model is optional - allow streaming without AI detection
         if not self.initialize_model():
@@ -2504,15 +2588,20 @@ async def websocket_endpoint(websocket: WebSocket):
             if success:
                 asyncio.create_task(video_processor.process_frames())
                 asyncio.create_task(video_processor.stream_frames())
-                ai_available = video_processor.model is not None or hasattr(video_processor, 'hog') and video_processor.hog is not None
-                await websocket.send_json({
-                    "status": "Video stream started",
-                    "ai_detection": ai_available,
-                })
+                await websocket.send_json({"status": "Video stream started", "ai_detection": True})
             else:
-                await websocket.send_json({"error": err_msg or "Failed to start video stream - camera not found"})
+                await websocket.send_json({"error": err_msg or "Camera not found"})
         else:
+            # Already running — send status + immediately push one frame so
+            # the dashboard onopen receives data before the 12s timeout fires
             await websocket.send_json({"status": "Connected to video server"})
+            if not video_processor.frame_queue.empty():
+                frame = video_processor.frame_queue.queue[0]  # peek without consuming
+                await websocket.send_json({
+                    'video_frame': frame,
+                    'count': video_processor.passenger_count,
+                    'average_count': video_processor.average_count
+                })
 
         while True:
             data = await websocket.receive_text()
@@ -2562,16 +2651,35 @@ async def websocket_endpoint(websocket: WebSocket):
         video_processor.websocket_clients.discard(websocket)
 
 if __name__ == '__main__':
+    import fcntl
+    import sys
     import uvicorn
-    
+
+    # Prevent double-start races (systemd restart vs leftover process on :8080)
+    lock_path = os.path.join('/tmp', 'commutai-pi-server.lock')
+    lock_fd = open(lock_path, 'w')
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_fd.write(str(os.getpid()))
+        lock_fd.flush()
+    except BlockingIOError:
+        print(f"Another commutai video server instance already holds {lock_path} — exiting")
+        sys.exit(0)
+
     print("Starting Bus Monitoring Video Server (FastAPI)...")
-    print(f"Camera ID: {CAMERA_ID}")
+    print(f"Camera ID: {CAMERA_ID} (device={CAMERA_DEVICE})")
     print(f"Resolution: {CAMERA_WIDTH}x{CAMERA_HEIGHT}")
     print(f"FPS: {FPS}")
-    
+    print(f"Listening on 0.0.0.0:{SERVER_PORT}")
+
     try:
         uvicorn.run(app, host='0.0.0.0', port=SERVER_PORT)
     except KeyboardInterrupt:
         print("Server shutdown requested")
+    except OSError as e:
+        # errno 98 = address already in use
+        print(f"Server bind error on port {SERVER_PORT}: {e}")
+        sys.exit(1)
     except Exception as e:
         print(f"Server error: {e}")
+        sys.exit(1)

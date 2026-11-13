@@ -81,10 +81,11 @@ export function useRaspberryPi(options = {}) {
   }
 
   function scheduleReconnect() {
-    if (deadRef.current || fallbackModeRef.current) return;
+    if (deadRef.current) return;
     clearTimeout(reconnectTimer.current);
     const delay = Math.min(RECONNECT_BASE * 1.5 ** attemptsRef.current, RECONNECT_MAX);
     attemptsRef.current += 1;
+    console.log(`[Pi] Reconnecting in ${(delay/1000).toFixed(1)}s (attempt ${attemptsRef.current})`);
     reconnectTimer.current = setTimeout(openSocket, delay);
   }
 
@@ -268,7 +269,7 @@ export function useRaspberryPi(options = {}) {
 
   // ── WebSocket connect logic ────────────────────────────────────────────────
   async function openSocket() {
-    if (deadRef.current || fallbackModeRef.current) return;
+    if (deadRef.current) return;
 
     closeSocket(wsRef.current);
     wsRef.current = null;
@@ -296,6 +297,7 @@ export function useRaspberryPi(options = {}) {
       httpBase = await resolvePiUrl();
       wsUrl = httpBase.replace(/^http/, 'ws').replace(/\/?$/, '/ws');
       safeSet(setCurrentPiUrl, httpBase);
+      console.log('[Pi] Connecting →', wsUrl);
     } catch {
       console.log('[Pi] URL resolution failed, switching to database mode');
       switchToDatabaseMode();
@@ -304,15 +306,16 @@ export function useRaspberryPi(options = {}) {
 
     if (deadRef.current) return;
 
-    // Quick HTTP ping
+    // Quick HTTP ping (health is lighter than / and confirms camera server)
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 4000);
-      const res = await fetch(`${httpBase}/`, { signal: ctrl.signal });
+      const res = await fetch(`${httpBase.replace(/\/$/, '')}/health`, { signal: ctrl.signal });
       clearTimeout(t);
       safeSet(setPiReachable, res.ok);
-    } catch {
-      console.log('[Pi] HTTP ping failed, switching to database mode');
+      if (!res.ok) throw new Error(`health ${res.status}`);
+    } catch (e) {
+      console.log('[Pi] HTTP ping failed for', httpBase, e?.message || e, '— switching to database mode');
       safeSet(setPiReachable, false);
       switchToDatabaseMode();
       return;
@@ -333,10 +336,11 @@ export function useRaspberryPi(options = {}) {
 
     connectTimer.current = setTimeout(() => {
       if (ws.readyState !== WebSocket.OPEN) {
-        console.log('[Pi] WebSocket timeout, switching to database mode');
+        console.log('[Pi] WebSocket timeout, retrying...');
         closeSocket(ws);
         if (wsRef.current === ws) wsRef.current = null;
-        switchToDatabaseMode();
+        // Retry instead of permanently switching to database mode
+        scheduleReconnect();
       }
     }, CONNECT_TIMEOUT_MS);
 
@@ -435,19 +439,13 @@ export function useRaspberryPi(options = {}) {
       clearAllTimers();
       if (deadRef.current) return;
 
-      // Log Pi disconnection to audit logs
       AuditService.logPiDisconnected();
 
-      // If this is the first failure, switch to database mode
-      if (attemptsRef.current < 3) {
-        console.log('[Pi] WebSocket closed, switching to database mode');
-        switchToDatabaseMode();
-      } else {
-        safeSet(setOnline,           false);
-        safeSet(setIsStreaming,      false);
-        safeSet(setConnectionStatus, 'connecting');
-        scheduleReconnect();
-      }
+      // Always retry — never permanently fall back to database mode
+      safeSet(setOnline,           false);
+      safeSet(setIsStreaming,      false);
+      safeSet(setConnectionStatus, 'connecting');
+      scheduleReconnect();
     };
 
     // ── onerror ───────────────────────────────────────────────────────────────
