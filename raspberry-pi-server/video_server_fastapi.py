@@ -346,11 +346,12 @@ async def lifespan(app: FastAPI):
                                     data = json.loads(response)
                                     
                                     if data.get('type') == 'detection':
-                                        # Update passenger count from backend
+                                        # Update passenger count and detections from backend
                                         count = data.get('count', 0)
                                         video_processor.passenger_count = count
                                         video_processor.average_count = count  # Also update average
-                                        print(f"[Backend Stream] Received count from backend: {count}")
+                                        video_processor.last_detections = data.get('detections', [])
+                                        print(f"[Backend Stream] Received count from backend: {count}, boxes: {len(video_processor.last_detections)}")
                                     
                                 except Exception as e:
                                     print(f"[Backend Stream] Error receiving detection: {e}")
@@ -1024,49 +1025,52 @@ class VideoProcessor:
             )
             
             # Parse outputs (YOLOv8 format: 1, 84, 8400)
-            # 84 = 4 (bbox) + 80 (classes), 8400 = number of predictions
             detections = []
             if len(outputs) > 0:
                 output = outputs[0]  # Shape: (1, 84, 8400)
-                predictions = output[0]  # Shape: (84, 8400)
+                predictions = output[0].T  # Shape: (8400, 84)
                 
-                # Transpose to (8400, 84) for easier iteration
-                predictions = predictions.T
-                
-                # Log max confidence for debugging
-                max_conf = np.max(predictions[:, 4])
-                if max_conf > 0.01:  # Only log if there's something
-                    print(f"[ONNX] Max person confidence: {max_conf:.3f}, threshold: {YOLO_CONFIDENCE_THRESHOLD}")
-                
-                # Filter for person class (class 0 in COCO, index 4 in output)
-                for prediction in predictions:
-                    # prediction[0:4] = bbox (cx, cy, w, h)
-                    # prediction[4] = person class confidence
-                    # prediction[5:] = other class confidences
-                    
-                    person_conf = prediction[4]
-                    
-                    if person_conf > YOLO_CONFIDENCE_THRESHOLD:
-                        # Convert center/width/height to x1/y1/x2/y2
-                        cx, cy, w, h = prediction[0:4]
-                        x1 = cx - w / 2
-                        y1 = cy - h / 2
-                        x2 = cx + w / 2
-                        y2 = cy + h / 2
-                        
-                        # Scale back to original image dimensions
-                        scale_x = original_w / sz
-                        scale_y = original_h / sz
-                        
-                        detections.append({
-                            'bbox': [int(x1 * scale_x), int(y1 * scale_y),
-                                    int(x2 * scale_x), int(y2 * scale_y)],
-                            'confidence': float(person_conf),
-                            'class': 'person'
-                        })
-            
-            # Apply NMS to remove overlapping detections
-            detections = self._apply_nms(detections, iou_threshold=IOU_THRESHOLD)
+                scores = predictions[:, 4]
+                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if (YOLO_CONFIDENCE_THRESHOLD and YOLO_CONFIDENCE_THRESHOLD > 0.05) else 0.25
+                mask = scores >= conf_thresh
+                if mask.any():
+                    filtered = predictions[mask]
+                    confidences = scores[mask]
+                    cx, cy, bw, bh = filtered[:, 0], filtered[:, 1], filtered[:, 2], filtered[:, 3]
+                    sx, sy = original_w / sz, original_h / sz
+
+                    raw_boxes = []
+                    for k in range(len(filtered)):
+                        bx1 = int((cx[k] - bw[k] / 2) * sx)
+                        by1 = int((cy[k] - bh[k] / 2) * sy)
+                        bx2 = int((cx[k] + bw[k] / 2) * sx)
+                        by2 = int((cy[k] + bh[k] / 2) * sy)
+                        bx1 = max(0, min(original_w, bx1))
+                        by1 = max(0, min(original_h, by1))
+                        bx2 = max(0, min(original_w, bx2))
+                        by2 = max(0, min(original_h, by2))
+                        raw_boxes.append([bx1, by1, bx2 - bx1, by2 - by1])
+
+                    try:
+                        indices = cv2.dnn.NMSBoxes(raw_boxes, [float(c) for c in confidences], conf_thresh, IOU_THRESHOLD)
+                        if hasattr(indices, 'flatten'):
+                            indices = indices.flatten()
+                        for idx in indices:
+                            rb = raw_boxes[int(idx)]
+                            detections.append({
+                                'bbox': [rb[0], rb[1], rb[0] + rb[2], rb[1] + rb[3]],
+                                'confidence': float(confidences[int(idx)]),
+                                'class': 'person'
+                            })
+                    except Exception:
+                        for k in range(len(raw_boxes)):
+                            rb = raw_boxes[k]
+                            detections.append({
+                                'bbox': [rb[0], rb[1], rb[0] + rb[2], rb[1] + rb[3]],
+                                'confidence': float(confidences[k]),
+                                'class': 'person'
+                            })
+                        detections = self._apply_nms(detections, iou_threshold=IOU_THRESHOLD)
             
             return detections
         except Exception as e:
@@ -1377,27 +1381,27 @@ class VideoProcessor:
         return intersection_area / union_area if union_area > 0 else 0.0
     
     def draw_detections(self, frame, detections):
-        """Draw bounding boxes on detected passengers.
-        The passenger count is NOT rendered onto the frame — it is sent
-        as WebSocket JSON data and displayed in the UI panel instead.
-        """
-        
-        for i, detection in enumerate(detections, 1):
-            x1, y1, x2, y2 = detection['bbox']
-            confidence = detection['confidence']
+        """Draw bounding boxes on detected passengers in bright green"""
+        dets = detections if detections is not None and len(detections) > 0 else getattr(self, 'last_detections', [])
+        for i, detection in enumerate(dets or [], 1):
+            bbox = detection.get('bbox')
+            if not bbox or len(bbox) < 4:
+                continue
+            x1, y1, x2, y2 = bbox
+            conf = detection.get('confidence', 0)
 
-            # Bounding box with better visibility
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
+            # Bright Green Bounding Box (BGR: 0, 255, 0)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-            # Person number badge above the box (instead of confidence)
-            label = f"Person {i}"
+            # Person badge label
+            label = f"Person {i}: {conf:.2f}" if conf > 0 else f"Person {i}"
             label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
-            
-            # Draw background for label (orange instead of black)
-            cv2.rectangle(frame, (x1, y1 - label_size[1] - 6),
-                         (x1 + label_size[0] + 4, y1), (0, 165, 255), -1)
-            cv2.putText(frame, label, (x1 + 2, y1 - 3),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+
+            # Draw green background for label
+            cv2.rectangle(frame, (x1, max(0, y1 - label_size[1] - 6)),
+                         (x1 + label_size[0] + 4, y1), (0, 200, 0), -1)
+            cv2.putText(frame, label, (x1 + 2, max(12, y1 - 3)),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1)
 
         return frame
     

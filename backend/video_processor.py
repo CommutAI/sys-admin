@@ -454,17 +454,17 @@ class VideoProcessor:
             x1, y1, x2, y2 = detection['bbox']
             confidence = detection['confidence']
             
-            # Bounding box
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
+            # Bounding box - Bright Green (BGR: 0, 255, 0)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
             
             # Label
             label = f"Person {i}: {confidence:.2f}"
             label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             
-            cv2.rectangle(frame, (x1, y1 - label_size[1] - 6),
-                         (x1 + label_size[0] + 4, y1), (0, 165, 255), -1)
-            cv2.putText(frame, label, (x1 + 2, y1 - 3),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.rectangle(frame, (x1, max(0, y1 - label_size[1] - 6)),
+                         (x1 + label_size[0] + 4, y1), (0, 200, 0), -1)
+            cv2.putText(frame, label, (x1 + 2, max(12, y1 - 3)),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
         
         return frame
     
