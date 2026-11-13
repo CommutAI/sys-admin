@@ -5,6 +5,7 @@ Emergency alerts endpoints - requires authentication
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
 from database import supabase
 from auth import verify_supabase_token
 
