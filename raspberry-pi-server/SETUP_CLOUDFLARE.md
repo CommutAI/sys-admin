@@ -68,8 +68,9 @@ cloudflared --version
 ### Step 4: Start Cloudflare Tunnel
 
 ```bash
-# Start tunnel to expose port 5000 (Pi video server)
-cloudflared tunnel --url http://localhost:5000
+# Start tunnel to expose port 8080 (Pi video server)
+cloudflared tunnel --url http://127.0.0.1:8080
+# Or: bash ~/raspberry-pi-server/start-cloudflare-tunnel.sh
 ```
 
 You'll see output like:
@@ -100,7 +101,7 @@ After=network.target
 [Service]
 Type=simple
 User=chichi
-ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:5000
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8080
 Restart=always
 RestartSec=10
 

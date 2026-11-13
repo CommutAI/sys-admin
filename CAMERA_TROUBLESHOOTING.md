@@ -5,6 +5,15 @@
 ❌ CAMERA ERROR: Could not open camera at /dev/video0
 ```
 
+## ✅ Recent Fix (2026-11-12)
+**Fixed in `video_server_stream_only.py`:**
+- Added explicit V4L2 backend: `cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)`
+- Added camera discovery functionality to scan /dev/video0-3
+- Added fallback mechanism to try alternative camera devices if configured one fails
+- The V4L2 backend is required for USB cameras on Raspberry Pi/OpenCV builds
+
+**If you still see this error after the fix, follow the steps below:**
+
 ## 🔍 Step-by-Step Diagnosis
 
 ### Step 1: Check Available Camera Devices

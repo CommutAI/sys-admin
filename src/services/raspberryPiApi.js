@@ -13,6 +13,7 @@ const CLOUDFLARE_TUNNEL_URL = 'https://asbestos-controlled-rebel-subsidiaries.tr
 const FALLBACK_URL   = import.meta.env.VITE_RASPBERRY_PI_URL || CLOUDFLARE_TUNNEL_URL;
 const DEFAULT_TIMEOUT = 8000;
 const BUS_NUMBER      = 1; // this dashboard manages bus 001
+const LAN_HINT_URL    = 'http://192.168.1.54:8080';
 
 // ── URL cache ────────────────────────────────────────────────────────────────
 // Pre-seed with the env-var so the first WebSocket attempt is instant.
@@ -21,60 +22,91 @@ let _resolving    = null;
 let _lastResolved = 0;
 const REDISCOVER_INTERVAL = 10_000;
 
+async function probePiUrl(url, timeoutMs = 2500) {
+  if (!url) return false;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(`${url.replace(/\/$/, '')}/health`, { signal: ctrl.signal });
+    clearTimeout(t);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolve the Pi's base HTTP URL.
- * 1. Try pi_devices table in Supabase (Pi registers IP there on startup).
- * 2. If table missing, no row, or any error → use VITE_RASPBERRY_PI_URL fallback.
+ * 1. Prefer a reachable VITE_RASPBERRY_PI_URL (LAN or live tunnel).
+ * 2. On HTTP origins, try pi_devices LAN IP from Supabase.
+ * 3. Last resort: known LAN hint, then env fallback.
  */
 export async function resolvePiUrl() {
   const now = Date.now();
+  const envUrl = (import.meta.env.VITE_RASPBERRY_PI_URL || '').replace(/\/$/, '');
+  const isHttpsPage = typeof window !== 'undefined' && window.location.protocol === 'https:';
 
-  // On HTTPS origins, always use the secure tunnel URL and skip the Supabase
-  // lookup — the pi_devices table stores local LAN IPs (192.168.x.x) which are
-  // unreachable from the public internet and would cause Mixed Content errors.
-  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-    const secureUrl = import.meta.env.VITE_RASPBERRY_PI_URL || CLOUDFLARE_TUNNEL_URL;
-    if (secureUrl && secureUrl.startsWith('https://')) {
+  // HTTPS pages cannot use http://192.168.x.x (mixed content) — need a live https tunnel
+  if (isHttpsPage) {
+    const secureUrl = envUrl.startsWith('https://') ? envUrl : CLOUDFLARE_TUNNEL_URL;
+    if (secureUrl.startsWith('https://') && await probePiUrl(secureUrl)) {
+      _resolvedUrl = secureUrl;
+      _lastResolved = Date.now();
       return secureUrl;
     }
-    // No secure URL — stay in database mode
-    return FALLBACK_URL;
+    console.warn('[Pi] No reachable HTTPS tunnel — camera feed needs a live Cloudflare/ngrok URL');
+    return secureUrl;
   }
 
-  // Return cache if still fresh
+  // Return cache if still fresh and still reachable
   if (_resolvedUrl && now - _lastResolved < REDISCOVER_INTERVAL) {
     return _resolvedUrl;
   }
 
-  // Deduplicate concurrent callers
   if (_resolving) return _resolving;
 
   _resolving = (async () => {
+    // 1) Env URL (LAN for local Vite)
+    if (envUrl && await probePiUrl(envUrl)) {
+      console.log('[Pi] Using env URL:', envUrl);
+      _resolvedUrl = envUrl;
+      _lastResolved = Date.now();
+      return envUrl;
+    }
+
+    // 2) Supabase registration
     try {
       const { data, error } = await supabase
         .from('pi_devices')
         .select('ip_address, port')
         .eq('bus_number', BUS_NUMBER)
-        .maybeSingle();          // maybeSingle() returns null (not an error) when 0 rows
+        .maybeSingle();
 
-      // error.code '42P01' = table does not exist; any other error also falls through
       if (!error && data?.ip_address) {
-        const url = `http://${data.ip_address}:${data.port || 5000}`;
-        _resolvedUrl  = url;
-        _lastResolved = Date.now();
-        return url;
-      }
-
-      if (error && error.code !== '42P01') {
-        // Log unexpected errors but still fall through
+        const url = `http://${data.ip_address}:${data.port || 8080}`;
+        if (await probePiUrl(url)) {
+          console.log('[Pi] Using pi_devices URL:', url);
+          _resolvedUrl = url;
+          _lastResolved = Date.now();
+          return url;
+        }
+      } else if (error && error.code !== '42P01') {
         console.warn('[Pi] pi_devices lookup error:', error.message);
       }
     } catch (e) {
       console.warn('[Pi] pi_devices lookup threw:', e.message);
     }
 
-    // Fallback to env var — cache it so we don't retry Supabase on every frame
-    _resolvedUrl  = FALLBACK_URL;
+    // 3) Known LAN hint used by this project
+    if (await probePiUrl(LAN_HINT_URL)) {
+      console.log('[Pi] Using LAN hint URL:', LAN_HINT_URL);
+      _resolvedUrl = LAN_HINT_URL;
+      _lastResolved = Date.now();
+      return LAN_HINT_URL;
+    }
+
+    console.warn('[Pi] Falling back to', FALLBACK_URL, '(may be unreachable)');
+    _resolvedUrl = FALLBACK_URL;
     _lastResolved = Date.now();
     return FALLBACK_URL;
   })().finally(() => { _resolving = null; });

@@ -1,6 +1,6 @@
 [Unit]
 Description=CommutAI Raspberry Pi Video Server
-After=network.target
+After=network-online.target
 Wants=network-online.target
 
 [Service]
@@ -8,9 +8,14 @@ Type=simple
 User=chichi
 WorkingDirectory=/home/chichi/raspberry-pi-server
 Environment="PATH=/home/chichi/raspberry-pi-server/venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=-/home/chichi/raspberry-pi-server/.env
+# Free :8080 before start so restart never races a leftover process
+ExecStartPre=-/bin/bash -c '/usr/bin/fuser -k 8080/tcp 2>/dev/null || true; /bin/sleep 1'
 ExecStart=/home/chichi/raspberry-pi-server/venv/bin/python /home/chichi/raspberry-pi-server/video_server_fastapi.py
 Restart=always
 RestartSec=10
+KillMode=control-group
+TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
 

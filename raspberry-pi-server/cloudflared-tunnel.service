@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflare Quick Tunnel for CommutAI Pi (port 8080)
+After=network-online.target commutai-pi-service.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chichi
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8080
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
