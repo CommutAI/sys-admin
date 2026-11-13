@@ -132,9 +132,25 @@ class VideoProcessor:
             if not os.path.exists(onnx_path):
                 print("[Video Processor] Downloading yolov8n.onnx...")
                 import urllib.request
-                url = 'https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.onnx'
-                urllib.request.urlretrieve(url, onnx_path)
-                print(f"[Video Processor] Downloaded {onnx_path}")
+                # Use multiple fallback URLs for reliability
+                urls = [
+                    'https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.onnx',
+                    'https://github.com/ultralytics/ultralytics/releases/download/v8.0.0/yolov8n.onnx',
+                    'https://github.com/ultralytics/assets/raw/main/yolov8n.onnx'
+                ]
+                downloaded = False
+                for url in urls:
+                    try:
+                        urllib.request.urlretrieve(url, onnx_path)
+                        print(f"[Video Processor] Downloaded {onnx_path} from {url}")
+                        downloaded = True
+                        break
+                    except Exception as e:
+                        print(f"[Video Processor] Failed to download from {url}: {e}")
+                        continue
+                if not downloaded:
+                    print("[Video Processor] All download attempts failed, detection disabled")
+                    return False
 
             self.model = ort.InferenceSession(
                 onnx_path,
