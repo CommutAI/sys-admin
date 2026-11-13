@@ -1882,31 +1882,10 @@ class VideoProcessor:
                         except queue.Empty:
                             pass
                     self.frame_queue.put(frame_base64)
-                    
-                    # Emit passenger count via WebSocket (throttled unless disabled)
-                    if SKIP_WEBSOCKET_THROTTLE or self.frame_count % 5 == 0:
-                        passenger_data = {
-                            'count': self.passenger_count,
-                            'timestamp': time.time(),
-                            'average_count': sum(self.detection_history) / len(self.detection_history) if self.detection_history else 0,
-                            'fps': FPS,
-                            'realtime_mode': ENABLE_REALTIME_MODE
-                        }
-                        
-                        # Send to all connected clients
-                        disconnected_clients = set()
-                        for client in self.websocket_clients:
-                            try:
-                                await client.send_json(passenger_data)
-                            except:
-                                disconnected_clients.add(client)
-                        
-                        # Remove disconnected clients
-                        self.websocket_clients -= disconnected_clients
                 
                 # Minimal frame rate control - rely on camera's natural timing
                 if ENABLE_REALTIME_MODE:
-                    await asyncio.sleep(0.001)  # Minimal sleep for real-time
+                    await asyncio.sleep(0.005)  # Yield to event loop
                 else:
                     await asyncio.sleep(1.0 / FPS)
                 
@@ -1916,49 +1895,46 @@ class VideoProcessor:
     
     async def stream_frames(self):
         """Background task to stream frames - Optimized for low latency"""
-        # Performance monitoring
         last_stream_time = time.time()
         stream_counter = 0
         
         while self.running:
             try:
+                frame_base64 = None
                 if not self.frame_queue.empty():
-                    frame_base64 = self.frame_queue.get_nowait()
+                    try:
+                        frame_base64 = self.frame_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                elif getattr(self, 'latest_frame', None):
+                    frame_base64 = self.latest_frame
+
+                if frame_base64 and self.websocket_clients:
                     stream_counter += 1
+                    msg = {
+                        'video_frame': frame_base64,
+                        'count': self.passenger_count,
+                        'average_count': getattr(self, 'average_count', 0),
+                        'camera_active': True
+                    }
+                    disconnected_clients = set()
+                    for client in list(self.websocket_clients):
+                        try:
+                            await client.send_json(msg)
+                        except Exception:
+                            disconnected_clients.add(client)
                     
-                    # Batch send to all clients to reduce overhead
-                    if self.websocket_clients:
-                        disconnected_clients = set()
-                        for client in self.websocket_clients:
-                            try:
-                                # Include passenger count in the message for dashboard display
-                                await client.send_json({
-                                    'video_frame': frame_base64,
-                                    'count': self.passenger_count,
-                                    'average_count': self.average_count
-                                })
-                            except:
-                                disconnected_clients.add(client)
-                        
+                    if disconnected_clients:
                         self.websocket_clients -= disconnected_clients
-                    
-                    # Calculate streaming FPS for monitoring (infrequent)
-                    current_time = time.time()
-                    if current_time - last_stream_time >= 5.0:
-                        stream_fps = stream_counter / (current_time - last_stream_time)
-                        print(f"[STREAM] Streaming FPS: {stream_fps:.1f}, Clients: {len(self.websocket_clients)}")
-                        stream_counter = 0
-                        last_stream_time = current_time
-                    
-                    # In real-time mode, process frames as fast as possible
-                    if ENABLE_REALTIME_MODE:
-                        continue  # Don't sleep, process next frame immediately
-                
-                # Only sleep in non-real-time mode
-                if not ENABLE_REALTIME_MODE:
-                    await asyncio.sleep(1.0 / FPS)
-                else:
-                    await asyncio.sleep(0.001)  # Minimal sleep for real-time
+
+                current_time = time.time()
+                if current_time - last_stream_time >= 5.0:
+                    stream_fps = stream_counter / (current_time - last_stream_time)
+                    print(f"[STREAM] Streaming FPS: {stream_fps:.1f}, Clients: {len(self.websocket_clients)}")
+                    stream_counter = 0
+                    last_stream_time = current_time
+
+                await asyncio.sleep(0.04)  # ~25 FPS pacing, yields cleanly to event loop
             except Exception as e:
                 print(f"Streaming error: {e}")
                 await asyncio.sleep(0.1)
@@ -2619,12 +2595,18 @@ async def websocket_endpoint(websocket: WebSocket):
             # Already running — send status + immediately push one frame so
             # the dashboard onopen receives data before the 12s timeout fires
             await websocket.send_json({"status": "Connected to video server"})
-            if not video_processor.frame_queue.empty():
-                frame = video_processor.frame_queue.queue[0]  # peek without consuming
+            latest = getattr(video_processor, 'latest_frame', None)
+            if not latest and not video_processor.frame_queue.empty():
+                try:
+                    latest = video_processor.frame_queue.queue[0]
+                except Exception:
+                    pass
+            if latest:
                 await websocket.send_json({
-                    'video_frame': frame,
+                    'video_frame': latest,
                     'count': video_processor.passenger_count,
-                    'average_count': video_processor.average_count
+                    'average_count': getattr(video_processor, 'average_count', 0),
+                    'camera_active': True
                 })
 
         while True:
@@ -2641,7 +2623,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     else:
                         await websocket.send_json({"error": err_msg or "Failed to start video stream"})
                 else:
-                    await websocket.send_json({"status": "Video stream already running"})
+                    latest = getattr(video_processor, 'latest_frame', None)
+                    if latest:
+                        await websocket.send_json({
+                            'video_frame': latest,
+                            'count': video_processor.passenger_count,
+                            'average_count': getattr(video_processor, 'average_count', 0),
+                            'camera_active': True
+                        })
+                    else:
+                        await websocket.send_json({"status": "Video stream already running"})
 
             elif message.get('action') == 'stop_stream':
                 video_processor.stop()

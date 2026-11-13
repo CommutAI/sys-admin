@@ -422,8 +422,11 @@ export function useRaspberryPi(options = {}) {
           safeSet(setIsStreaming, false);
         }
 
-        if (data.video_frame && videoRef.current) {
-          videoRef.current.src = `data:image/jpeg;base64,${data.video_frame}`;
+        const frameData = data.video_frame || data.frame;
+        if (frameData) {
+          if (videoRef?.current) {
+            videoRef.current.src = `data:image/jpeg;base64,${frameData}`;
+          }
           safeSet(setIsStreaming, true);
           safeSet(setCameraActive, true);
         }

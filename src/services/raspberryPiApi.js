@@ -148,7 +148,7 @@ export function invalidatePiUrl() {
  * Returns an unsubscribe function.
  */
 export function subscribePiDeviceChanges(onIpChange) {
-  // On HTTPS, ignore local IP updates from pi_devices — always use the ngrok URL
+  // On HTTPS, ignore local IP updates from pi_devices — always use the tunnel URL
   if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
     return () => {};
   }
@@ -161,11 +161,14 @@ export function subscribePiDeviceChanges(onIpChange) {
       (payload) => {
         const row = payload.new;
         if (row?.ip_address) {
-          const url = `http://${row.ip_address}:${row.port || 5000}`;
-          // Update cache immediately
-          _resolvedUrl  = url;
-          _lastResolved = Date.now();
-          onIpChange(url);
+          const url = `http://${row.ip_address}:${row.port || 8080}`;
+          // Only trigger if URL actually changed to avoid reconnecting on routine heartbeat updates
+          if (_resolvedUrl && url !== _resolvedUrl) {
+            console.log('[Pi] Network changed, auto-reconnecting to:', url);
+            _resolvedUrl  = url;
+            _lastResolved = Date.now();
+            onIpChange(url);
+          }
         }
       }
     )
