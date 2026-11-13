@@ -19,6 +19,15 @@ from dotenv import load_dotenv
 from hardware_integration import HardwareManager
 from supabase import create_client, Client
 
+# SQLite local storage for offline resilience
+try:
+    from local_store import init_db, write_passenger_count, write_gps
+    from sync_worker import start_sync_worker, stop_sync_worker, sync_status
+    _SQLITE_AVAILABLE = True
+except ImportError:
+    _SQLITE_AVAILABLE = False
+    print("[Warning] SQLite local store not available - data will not be buffered offline")
+
 load_dotenv('.env.stream-mode')
 
 def discover_backend_ip():
@@ -203,10 +212,12 @@ class VideoStreamer:
             if self.camera is not None:
                 self.camera.release()
 
-            self.camera = cv2.VideoCapture(CAMERA_DEVICE)
+            # Open with explicit V4L2 backend — required for USB cameras on Raspberry Pi/OpenCV builds
+            self.camera = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)
 
             if not self.camera.isOpened():
                 print(f"❌ CAMERA ERROR: Could not open camera at {CAMERA_DEVICE}")
+                self._list_available_cameras()
                 print(f"   Troubleshooting steps:")
                 print(f"   1. Check if camera is connected to Raspberry Pi")
                 print(f"   2. Run: ls -la /dev/video* to list available camera devices")
@@ -244,6 +255,21 @@ class VideoStreamer:
             print(f"❌ CAMERA ERROR: Initialization failed - {e}")
             print(f"   Check if camera is properly connected and permissions are correct")
             return False
+
+    def _list_available_cameras(self):
+        """List available camera devices"""
+        print("Attempting to find available cameras...")
+        for i in range(4):
+            path = f'/dev/video{i}'
+            try:
+                test_cam = cv2.VideoCapture(path, cv2.CAP_V4L2)
+                if test_cam.isOpened():
+                    ret, frame = test_cam.read()
+                    if ret and frame is not None:
+                        print(f"Found working camera at {path}")
+                    test_cam.release()
+            except Exception as e:
+                print(f"Error checking {path}: {e}")
 
     def encode_frame(self, frame):
         """Encode frame to base64"""
@@ -283,6 +309,15 @@ class VideoStreamer:
                         print(f"[Detection] Passengers: {count}")
                         self.last_passenger_count = count
                         self.last_detection_time = time.time()
+
+                        # Store passenger count locally in SQLite for offline resilience
+                        if _SQLITE_AVAILABLE and self.current_trip_id:
+                            write_passenger_count(
+                                count=count,
+                                trip_id=self.current_trip_id,
+                                bus_id=ASSIGNED_BUS_ID,
+                                source="yolo_backend"
+                            )
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -292,8 +327,49 @@ class VideoStreamer:
     async def stream_frames(self):
         """Stream frames to backend - non-blocking for maximum FPS"""
         if not self.initialize_camera():
-            print("Failed to initialize camera")
-            return
+            # Try other video device paths before giving up
+            print("Attempting to find alternative camera device...")
+            camera_found = False
+            for idx in range(4):
+                path = f'/dev/video{idx}'
+                if path == CAMERA_DEVICE:
+                    continue
+                try:
+                    test_cam = cv2.VideoCapture(path, cv2.CAP_V4L2)
+                    if test_cam.isOpened():
+                        ret, _ = test_cam.read()
+                        if ret:
+                            print(f"Camera found at {path} (configured {CAMERA_DEVICE} failed)")
+                            test_cam.release()
+                            # Try to initialize with this path
+                            self.camera = cv2.VideoCapture(path, cv2.CAP_V4L2)
+                            if self.camera.isOpened():
+                                # Apply settings
+                                self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                                self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                                self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+                                self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+                                self.camera.set(cv2.CAP_PROP_FPS, FPS)
+                                self.camera.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+
+                                # Test read
+                                for _ in range(3):
+                                    ret, test_frame = self.camera.read()
+                                if ret and test_frame is not None:
+                                    print(f"✅ Camera initialized at {path}")
+                                    camera_found = True
+                                    break
+                                else:
+                                    self.camera.release()
+                        else:
+                            test_cam.release()
+                except Exception as e:
+                    print(f"Error checking {path}: {e}")
+                    continue
+
+            if not camera_found:
+                print("Failed to initialize camera after trying all devices")
+                return
 
         if not await self.connect_to_backend():
             print("Failed to connect to backend")
@@ -445,6 +521,18 @@ async def send_gps_to_backend():
                 async with websockets.connect(backend_ws_url) as ws:
                     await ws.send(json.dumps(message))
                     print(f"[GPS Upload] Sent GPS: {loc.latitude:.6f}, {loc.longitude:.6f}")
+
+                # Also store locally in SQLite for offline resilience
+                if _SQLITE_AVAILABLE:
+                    write_gps(
+                        latitude=loc.latitude,
+                        longitude=loc.longitude,
+                        altitude=loc.altitude,
+                        speed=loc.speed,
+                        accuracy=loc.accuracy,
+                        source=loc.source,
+                        trip_id=current_trip_id
+                    )
             else:
                 print("[GPS Upload] No GPS location available yet")
 
@@ -459,6 +547,12 @@ async def main():
     """Main entry point"""
     gps_task = None
     try:
+        # Initialize SQLite local storage for offline resilience
+        if _SQLITE_AVAILABLE:
+            init_db()
+            start_sync_worker()
+            print("[Stream Mode] SQLite local storage initialized")
+
         # Start GPS upload task independently
         gps_task = asyncio.create_task(send_gps_to_backend())
 
@@ -473,6 +567,11 @@ async def main():
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
+        # Stop sync worker
+        if _SQLITE_AVAILABLE:
+            stop_sync_worker()
+            print("[Stream Mode] SQLite sync worker stopped")
+
         if gps_task:
             gps_task.cancel()
             try:
