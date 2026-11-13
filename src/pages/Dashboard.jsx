@@ -534,6 +534,41 @@ const Dashboard = () => {
     }
   }, [piOnline, piCameraActive, piIsStreaming]);
 
+  // Synchronize Live Bus Tracking passenger count with real-time Bus Video Monitoring count
+  useEffect(() => {
+    const liveVideoCount = backendCount || piPassengerCount || 0;
+    const monitoredTripId = backendTripIdFromWs || piActiveTripId || piCurrentTripId;
+    const monitoredBusId = piAssignedBus?.busId;
+    const monitoredPlate = piAssignedBus?.busPlate;
+
+    setBuses(prevBuses => {
+      if (!prevBuses || prevBuses.length === 0) return prevBuses;
+      let hasChanges = false;
+      const updated = prevBuses.map(bus => {
+        const isMonitoredBus = (
+          (monitoredBusId && (bus.id === monitoredBusId || bus.busId === monitoredBusId)) ||
+          (monitoredPlate && bus.plate === monitoredPlate) ||
+          (monitoredTripId && bus.tripId === monitoredTripId) ||
+          (prevBuses.length === 1 && (backendStreaming || piIsStreaming || piOnline))
+        );
+        if (isMonitoredBus && bus.passengers !== liveVideoCount) {
+          hasChanges = true;
+          return { ...bus, passengers: liveVideoCount };
+        }
+        return bus;
+      });
+
+      if (hasChanges) {
+        const newTotal = updated
+          .filter(b => b.status === 'active')
+          .reduce((sum, b) => sum + (b.passengers || 0), 0);
+        setMapStats(prev => ({ ...prev, totalPassengers: newTotal }));
+        return updated;
+      }
+      return prevBuses;
+    });
+  }, [backendCount, piPassengerCount, backendStreaming, piIsStreaming, piOnline, backendTripIdFromWs, piActiveTripId, piCurrentTripId, piAssignedBus]);
+
   const fetchRouteFromOSRM = async () => {
     try {
       // Use OSRM (Open Source Routing Machine) public API
@@ -836,6 +871,12 @@ const Dashboard = () => {
       const tripIds = (activeTrips || []).map(t => t.id);
       let totalPassengers = 0;
 
+      const liveVideoCount = backendCount || piPassengerCount || 0;
+      const monitoredTripId = backendTripIdFromWs || piActiveTripId || piCurrentTripId;
+      const monitoredBusId = piAssignedBus?.busId;
+      const monitoredPlate = piAssignedBus?.busPlate;
+
+      const latestCounts = {};
       if (tripIds.length > 0) {
         const { data: passengerCounts } = await supabase
           .from('passenger_counts')
@@ -843,18 +884,26 @@ const Dashboard = () => {
           .in('trip_id', tripIds)
           .order('recorded_at', { ascending: false });
 
-        const latestCounts = {};
         (passengerCounts || []).forEach(pc => {
-          if (!latestCounts[pc.trip_id]) latestCounts[pc.trip_id] = pc.count;
-        });
-
-        busMarkers.forEach(bus => {
-          if (bus.tripId && latestCounts[bus.tripId]) {
-            bus.passengers = latestCounts[bus.tripId];
-            totalPassengers += latestCounts[bus.tripId];
-          }
+          if (!(pc.trip_id in latestCounts)) latestCounts[pc.trip_id] = pc.count;
         });
       }
+
+      busMarkers.forEach(bus => {
+        const isMonitoredBus = (
+          (monitoredBusId && (bus.id === monitoredBusId || bus.busId === monitoredBusId)) ||
+          (monitoredPlate && bus.plate === monitoredPlate) ||
+          (monitoredTripId && bus.tripId === monitoredTripId) ||
+          (busMarkers.length === 1 && (backendStreaming || piIsStreaming || piOnline))
+        );
+
+        if (isMonitoredBus && (backendStreaming || piIsStreaming || piOnline || liveVideoCount > 0)) {
+          bus.passengers = liveVideoCount;
+        } else if (bus.tripId && latestCounts[bus.tripId] !== undefined) {
+          bus.passengers = latestCounts[bus.tripId];
+        }
+        totalPassengers += (bus.passengers || 0);
+      });
 
       setBuses(busMarkers);
       setMapStats({
@@ -1132,29 +1181,6 @@ const Dashboard = () => {
                   <AnimatedBusMarker key={bus.id} bus={bus} onClick={setSelectedBus} />
                 ))}
               </MapContainer>
-            </div>
-            <div className="bg-white/5 p-3 sm:p-4 rounded-xl mt-4">
-              <h3 className="text-white text-sm font-bold mb-3">Map Legend</h3>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-1 bg-orange-500 rounded"></div>
-                  <span className="text-white/70 text-xs">Route: Manolo Fortich ↔ Agora</span>
-                </div>
-                <div className="flex flex-wrap gap-4 sm:gap-6 text-xs">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-green-400" />
-                    <span className="text-white/70">On Active Trip</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-gray-400" />
-                    <span className="text-white/70">Inactive / Idle</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-yellow-400" />
-                    <span className="text-white/70">Maintenance</span>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
           <div className="space-y-4 order-1 lg:order-2">
