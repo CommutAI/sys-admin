@@ -909,19 +909,20 @@ class VideoProcessor:
             return []
 
     def _detect_onnx(self, frame):
-        """ONNX Runtime-based YOLO detection for 90%+ accuracy on CPU."""
+        """ONNX Runtime-based YOLO detection — uses DETECTION_SIZE env var."""
         try:
             import numpy as np
 
-            # Preprocess frame for YOLO - model requires 640x640
-            input_shape = (640, 640)
-            original_shape = frame.shape[:2]
+            # Use configured detection size (160px = fastest on Pi)
+            sz = DETECTION_SIZE  # e.g. 160
+            input_shape = (sz, sz)
+            original_h, original_w = frame.shape[:2]
 
             # Resize and pad
             img = cv2.resize(frame, input_shape)
             img = img.astype(np.float32) / 255.0
             img = np.transpose(img, (2, 0, 1))  # HWC to CHW
-            img = np.expand_dims(img, axis=0)  # Add batch dimension
+            img = np.expand_dims(img, axis=0)   # add batch dim
 
             # Run inference
             outputs = self.onnx_session.run(
@@ -960,9 +961,9 @@ class VideoProcessor:
                         x2 = cx + w / 2
                         y2 = cy + h / 2
                         
-                        # Scale back to original image
-                        scale_x = original_shape[1] / input_shape[1]
-                        scale_y = original_shape[0] / input_shape[0]
+                        # Scale back to original image dimensions
+                        scale_x = original_w / sz
+                        scale_y = original_h / sz
                         
                         detections.append({
                             'bbox': [int(x1 * scale_x), int(y1 * scale_y),

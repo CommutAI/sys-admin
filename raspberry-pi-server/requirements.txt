@@ -14,3 +14,4 @@ requests>=2.31.0
 pyserial>=3.5
 RPi.GPIO>=0.7.0
 httpx>=0.24.0
+onnxruntime>=1.16.0
