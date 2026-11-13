@@ -1,7 +1,7 @@
 """
 Video Processing Service for CommutAI System
-Receives raw video frames from Raspberry Pi and processes them with YOLOv8 or Roboflow
-Optimized for CPU/Intel GPU for 90%+ accuracy in passenger counting
+Receives raw video frames from Raspberry Pi and processes them with YOLOv8 ONNX
+Optimized for low memory usage on Render free tier
 """
 
 import cv2
@@ -20,13 +20,21 @@ import requests
 
 load_dotenv()
 
-# AI Model imports
+# ONNX Runtime — lightweight, no torch/torchvision needed
+try:
+    import onnxruntime as ort
+    ONNX_AVAILABLE = True
+    print("ONNX Runtime available for inference")
+except ImportError:
+    ONNX_AVAILABLE = False
+    print("Warning: onnxruntime not installed - AI detection disabled")
+
+# Keep ultralytics as optional fallback for model download only
 try:
     from ultralytics import YOLO
     YOLO_AVAILABLE = True
 except ImportError:
     YOLO_AVAILABLE = False
-    print("Warning: ultralytics not installed - AI detection disabled")
 
 # Roboflow client import
 try:
@@ -115,36 +123,34 @@ class VideoProcessor:
         self.last_passenger_count = 0
 
     def initialize_model(self):
-        """Initialize detection model (YOLO or check Roboflow)"""
-        if DETECTION_METHOD == 'roboflow':
-            if ROBOFLOW_AVAILABLE:
-                print("[Video Processor] Using Roboflow workflow for detection")
-                return True
-            else:
-                print("[Video Processor] Roboflow not available, falling back to YOLO")
-                if not YOLO_AVAILABLE:
-                    print("[Video Processor] YOLO also not available - detection disabled")
-                    return False
-                # Fall through to YOLO initialization
-
-        if not YOLO_AVAILABLE:
-            print("YOLO not available - cannot initialize model")
+        """Initialize ONNX model for detection — lightweight, no torch needed"""
+        if not ONNX_AVAILABLE:
+            print("[Video Processor] onnxruntime not available - detection disabled")
             return False
 
         try:
-            # Load model with CPU optimization
-            self.model = YOLO(MODEL_PATH)
+            onnx_path = 'yolov8n.onnx'
 
-            # Optimize for CPU/Intel GPU
-            # Use half precision if supported (not always available on CPU)
-            try:
-                self.model.fuse()  # Fuse layers for faster inference
-                print("[Video Processor] Model layers fused for optimization")
-            except:
-                print("[Video Processor] Model fusion not available, using standard")
-            
-            print(f"[Video Processor] YOLO model loaded from {MODEL_PATH}")
+            # Download ONNX model if not present using ultralytics
+            if not os.path.exists(onnx_path):
+                print(f"[Video Processor] ONNX model not found, exporting from ultralytics...")
+                if YOLO_AVAILABLE:
+                    yolo = YOLO('yolov8n.pt')
+                    yolo.export(format='onnx', imgsz=DETECTION_SIZE, opset=12, simplify=True)
+                    print(f"[Video Processor] ONNX model exported to {onnx_path}")
+                else:
+                    print("[Video Processor] Cannot export ONNX — ultralytics not available")
+                    return False
+
+            self.model = ort.InferenceSession(
+                onnx_path,
+                providers=['CPUExecutionProvider']
+            )
+            self.input_name = self.model.get_inputs()[0].name
+            print(f"[Video Processor] ONNX model loaded: {onnx_path}")
+            print(f"[Video Processor] Detection size: {DETECTION_SIZE}px")
             return True
+
         except Exception as e:
             print(f"[Video Processor] Model initialization error: {e}")
             return False
@@ -189,24 +195,47 @@ class VideoProcessor:
         return False
 
     async def detect_passengers(self, frame: np.ndarray) -> List[Dict]:
-        """
-        Detect passengers using configured method (YOLO or Roboflow)
-        Optimized for 90%+ accuracy with confidence filtering and NMS
-        Implements token optimization for Roboflow with frame sampling
-        """
-        if DETECTION_METHOD == 'roboflow' and ROBOFLOW_AVAILABLE:
-            # Apply token optimization: skip frames if needed
-            if self._should_skip_roboflow_frame():
-                # Return last known count for skipped frames
-                return [{'count': self.last_passenger_count, 'skipped': True}]
-            return await self._detect_with_roboflow(frame)
-        elif DETECTION_METHOD == 'yolo' and YOLO_AVAILABLE:
-            return self._detect_with_yolo(frame)
-        else:
-            print(f"[Video Processor] Detection method '{DETECTION_METHOD}' not available, falling back to YOLO")
-            if YOLO_AVAILABLE:
-                return self._detect_with_yolo(frame)
+        """Detect passengers using ONNX Runtime — no torch needed"""
+        if self.model is None:
             return []
+        try:
+            return self._detect_onnx(frame)
+        except Exception as e:
+            print(f"[Video Processor] Detection error: {e}")
+            return []
+
+    def _detect_onnx(self, frame: np.ndarray) -> List[Dict]:
+        """ONNX YOLOv8 inference"""
+        h, w = frame.shape[:2]
+        sz = DETECTION_SIZE
+
+        # Preprocess
+        img = cv2.resize(frame, (sz, sz))
+        img = img.astype(np.float32) / 255.0
+        img = np.transpose(img, (2, 0, 1))
+        img = np.expand_dims(img, 0)
+
+        # Inference
+        outputs = self.model.run(None, {self.input_name: img})
+        predictions = outputs[0][0].T  # (8400, 84)
+
+        detections = []
+        for pred in predictions:
+            person_conf = float(pred[4])
+            if person_conf < YOLO_CONFIDENCE_THRESHOLD:
+                continue
+            cx, cy, bw, bh = pred[:4]
+            x1 = int((cx - bw / 2) * w / sz)
+            y1 = int((cy - bh / 2) * h / sz)
+            x2 = int((cx + bw / 2) * w / sz)
+            y2 = int((cy + bh / 2) * h / sz)
+            detections.append({
+                'bbox': [x1, y1, x2, y2],
+                'confidence': person_conf,
+                'class': 'person'
+            })
+
+        return self._apply_nms(detections)
 
     def _detect_with_yolo(self, frame: np.ndarray) -> List[Dict]:
         """Detect passengers using local YOLO model"""
