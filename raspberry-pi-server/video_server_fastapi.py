@@ -1387,12 +1387,7 @@ class VideoProcessor:
                 print(f"[Anomaly] Failed to trigger detection: {e}")
 
         threading.Thread(target=_detect, daemon=True).start()
-                if response.status_code == 200:
-                    result = response.json()
-                    total_anomalies = result.get('total_anomalies_detected', 0)
-                    total_irregularities = result.get('total_irregularities_created', 0)
-                    
-                    if total_anomalies > 0 or total_irregularities > 0:
+
     def set_current_trip(self, trip_id, bus_id=None):
         """Set the current trip ID for database recording"""
         self.current_trip_id = trip_id
