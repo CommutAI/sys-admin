@@ -729,8 +729,8 @@ class HardwareManager:
         
         return success
     
-    def set_manual_location(self, lat: float, lng: float, source: str = 'device_gps'):
-        """Manually set or sync high-precision coordinates (e.g. from conductor phone or terminal)"""
+    def set_manual_location(self, lat: float, lng: float, source: str = 'device_gps', log_db: bool = False):
+        """Manually set or sync high-precision coordinates (e.g. from driver/conductor phone or terminal)"""
         loc = GPSLocation(
             latitude=lat,
             longitude=lng,
@@ -743,7 +743,7 @@ class HardwareManager:
         self.manual_location = loc
         self.current_location = loc
         logger.info(f"Location manually set/synced: ({lat:.6f}, {lng:.6f}) source: {source}")
-        if self.db_client:
+        if log_db and self.db_client:
             self._log_location_to_db(loc, self.current_trip_id, self.db_client)
 
     def get_location(self) -> Optional[GPSLocation]:
@@ -758,12 +758,11 @@ class HardwareManager:
         # 2. Check if a high-precision phone or manual location was synced
         if self.manual_location:
             self.current_location = self.manual_location
-            if self.db_client:
-                self._log_location_to_db(self.manual_location, self.current_trip_id, self.db_client)
             return self.manual_location
 
         # 3. High-precision terminal anchor (Manolo Fortich Bus Terminal: 8.366264, 124.865749)
         # Prevents wild ISP/cellular tower coordinates that jump kilometers away from the route
+        # IN-MEMORY ONLY: Never write dummy terminal_anchor to Supabase database!
         anchor_loc = GPSLocation(
             latitude=self.default_lat,
             longitude=self.default_lng,
@@ -774,8 +773,6 @@ class HardwareManager:
             source='terminal_anchor'
         )
         self.current_location = anchor_loc
-        if self.db_client:
-            self._log_location_to_db(anchor_loc, self.current_trip_id, self.db_client)
         return anchor_loc
     
     def get_address_from_location(self, lat: float, lon: float) -> Optional[dict]:
@@ -942,6 +939,14 @@ class HardwareManager:
     def _log_location_to_db(self, location: GPSLocation, trip_id: Optional[int], db_client):
         """Log geolocation fallback to database (rate-limited to avoid database flooding)"""
         try:
+            # Reject dummy anchor / fallback sources so they never pollute live GPS database tables
+            if not location or not getattr(location, 'source', None):
+                return
+            src = str(location.source).lower()
+            if 'anchor' in src or 'fallback' in src:
+                logger.debug(f"Skipping DB log for non-GPS source: {location.source}")
+                return
+
             # Validate geolocation data - reject invalid coordinates
             if location.latitude == 0.0 and location.longitude == 0.0:
                 logger.debug("Skipping geolocation log — no fix (0,0 coordinates)")

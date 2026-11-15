@@ -235,7 +235,7 @@ async def lifespan(app: FastAPI):
                     # 1. Match this assigned bus if available
                     if ASSIGNED_BUS_ID:
                         res = supabase.table('trips') \
-                            .select('id, bus_id, status') \
+                            .select('id, bus_id, status, current_lat, current_lng, gps_updated_at') \
                             .eq('bus_id', ASSIGNED_BUS_ID) \
                             .eq('status', 'in_progress') \
                             .order('started_at', desc=True) \
@@ -246,7 +246,7 @@ async def lifespan(app: FastAPI):
 
                     # 2. Otherwise look for any active trip in progress
                     res = supabase.table('trips') \
-                        .select('id, bus_id, status') \
+                        .select('id, bus_id, status, current_lat, current_lng, gps_updated_at') \
                         .eq('status', 'in_progress') \
                         .order('started_at', desc=True) \
                         .limit(1) \
@@ -265,6 +265,18 @@ async def lifespan(app: FastAPI):
                         if hardware_manager:
                             hardware_manager.set_current_trip(trip_id)
                         print(f"[Trip Poll] 🚀 Auto-detected active trip from Supabase: {trip_id} (Recording started)")
+
+                    # Sync driver's phone GPS if available and hardware GPS has no stable satellite fix
+                    cur_lat = active_trip.get('current_lat')
+                    cur_lng = active_trip.get('current_lng')
+                    if cur_lat is not None and cur_lng is not None and hardware_manager:
+                        try:
+                            flat, flng = float(cur_lat), float(cur_lng)
+                            if abs(flat) > 0.001 and abs(flng) > 0.001:
+                                if not hardware_manager.neo6m or not hardware_manager.neo6m.is_location_stable():
+                                    hardware_manager.set_manual_location(flat, flng, source='driver_phone_gps', log_db=False)
+                        except Exception:
+                            pass
                 else:
                     if video_processor.current_trip_id is not None:
                         ended_id = video_processor.current_trip_id
@@ -272,6 +284,31 @@ async def lifespan(app: FastAPI):
                         video_processor.clear_current_trip()
                         if hardware_manager:
                             hardware_manager.clear_current_trip()
+
+                    # When idle, sync latest driver phone GPS so telemetry/camera shows actual location
+                    if hardware_manager and (not hardware_manager.neo6m or not hardware_manager.neo6m.is_location_stable()):
+                        def _fetch_idle_driver_gps():
+                            try:
+                                res = supabase.table('gps_locations') \
+                                    .select('latitude, longitude, source, recorded_at') \
+                                    .eq('source', 'driver_phone_gps') \
+                                    .order('recorded_at', desc=True) \
+                                    .limit(1) \
+                                    .execute()
+                                if res and res.data and len(res.data) > 0:
+                                    return res.data[0]
+                            except Exception:
+                                pass
+                            return None
+                        idle_drv = await asyncio.to_thread(_fetch_idle_driver_gps)
+                        if idle_drv and idle_drv.get('latitude') and idle_drv.get('longitude'):
+                            try:
+                                flat = float(idle_drv['latitude'])
+                                flng = float(idle_drv['longitude'])
+                                if abs(flat) > 0.001 and abs(flng) > 0.001:
+                                    hardware_manager.set_manual_location(flat, flng, source='driver_phone_gps', log_db=False)
+                            except Exception:
+                                pass
 
             except Exception as e:
                 # Silently backoff on transient network error
@@ -2352,7 +2389,7 @@ async def set_location(loc_data: dict):
         if abs(lat) < 0.001 and abs(lng) < 0.001:
             return JSONResponse({'status': 'error', 'message': 'Invalid coordinates'}, status_code=400)
         
-        hardware_manager.set_manual_location(lat, lng, source=source)
+        hardware_manager.set_manual_location(lat, lng, source=source, log_db=False)
         return JSONResponse({'status': 'success', 'latitude': lat, 'longitude': lng, 'source': source})
     except Exception as e:
         return JSONResponse({'status': 'error', 'message': str(e)}, status_code=500)

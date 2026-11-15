@@ -194,9 +194,15 @@ const BusDetailsModal = ({ bus, onClose }) => {
             <div>
               <p className="text-gray-400 text-sm mb-1">GPS Source</p>
               <span className={`px-3 py-1 rounded-full text-sm ${
-                bus.locationSource === 'gps' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+                bus.locationSource?.includes('driver_phone') || bus.locationSource?.includes('phone') || bus.locationSource === 'gps'
+                  ? 'bg-green-500/20 text-green-400'
+                  : 'bg-yellow-500/20 text-yellow-400'
               }`}>
-                {bus.locationSource || 'fallback'}
+                {bus.locationSource?.includes('driver_phone') || bus.locationSource?.includes('phone')
+                  ? '📱 Driver Phone GPS'
+                  : bus.locationSource === 'gps'
+                  ? '🛰️ Satellite GPS'
+                  : bus.locationSource || 'fallback'}
               </span>
             </div>
           </div>
@@ -319,8 +325,8 @@ const AnimatedBusMarker = ({ bus, onClick }) => {
                     🛰️ Satellite GPS
                   </span>
                 ) : bus.locationSource?.includes('terminal') || bus.locationSource?.includes('anchor') ? (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-300">
-                    📍 Terminal Anchor
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-300" title="Stationary at Terminal (No GPS Fix)">
+                    📍 Terminal (Stationary)
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-blue-100 text-blue-800 border border-blue-300">
@@ -592,7 +598,7 @@ const CompactVideoFeed = ({
                 <span className="text-white/40">·</span>
                 <span className="text-emerald-400 font-semibold">30 FPS</span>
               </div>
-              {locationSource?.includes('phone') && (
+              {(locationSource?.includes('phone') || locationSource?.includes('driver')) && (
                 <div className="bg-emerald-950/80 backdrop-blur-md border border-emerald-500/30 text-emerald-300 rounded px-2 py-0.5 flex items-center gap-1">
                   <span>📱</span>
                   <span className="font-semibold">Driver GPS Active</span>
@@ -1018,39 +1024,91 @@ const Dashboard = () => {
         tripByBusId[trip.bus_id] = trip;
       });
 
-      // Map GPS data by trip ID and also collect by bus ID through trips
-      const latestGpsByTripId = {};
-      const latestGpsByBusId = {};
-      let latestGpsAny = null;
+      // Helper: check if a source is an anchor / placeholder / fallback
+      const isFallbackSource = (s) => {
+        if (!s) return true;
+        const lower = String(s).toLowerCase();
+        return lower.includes('anchor') || lower.includes('fallback') || lower.includes('terminal');
+      };
+
+      // Map real GPS data by trip ID and bus ID; track global real GPS and fallback
+      const latestRealGpsByTripId = {};
+      const latestRealGpsByBusId = {};
+      let latestRealGpsAny = null;
+      let latestFallbackGpsAny = null;
 
       (gpsRows || []).forEach(row => {
+        const lat = parseFloat(row.latitude);
+        const lng = parseFloat(row.longitude);
+
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        if (Math.abs(lat) < 0.001 && Math.abs(lng) < 0.001) return;
+
         const gps = {
-          lat: parseFloat(row.latitude),
-          lng: parseFloat(row.longitude),
+          lat,
+          lng,
           source: row.source || 'gps',
           recordedAt: row.recorded_at,
           tripId: row.trip_id || null
         };
 
-        if (!Number.isFinite(gps.lat) || !Number.isFinite(gps.lng)) return;
-        if (!latestGpsAny) latestGpsAny = gps;
-        if (row.trip_id && !latestGpsByTripId[row.trip_id]) {
-          latestGpsByTripId[row.trip_id] = gps;
-          // Also map to bus ID if we have the trip info
+        if (isFallbackSource(gps.source)) {
+          if (!latestFallbackGpsAny) latestFallbackGpsAny = gps;
+          return;
+        }
+
+        // True GPS fix (e.g. driver_phone_gps, satellite gps)
+        if (!latestRealGpsAny) latestRealGpsAny = gps;
+        if (row.trip_id && !latestRealGpsByTripId[row.trip_id]) {
+          latestRealGpsByTripId[row.trip_id] = gps;
           const trip = (activeTrips || []).find(t => t.id === row.trip_id);
-          if (trip && !latestGpsByBusId[trip.bus_id]) {
-            latestGpsByBusId[trip.bus_id] = gps;
+          if (trip && !latestRealGpsByBusId[trip.bus_id]) {
+            latestRealGpsByBusId[trip.bus_id] = gps;
           }
         }
       });
 
-      // Build a marker for every bus — use GPS data if available, otherwise fallback
+      // Build a marker for every bus — strictly prioritize real GPS over any fallback
       const busMarkers = (allBuses || []).map(bus => {
         const trip = tripByBusId[bus.id];
-        const gps = latestGpsByBusId[bus.id] || (trip ? latestGpsByTripId[trip.id] : null) || latestGpsAny;
 
-        const lat = gps?.lat ?? trip?.current_lat ?? 8.43;
-        const lng = gps?.lng ?? trip?.current_lng ?? 124.76;
+        // 1. Check for real GPS linked specifically to this bus or trip
+        let gps = latestRealGpsByBusId[bus.id] || (trip ? latestRealGpsByTripId[trip.id] : null);
+
+        // 2. Check if the active trip record has valid driver phone coordinates
+        const tripLat = trip?.current_lat != null ? parseFloat(trip.current_lat) : null;
+        const tripLng = trip?.current_lng != null ? parseFloat(trip.current_lng) : null;
+        const hasValidTripCoords = Number.isFinite(tripLat) && Number.isFinite(tripLng) && (Math.abs(tripLat) > 0.001 || Math.abs(tripLng) > 0.001);
+
+        // 3. Fallback to latest global real GPS fix (e.g. driver phone GPS unlinked to trip)
+        if (!gps && !hasValidTripCoords && latestRealGpsAny) {
+          gps = latestRealGpsAny;
+        }
+
+        let lat, lng, locationSource, locationUpdatedAt;
+
+        if (gps) {
+          lat = gps.lat;
+          lng = gps.lng;
+          locationSource = gps.source;
+          locationUpdatedAt = gps.recordedAt;
+        } else if (hasValidTripCoords) {
+          lat = tripLat;
+          lng = tripLng;
+          locationSource = 'driver_phone_gps';
+          locationUpdatedAt = trip.gps_updated_at || trip.started_at;
+        } else if (latestFallbackGpsAny) {
+          lat = latestFallbackGpsAny.lat;
+          lng = latestFallbackGpsAny.lng;
+          locationSource = 'terminal_default';
+          locationUpdatedAt = latestFallbackGpsAny.recordedAt;
+        } else {
+          lat = 8.366264; // Manolo Fortich Bus Terminal
+          lng = 124.865749;
+          locationSource = 'terminal_default';
+          locationUpdatedAt = null;
+        }
+
         const routeProgress = calculateRouteProgress(lat, lng, routeCoordinates);
         const routeDirection = getRouteDirection(routeProgress);
         const eta = estimateTimeToDestination(routeProgress, calculateRouteDistance(routeCoordinates));
@@ -1063,8 +1121,8 @@ const Dashboard = () => {
           lng,
           passengers: 0,
           status: trip ? 'active' : bus.status,
-          locationSource: gps ? (gps.tripId ? gps.source : `${gps.source} (latest GPS)`) : 'fallback',
-          locationUpdatedAt: gps?.recordedAt || trip?.gps_updated_at || null,
+          locationSource,
+          locationUpdatedAt,
           busId: bus.id,
           tripId: trip?.id || null,
           routeProgress,

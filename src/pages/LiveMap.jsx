@@ -37,28 +37,10 @@ const LiveMap = () => {
   });
   const [loading, setLoading] = useState(true);
   const [syncingGps, setSyncingGps] = useState(false);
+  const [mapCenter, setMapCenter] = useState(null);
 
-  const anchorToTerminal = async (lat, lng, terminalName) => {
-    try {
-      const activeTrip = buses.find(b => b.status === 'active');
-      await supabase.from('gps_locations').insert({
-        latitude: lat,
-        longitude: lng,
-        source: `terminal_anchor (${terminalName})`,
-        accuracy: 10.0,
-        trip_id: activeTrip?.tripId || null
-      });
-      if (activeTrip?.tripId) {
-        await supabase.from('trips').update({
-          current_lat: lat,
-          current_lng: lng,
-          gps_updated_at: new Date().toISOString()
-        }).eq('id', activeTrip.tripId);
-      }
-      fetchLiveMapData();
-    } catch (err) {
-      console.error('Error anchoring to terminal:', err);
-    }
+  const panToTerminal = (lat, lng) => {
+    setMapCenter([lat, lng]);
   };
 
   const syncFromBrowserGPS = () => {
@@ -152,15 +134,24 @@ const LiveMap = () => {
         .order('recorded_at', { ascending: false })
         .limit(100);
 
-      const latestGpsByTripId = {};
-      let latestGpsAny = null;
+      // Helper: detect fallback or dummy sources
+      const isFallbackSource = (s) => {
+        if (!s) return true;
+        const lower = String(s).toLowerCase();
+        return lower.includes('anchor') || lower.includes('fallback') || lower.includes('terminal');
+      };
+
+      const latestRealGpsByTripId = {};
+      let latestRealGpsAny = null;
+      let latestFallbackGpsAny = null;
+
       (gpsRows || []).forEach(row => {
         const lat = parseFloat(row.latitude);
         const lng = parseFloat(row.longitude);
 
         // Skip invalid coordinates — 0,0 means no GPS fix yet
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-        if (lat === 0 && lng === 0) return;
+        if (Math.abs(lat) < 0.001 && Math.abs(lng) < 0.001) return;
 
         const gps = {
           lat,
@@ -170,54 +161,51 @@ const LiveMap = () => {
           tripId: row.trip_id || null
         };
 
-        // Track the single latest valid GPS reading (regardless of trip)
-        if (!latestGpsAny) latestGpsAny = gps;
+        if (isFallbackSource(gps.source)) {
+          if (!latestFallbackGpsAny) latestFallbackGpsAny = gps;
+          return;
+        }
+
+        // True GPS fix (driver phone or hardware GPS)
+        if (!latestRealGpsAny) latestRealGpsAny = gps;
 
         // Track latest per trip_id
-        if (row.trip_id && !latestGpsByTripId[row.trip_id]) {
-          latestGpsByTripId[row.trip_id] = gps;
+        if (row.trip_id && !latestRealGpsByTripId[row.trip_id]) {
+          latestRealGpsByTripId[row.trip_id] = gps;
         }
       });
 
-      // Transform trips to bus markers - use gps_locations first, fall back to trips.current_lat/lng
+      // Transform trips to bus markers - strictly prioritize real GPS over dummy fallbacks
       const busMarkers = (activeTrips || [])
         .map((trip) => {
-          const gps = latestGpsByTripId[trip.id];
+          const gps = latestRealGpsByTripId[trip.id] || latestRealGpsAny;
 
-          // Try gps_locations first, then fall back to current_lat/lng on the trip itself
           let lat, lng, locationSource, locationUpdatedAt;
+
+          const tripLat = trip.current_lat != null ? parseFloat(trip.current_lat) : null;
+          const tripLng = trip.current_lng != null ? parseFloat(trip.current_lng) : null;
+          const hasValidTripCoords = Number.isFinite(tripLat) && Number.isFinite(tripLng) && (Math.abs(tripLat) > 0.001 || Math.abs(tripLng) > 0.001);
 
           if (gps && Number.isFinite(gps.lat) && Number.isFinite(gps.lng)) {
             lat = gps.lat;
             lng = gps.lng;
             locationSource = gps.source;
             locationUpdatedAt = gps.recordedAt;
-          } else if (trip.current_lat != null && trip.current_lng != null) {
-            lat = parseFloat(trip.current_lat);
-            lng = parseFloat(trip.current_lng);
-            if (lat === 0 && lng === 0) {
-              // Invalid stored GPS, try latestGpsAny
-              if (latestGpsAny) {
-                lat = latestGpsAny.lat;
-                lng = latestGpsAny.lng;
-                locationSource = `${latestGpsAny.source} (unlinked)`;
-                locationUpdatedAt = latestGpsAny.recordedAt;
-              } else {
-                return null;
-              }
-            } else {
-              locationSource = 'trip record';
-              locationUpdatedAt = trip.gps_updated_at || trip.started_at;
-            }
-          } else if (latestGpsAny) {
-            // GPS rows exist but trip_id is null — Pi is sending location
-            // without an active trip linked. Use the latest valid fix.
-            lat = latestGpsAny.lat;
-            lng = latestGpsAny.lng;
-            locationSource = `${latestGpsAny.source} (unlinked)`;
-            locationUpdatedAt = latestGpsAny.recordedAt;
+          } else if (hasValidTripCoords) {
+            lat = tripLat;
+            lng = tripLng;
+            locationSource = 'driver_phone_gps';
+            locationUpdatedAt = trip.gps_updated_at || trip.started_at;
+          } else if (latestFallbackGpsAny) {
+            lat = latestFallbackGpsAny.lat;
+            lng = latestFallbackGpsAny.lng;
+            locationSource = 'terminal_default';
+            locationUpdatedAt = latestFallbackGpsAny.recordedAt;
           } else {
-            return null; // No GPS data at all
+            lat = 8.366264;
+            lng = 124.865749;
+            locationSource = 'terminal_default';
+            locationUpdatedAt = null;
           }
 
           if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
@@ -243,19 +231,23 @@ const LiveMap = () => {
       const inactiveBuses = (allBuses || [])
         .filter(bus => !activeBusIds.has(bus.id))
         .map((bus) => {
-          // Show this bus if we have any valid unlinked GPS fix
-          if (!latestGpsAny) return null;
+          // If we have a real GPS fix, show this bus at that fix!
+          // If no real GPS fix, show at route terminal
+          const lat = latestRealGpsAny ? latestRealGpsAny.lat : 8.366264;
+          const lng = latestRealGpsAny ? latestRealGpsAny.lng : 124.865749;
+          const locationSource = latestRealGpsAny ? latestRealGpsAny.source : 'terminal_default';
+          const locationUpdatedAt = latestRealGpsAny?.recordedAt || null;
 
           return {
             id: `inactive-${bus.id}`,
             plate: bus.plate_number || 'Unknown',
             route: bus.route || 'Unknown',
-            lat: latestGpsAny.lat,
-            lng: latestGpsAny.lng,
+            lat,
+            lng,
             passengers: 0,
             status: 'idle',
-            locationSource: `${latestGpsAny.source} (no active trip)`,
-            locationUpdatedAt: latestGpsAny.recordedAt,
+            locationSource,
+            locationUpdatedAt,
             busId: bus.id,
             tripId: null
           };
@@ -350,8 +342,8 @@ const LiveMap = () => {
                 <span>🛰️</span> Satellite GPS
               </span>
             ) : bus.locationSource?.includes('terminal') || bus.locationSource?.includes('anchor') ? (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 border border-purple-200" title="Anchored to Route Terminal">
-                <span>📍</span> Terminal Anchor
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 border border-purple-200" title="Stationary at Terminal (No GPS Signal)">
+                <span>📍</span> Terminal (Stationary)
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200" title={`Pi Geolocation: ${bus.locationSource}`}>
@@ -382,9 +374,9 @@ const LiveMap = () => {
     );
   }
 
-  const center = buses.length > 0 && buses[0].lat
+  const center = mapCenter || (buses.length > 0 && buses[0].lat
     ? [buses[0].lat, buses[0].lng]
-    : [8.4822, 124.6472]; // Northern Mindanao (CDO / Bukidnon)
+    : [8.4822, 124.6472]); // Northern Mindanao (CDO / Bukidnon)
 
   return (
     <div className="space-y-6">
@@ -404,15 +396,17 @@ const LiveMap = () => {
             {syncingGps ? "Syncing GPS..." : "Sync Device GPS"}
           </button>
           <button
-            onClick={() => anchorToTerminal(8.366264, 124.865749, 'Manolo Fortich Terminal')}
+            onClick={() => panToTerminal(8.366264, 124.865749)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/10 text-white/80 border border-white/10 hover:bg-white/20 transition-colors cursor-pointer"
+            title="Pan map to Manolo Fortich Terminal"
           >
             <MapPin size={14} className="text-orange-400" />
             Manolo Terminal
           </button>
           <button
-            onClick={() => anchorToTerminal(8.488899, 124.657647, 'Agora Terminal')}
+            onClick={() => panToTerminal(8.488899, 124.657647)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/10 text-white/80 border border-white/10 hover:bg-white/20 transition-colors cursor-pointer"
+            title="Pan map to Agora Terminal"
           >
             <MapPin size={14} className="text-blue-400" />
             Agora Terminal
@@ -511,6 +505,8 @@ const LiveMap = () => {
                           ? '📱 Driver GPS'
                           : bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi')
                           ? '🛰️ GPS'
+                          : bus.locationSource?.includes('terminal')
+                          ? '📍 Terminal'
                           : '📶 Pi Loc'}
                       </span>
                     </div>
