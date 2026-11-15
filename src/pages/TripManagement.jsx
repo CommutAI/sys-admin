@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft, Download, CheckCircle, Activity, AlertTriangle, Download as DownloadIcon, Play } from 'lucide-react';
+import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft, Download, CheckCircle, Activity, AlertTriangle, Download as DownloadIcon, Play, FileText } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -545,6 +545,185 @@ const TripManagement = ({ userRole }) => {
       console.error('Error fetching trip details:', error);
     } finally {
       setViewModalLoading(false);
+    }
+  };
+
+  const handleExportTripDetailsExcel = async () => {
+    if (!selectedTrip) return;
+    try {
+      const plateNumber = selectedTrip.bus_id?.plate_number || 'BUS';
+      const wb = XLSX.utils.book_new();
+
+      // Sheet 1: Trip Summary
+      const summaryData = [
+        { Field: 'Trip ID', Value: selectedTrip.id || 'N/A' },
+        { Field: 'Bus Plate Number', Value: plateNumber },
+        { Field: 'Route', Value: selectedTrip.bus_id?.route || 'N/A' },
+        { Field: 'Status', Value: selectedTrip.status?.replace('_', ' ') || 'N/A' },
+        { Field: 'Conductor', Value: selectedTrip.conductor?.full_name || selectedTrip.conductor_staff?.full_name || 'N/A' },
+        { Field: 'Driver', Value: selectedTrip.driver?.full_name || selectedTrip.driver_staff?.full_name || 'N/A' },
+        { Field: 'Start Time', Value: selectedTrip.started_at ? new Date(selectedTrip.started_at).toLocaleString() : 'N/A' },
+        { Field: 'End Time', Value: selectedTrip.ended_at ? new Date(selectedTrip.ended_at).toLocaleString() : 'In Progress' },
+        { Field: 'Duration (min)', Value: selectedTrip.started_at && selectedTrip.ended_at ? ((new Date(selectedTrip.ended_at) - new Date(selectedTrip.started_at)) / 1000 / 60).toFixed(1) : 'N/A' },
+        { Field: 'Video Recording Status', Value: selectedTrip.video_recording_status || 'not_recorded' },
+        { Field: 'Video Duration', Value: selectedTrip.video_recording_duration ? `${Math.floor(selectedTrip.video_recording_duration / 60)}m ${selectedTrip.video_recording_duration % 60}s` : 'N/A' },
+        { Field: 'Total Fare (PHP)', Value: tripTransactions.reduce((sum, t) => sum + (t.fare_amount || 0), 0).toFixed(2) },
+        { Field: 'Baggage Fees (PHP)', Value: tripTransactions.reduce((sum, t) => sum + (t.baggage_fee || 0), 0).toFixed(2) },
+        { Field: 'Total Revenue (PHP)', Value: tripTransactions.reduce((sum, t) => sum + (t.fare_amount || 0) + (t.baggage_fee || 0), 0).toFixed(2) },
+        { Field: 'Total Transactions', Value: tripTransactions.length },
+        { Field: 'Anomalies Detected', Value: tripAnomalies.length },
+        { Field: 'Fare Irregularities', Value: tripIrregularities.length },
+      ];
+      const wsSummary = XLSX.utils.json_to_sheet(summaryData);
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Trip Summary');
+
+      // Sheet 2: Transactions
+      if (tripTransactions.length > 0) {
+        const txData = tripTransactions.map(tx => ({
+          'Transaction ID': tx.id,
+          'Card UID / Method': tx.card_id || 'Cash',
+          'Fare (PHP)': (tx.fare_amount || 0).toFixed(2),
+          'Baggage Fee (PHP)': (tx.baggage_fee || 0).toFixed(2),
+          'Total (PHP)': ((tx.fare_amount || 0) + (tx.baggage_fee || 0)).toFixed(2),
+          'Payment Channel': tx.channel || 'pos',
+          'Date & Time': new Date(tx.created_at).toLocaleString(),
+        }));
+        const wsTx = XLSX.utils.json_to_sheet(txData);
+        XLSX.utils.book_append_sheet(wb, wsTx, 'Transactions');
+      }
+
+      // Sheet 3: Anomalies & Irregularities
+      const safetyRecords = [
+        ...tripAnomalies.map(a => ({
+          Category: 'AI Anomaly',
+          Type: a.anomaly_type?.replace(/_/g, ' ') || 'Unknown Anomaly',
+          Severity: a.severity || 'Medium',
+          Description: a.description || 'AI detected passenger/operation variance',
+          'Detected At': a.detected_at ? new Date(a.detected_at).toLocaleString() : 'N/A',
+          Status: a.resolved ? 'Resolved' : 'Pending',
+        })),
+        ...tripIrregularities.map(irr => ({
+          Category: 'Fare Irregularity',
+          Type: irr.irregularity_type || irr.type?.replace(/_/g, ' ') || 'Fare Irregularity',
+          Severity: irr.severity || 'Medium',
+          Description: irr.description || irr.notes || 'N/A',
+          'Detected At': irr.detected_at ? new Date(irr.detected_at).toLocaleString() : 'N/A',
+          Status: irr.resolved ? 'Resolved' : 'Pending',
+        }))
+      ];
+      if (safetyRecords.length > 0) {
+        const wsSafety = XLSX.utils.json_to_sheet(safetyRecords);
+        XLSX.utils.book_append_sheet(wb, wsSafety, 'Safety & Anomalies');
+      }
+
+      const fileDate = new Date().toISOString().split('T')[0];
+      XLSX.writeFile(wb, `Trip_Details_${plateNumber}_${fileDate}.xlsx`);
+      await AuditService.logDataExported('Trip Details', 'Excel');
+    } catch (err) {
+      console.error('Error exporting trip details to Excel:', err);
+      alert('Error exporting trip details: ' + err.message);
+    }
+  };
+
+  const handleExportTripDetailsPDF = async () => {
+    if (!selectedTrip) return;
+    try {
+      const plateNumber = selectedTrip.bus_id?.plate_number || 'BUS';
+      const doc = new jsPDF();
+
+      // Brand Header Banner
+      doc.setFillColor(249, 115, 22);
+      doc.rect(0, 0, 210, 24, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(16);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`COMMUTAI - TRIP DETAILS REPORT (${plateNumber})`, 14, 16);
+
+      doc.setTextColor(60, 60, 60);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Generated: ${new Date().toLocaleString()} | Trip ID: ${selectedTrip.id || 'N/A'}`, 14, 30);
+
+      // Section 1: Trip Summary Table
+      const summaryRows = [
+        ['Bus Plate Number', plateNumber, 'Status', (selectedTrip.status || 'N/A').toUpperCase()],
+        ['Route', selectedTrip.bus_id?.route || 'N/A', 'Video Status', (selectedTrip.video_recording_status || 'not_recorded').toUpperCase()],
+        ['Conductor', selectedTrip.conductor?.full_name || selectedTrip.conductor_staff?.full_name || 'N/A', 'Driver', selectedTrip.driver?.full_name || selectedTrip.driver_staff?.full_name || 'N/A'],
+        ['Started At', selectedTrip.started_at ? new Date(selectedTrip.started_at).toLocaleString() : 'N/A', 'Ended At', selectedTrip.ended_at ? new Date(selectedTrip.ended_at).toLocaleString() : 'In Progress'],
+        ['Total Fare (PHP)', '₱' + tripTransactions.reduce((sum, t) => sum + (t.fare_amount || 0), 0).toFixed(2), 'Total Revenue (PHP)', '₱' + (tripTransactions.reduce((sum, t) => sum + (t.fare_amount || 0) + (t.baggage_fee || 0), 0)).toFixed(2)],
+        ['Transactions Count', `${tripTransactions.length} recorded`, 'Safety / Anomalies', `${tripAnomalies.length} Anomalies, ${tripIrregularities.length} Irregularities`],
+      ];
+
+      autoTable(doc, {
+        head: [['Field', 'Details', 'Field', 'Details']],
+        body: summaryRows,
+        startY: 36,
+        theme: 'striped',
+        headStyles: { fillColor: [249, 115, 22], textColor: 255, fontStyle: 'bold' },
+        styles: { fontSize: 8.5, cellPadding: 2.8 },
+      });
+
+      let currentY = doc.lastAutoTable.finalY + 8;
+
+      // Section 2: Transactions Table
+      if (tripTransactions.length > 0) {
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(30, 30, 30);
+        doc.text(`Transactions (${tripTransactions.length})`, 14, currentY);
+
+        const txRows = tripTransactions.map(tx => [
+          tx.card_id || 'Cash',
+          '₱' + (tx.fare_amount || 0).toFixed(2),
+          '₱' + (tx.baggage_fee || 0).toFixed(2),
+          '₱' + ((tx.fare_amount || 0) + (tx.baggage_fee || 0)).toFixed(2),
+          new Date(tx.created_at).toLocaleString(),
+        ]);
+
+        autoTable(doc, {
+          head: [['Card / Payment Method', 'Fare', 'Baggage', 'Total', 'Timestamp']],
+          body: txRows,
+          startY: currentY + 3,
+          theme: 'grid',
+          headStyles: { fillColor: [59, 130, 246] },
+          styles: { fontSize: 8, cellPadding: 2.2 },
+        });
+
+        currentY = doc.lastAutoTable.finalY + 8;
+      }
+
+      // Section 3: Safety, Anomalies & Irregularities
+      const safetyRows = [
+        ...tripAnomalies.map(a => ['AI Anomaly', a.anomaly_type?.replace(/_/g, ' ') || 'Anomaly', a.severity || 'Medium', a.detected_at ? new Date(a.detected_at).toLocaleString() : 'N/A', a.resolved ? 'Resolved' : 'Pending']),
+        ...tripIrregularities.map(irr => ['Fare Irregularity', irr.irregularity_type || 'Irregularity', irr.severity || 'Medium', irr.detected_at ? new Date(irr.detected_at).toLocaleString() : 'N/A', irr.resolved ? 'Resolved' : 'Pending'])
+      ];
+
+      if (safetyRows.length > 0) {
+        if (currentY > 235) {
+          doc.addPage();
+          currentY = 20;
+        }
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(30, 30, 30);
+        doc.text(`Safety & Anomalies (${safetyRows.length})`, 14, currentY);
+
+        autoTable(doc, {
+          head: [['Category', 'Type', 'Severity', 'Timestamp', 'Status']],
+          body: safetyRows,
+          startY: currentY + 3,
+          theme: 'grid',
+          headStyles: { fillColor: [239, 68, 68] },
+          styles: { fontSize: 8, cellPadding: 2.2 },
+        });
+      }
+
+      const fileDate = new Date().toISOString().split('T')[0];
+      doc.save(`Trip_Details_${plateNumber}_${fileDate}.pdf`);
+      await AuditService.logDataExported('Trip Details', 'PDF');
+    } catch (err) {
+      console.error('Error exporting trip details to PDF:', err);
+      alert('Error exporting trip details: ' + err.message);
     }
   };
 
@@ -1509,22 +1688,54 @@ const TripManagement = ({ userRole }) => {
       {showViewModal && selectedTrip && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999] p-4">
           <div className="glass-card p-6 rounded-2xl w-full max-w-7xl relative z-[1000000] max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-white text-2xl font-bold">Trip Details & Analytics</h2>
-              <button
-                onClick={() => {
-                  setShowViewModal(false);
-                  setSelectedTrip(null);
-                  setTripTransactions([]);
-                  setTripIrregularities([]);
-                  setTripAnomalies([]);
-                  setTripVideoUrl(null);
-                  setTripVideoStatus(null);
-                }}
-                className="text-white/60 hover:text-white"
-              >
-                <X size={24} />
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-6 pb-4 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <h2 className="text-white text-2xl font-bold flex items-center gap-2">
+                  <Bus className="text-orange-400" />
+                  Trip Details - {selectedTrip.bus_id?.plate_number || 'N/A'}
+                </h2>
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${
+                  selectedTrip.status === 'completed' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
+                  selectedTrip.status === 'in_progress' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30 animate-pulse' :
+                  'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                }`}>
+                  {selectedTrip.status?.replace('_', ' ')}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportTripDetailsExcel}
+                  className="bg-green-600/90 hover:bg-green-600 text-white px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-colors text-xs font-medium shadow-sm hover:shadow"
+                  title="Export Trip Details to Excel"
+                >
+                  <Download size={14} />
+                  <span>Export Excel</span>
+                </button>
+                <button
+                  onClick={handleExportTripDetailsPDF}
+                  className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-colors text-xs font-medium shadow-sm hover:shadow"
+                  title="Export Trip Details to PDF"
+                >
+                  <FileText size={14} />
+                  <span>Export PDF</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setShowViewModal(false);
+                    setSelectedTrip(null);
+                    setTripTransactions([]);
+                    setTripIrregularities([]);
+                    setTripAnomalies([]);
+                    setTripVideoUrl(null);
+                    setTripVideoStatus(null);
+                  }}
+                  className="text-white/60 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/10 ml-1"
+                  title="Close"
+                >
+                  <X size={20} />
+                </button>
+              </div>
             </div>
 
             {viewModalLoading ? (
