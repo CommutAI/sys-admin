@@ -2366,8 +2366,8 @@ const Reports = () => {
               <div className="text-white/60">Loading trip data...</div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 p-6 overflow-y-auto max-h-[calc(90vh-80px)]">
-              {/* Left Side - Camera Feed */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 p-6 overflow-y-auto max-h-[calc(90vh-80px)]">
+              {/* Column 1: Video Player & Recordings */}
               <div className="space-y-4">
                 <div className="bg-black/30 rounded-xl overflow-hidden aspect-video relative">
                   {tripVideoUrl ? (
@@ -2413,63 +2413,13 @@ const Reports = () => {
                   )}
                 </div>
 
-                {/* Trip Summary */}
+                {/* Video Recordings List */}
                 <div className="glass-card p-4 rounded-xl">
                   <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                    <Bus className="text-orange-400" />
-                    Trip Summary
+                    <Activity className="text-orange-400" />
+                    Video Recordings ({tripVideoRecordings.length})
                   </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                    <div className="bg-white/5 p-3 rounded-lg">
-                      <p className="text-white/60 text-xs">Bus</p>
-                      <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.plate_number || 'N/A'}</p>
-                    </div>
-                    <div className="bg-white/5 p-3 rounded-lg">
-                      <p className="text-white/60 text-xs">Route</p>
-                      <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.route || 'N/A'}</p>
-                    </div>
-                    <div className="bg-white/5 p-3 rounded-lg">
-                      <p className="text-white/60 text-xs">Status</p>
-                      <p className="text-white font-medium text-sm capitalize">{selectedTrip.status?.replace('_', ' ')}</p>
-                    </div>
-                    <div className="bg-white/5 p-3 rounded-lg">
-                      <p className="text-white/60 text-xs">Conductor</p>
-                      <p className="text-white font-medium text-sm">{selectedTrip.conductor_staff?.full_name || selectedTrip.conductor?.full_name || 'N/A'}</p>
-                    </div>
-                    <div className="bg-white/5 p-3 rounded-lg">
-                      <p className="text-white/60 text-xs">Driver</p>
-                      <p className="text-white font-medium text-sm">{selectedTrip.driver_staff?.full_name || selectedTrip.driver?.full_name || 'N/A'}</p>
-                    </div>
-                    <div className="bg-white/5 p-3 rounded-lg">
-                      <p className="text-white/60 text-xs">Start Time</p>
-                      <p className="text-white font-medium text-sm">{new Date(selectedTrip.started_at).toLocaleString()}</p>
-                    </div>
-                    <div className="bg-white/5 p-3 rounded-lg">
-                      <p className="text-white/60 text-xs">End Time</p>
-                      <p className="text-white font-medium text-sm">{selectedTrip.ended_at ? new Date(selectedTrip.ended_at).toLocaleString() : 'In Progress'}</p>
-                    </div>
-                    {selectedTrip.video_recording_duration && (
-                      <div className="bg-white/5 p-3 rounded-lg">
-                        <p className="text-white/60 text-xs">Video Duration</p>
-                        <p className="text-white font-medium text-sm">{Math.floor(selectedTrip.video_recording_duration / 60)}m {selectedTrip.video_recording_duration % 60}s</p>
-                      </div>
-                    )}
-                    {selectedTrip.video_recording_file_size && (
-                      <div className="bg-white/5 p-3 rounded-lg">
-                        <p className="text-white/60 text-xs">File Size</p>
-                        <p className="text-white font-medium text-sm">{(selectedTrip.video_recording_file_size / (1024 * 1024)).toFixed(2)} MB</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Video Recordings List */}
-                {tripVideoRecordings.length > 0 && (
-                  <div className="glass-card p-4 rounded-xl">
-                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                      <Activity className="text-orange-400" />
-                      Video Recordings ({tripVideoRecordings.length})
-                    </h3>
+                  {tripVideoRecordings.length > 0 ? (
                     <div className="space-y-2 max-h-60 overflow-y-auto">
                       {tripVideoRecordings.map((recording) => (
                         <div key={recording.id} className="bg-white/5 p-3 rounded-lg">
@@ -2531,45 +2481,130 @@ const Reports = () => {
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <p className="text-white/40 text-xs py-2">No recording segments found for this trip</p>
+                  )}
+                </div>
               </div>
 
-              {/* Right Side - Trip Details */}
+              {/* Column 2: Trip Summary, Fare Statistics & Transactions */}
               <div className="space-y-4">
+                {/* Trip Summary */}
+                <div className="glass-card p-4 rounded-xl">
+                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                    <Bus className="text-orange-400" />
+                    Trip Summary
+                  </h3>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div className="bg-white/5 p-2.5 rounded-lg">
+                      <p className="text-white/60 text-xs">Bus</p>
+                      <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.plate_number || 'N/A'}</p>
+                    </div>
+                    <div className="bg-white/5 p-2.5 rounded-lg">
+                      <p className="text-white/60 text-xs">Status</p>
+                      <p className="text-white font-medium text-sm capitalize">{selectedTrip.status?.replace('_', ' ')}</p>
+                    </div>
+                    <div className="bg-white/5 p-2.5 rounded-lg col-span-2">
+                      <p className="text-white/60 text-xs">Route</p>
+                      <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.route || 'N/A'}</p>
+                    </div>
+                    <div className="bg-white/5 p-2.5 rounded-lg">
+                      <p className="text-white/60 text-xs">Conductor</p>
+                      <p className="text-white font-medium text-sm truncate">{selectedTrip.conductor_staff?.full_name || selectedTrip.conductor?.full_name || 'N/A'}</p>
+                    </div>
+                    <div className="bg-white/5 p-2.5 rounded-lg">
+                      <p className="text-white/60 text-xs">Driver</p>
+                      <p className="text-white font-medium text-sm truncate">{selectedTrip.driver_staff?.full_name || selectedTrip.driver?.full_name || 'N/A'}</p>
+                    </div>
+                    <div className="bg-white/5 p-2.5 rounded-lg">
+                      <p className="text-white/60 text-xs">Start Time</p>
+                      <p className="text-white font-medium text-xs">{new Date(selectedTrip.started_at).toLocaleString()}</p>
+                    </div>
+                    <div className="bg-white/5 p-2.5 rounded-lg">
+                      <p className="text-white/60 text-xs">End Time</p>
+                      <p className="text-white font-medium text-xs">{selectedTrip.ended_at ? new Date(selectedTrip.ended_at).toLocaleString() : 'In Progress'}</p>
+                    </div>
+                    {selectedTrip.video_recording_duration && (
+                      <div className="bg-white/5 p-2.5 rounded-lg">
+                        <p className="text-white/60 text-xs">Video Duration</p>
+                        <p className="text-white font-medium text-sm">{Math.floor(selectedTrip.video_recording_duration / 60)}m {selectedTrip.video_recording_duration % 60}s</p>
+                      </div>
+                    )}
+                    {selectedTrip.video_recording_file_size && (
+                      <div className="bg-white/5 p-2.5 rounded-lg">
+                        <p className="text-white/60 text-xs">File Size</p>
+                        <p className="text-white font-medium text-sm">{(selectedTrip.video_recording_file_size / (1024 * 1024)).toFixed(2)} MB</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* Fare Statistics */}
                 <div className="glass-card p-4 rounded-xl">
                   <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
                     <DollarSign className="text-green-400" />
                     Fare Statistics
                   </h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-white/5 p-3 rounded-lg">
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div className="bg-white/5 p-2.5 rounded-lg">
                       <p className="text-white/60 text-xs">Total Fare</p>
-                      <p className="text-white font-bold text-lg">₱{tripTransactions.reduce((sum, t) => sum + (t.fare_amount || 0), 0).toFixed(2)}</p>
+                      <p className="text-white font-bold text-base">₱{tripTransactions.reduce((sum, t) => sum + (t.fare_amount || 0), 0).toFixed(2)}</p>
                     </div>
-                    <div className="bg-white/5 p-3 rounded-lg">
-                      <p className="text-white/60 text-xs">Total Baggage Fee</p>
-                      <p className="text-white font-bold text-lg">₱{tripTransactions.reduce((sum, t) => sum + (t.baggage_fee || 0), 0).toFixed(2)}</p>
+                    <div className="bg-white/5 p-2.5 rounded-lg">
+                      <p className="text-white/60 text-xs">Baggage Fee</p>
+                      <p className="text-white font-bold text-base">₱{tripTransactions.reduce((sum, t) => sum + (t.baggage_fee || 0), 0).toFixed(2)}</p>
                     </div>
-                    <div className="bg-white/5 p-3 rounded-lg">
+                    <div className="bg-white/5 p-2.5 rounded-lg">
                       <p className="text-white/60 text-xs">Total Revenue</p>
-                      <p className="text-white font-bold text-lg">₱{tripTransactions.reduce((sum, t) => sum + (t.amount || 0), 0).toFixed(2)}</p>
+                      <p className="text-emerald-400 font-bold text-base">₱{tripTransactions.reduce((sum, t) => sum + (t.amount || 0), 0).toFixed(2)}</p>
                     </div>
-                    <div className="bg-white/5 p-3 rounded-lg">
+                    <div className="bg-white/5 p-2.5 rounded-lg">
                       <p className="text-white/60 text-xs">Transactions</p>
-                      <p className="text-white font-bold text-lg">{tripTransactions.length}</p>
+                      <p className="text-white font-bold text-base">{tripTransactions.length}</p>
                     </div>
                   </div>
                 </div>
 
+                {/* Transactions List */}
+                <div className="glass-card p-4 rounded-xl">
+                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                    <ArrowLeftRight className="text-blue-400" />
+                    Transactions ({tripTransactions.length})
+                  </h3>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {tripTransactions.slice(0, 10).map((transaction) => (
+                      <div key={transaction.id} className="bg-white/5 p-2.5 rounded-lg">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="text-white font-medium text-xs">{transaction.type}</p>
+                            <p className="text-white/40 text-[11px]">{transaction.channel}</p>
+                          </div>
+                          <p className="text-white font-bold text-sm">₱{transaction.amount?.toFixed(2)}</p>
+                        </div>
+                        <p className="text-white/40 text-[11px] mt-1">{new Date(transaction.created_at).toLocaleString()}</p>
+                      </div>
+                    ))}
+                    {tripTransactions.length === 0 && (
+                      <p className="text-white/40 text-xs text-center py-3">No transactions recorded for this trip</p>
+                    )}
+                    {tripTransactions.length > 10 && (
+                      <p className="text-white/40 text-[11px] text-center pt-1">
+                        Showing 10 of {tripTransactions.length} transactions
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Column 3: Safety & Auditing (Anomalies, Irregularities, Emergency Alerts) */}
+              <div className="space-y-4">
                 {/* Anomalies */}
-                {tripAnomalies.length > 0 && (
-                  <div className="glass-card p-4 rounded-xl">
-                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                      <AlertTriangle className="text-red-400" />
-                      Anomalies ({tripAnomalies.length})
-                    </h3>
+                <div className="glass-card p-4 rounded-xl">
+                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                    <AlertTriangle className="text-red-400" />
+                    Anomalies ({tripAnomalies.length})
+                  </h3>
+                  {tripAnomalies.length > 0 ? (
                     <div className="space-y-2 max-h-40 overflow-y-auto">
                       {tripAnomalies.map((anomaly) => (
                         <div key={anomaly.id} className="bg-white/5 p-3 rounded-lg">
@@ -2590,16 +2625,21 @@ const Reports = () => {
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg flex items-center gap-2 text-emerald-400 text-xs">
+                      <CheckCircle size={14} />
+                      <span>No passenger or route anomalies detected</span>
+                    </div>
+                  )}
+                </div>
 
                 {/* Irregularities */}
-                {tripIrregularities.length > 0 && (
-                  <div className="glass-card p-4 rounded-xl">
-                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                      <AlertCircle className="text-yellow-400" />
-                      Irregularities ({tripIrregularities.length})
-                    </h3>
+                <div className="glass-card p-4 rounded-xl">
+                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                    <AlertCircle className="text-yellow-400" />
+                    Irregularities ({tripIrregularities.length})
+                  </h3>
+                  {tripIrregularities.length > 0 ? (
                     <div className="space-y-2 max-h-40 overflow-y-auto">
                       {tripIrregularities.map((irregularity) => (
                         <div key={irregularity.id} className="bg-white/5 p-3 rounded-lg">
@@ -2618,16 +2658,21 @@ const Reports = () => {
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg flex items-center gap-2 text-emerald-400 text-xs">
+                      <CheckCircle size={14} />
+                      <span>No operational irregularities reported</span>
+                    </div>
+                  )}
+                </div>
 
                 {/* Emergency Alerts */}
-                {tripEmergencyAlerts.length > 0 && (
-                  <div className="glass-card p-4 rounded-xl">
-                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                      <AlertTriangle className="text-red-500" />
-                      Emergency Alerts ({tripEmergencyAlerts.length})
-                    </h3>
+                <div className="glass-card p-4 rounded-xl">
+                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                    <AlertTriangle className="text-red-500" />
+                    Emergency Alerts ({tripEmergencyAlerts.length})
+                  </h3>
+                  {tripEmergencyAlerts.length > 0 ? (
                     <div className="space-y-2 max-h-40 overflow-y-auto">
                       {tripEmergencyAlerts.map((alert) => (
                         <div key={alert.id} className="bg-red-500/10 border border-red-500/30 p-3 rounded-lg">
@@ -2648,34 +2693,12 @@ const Reports = () => {
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
-
-                {/* Transactions List */}
-                <div className="glass-card p-4 rounded-xl">
-                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                    <ArrowLeftRight className="text-blue-400" />
-                    Transactions ({tripTransactions.length})
-                  </h3>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {tripTransactions.slice(0, 10).map((transaction) => (
-                      <div key={transaction.id} className="bg-white/5 p-3 rounded-lg">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="text-white font-medium text-sm">{transaction.type}</p>
-                            <p className="text-white/40 text-xs">{transaction.channel}</p>
-                          </div>
-                          <p className="text-white font-bold">₱{transaction.amount?.toFixed(2)}</p>
-                        </div>
-                        <p className="text-white/40 text-xs mt-1">{new Date(transaction.created_at).toLocaleString()}</p>
-                      </div>
-                    ))}
-                    {tripTransactions.length > 10 && (
-                      <p className="text-white/40 text-xs text-center py-2">
-                        Showing 10 of {tripTransactions.length} transactions
-                      </p>
-                    )}
-                  </div>
+                  ) : (
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg flex items-center gap-2 text-emerald-400 text-xs">
+                      <CheckCircle size={14} />
+                      <span>All safety systems normal — 0 emergency alerts</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

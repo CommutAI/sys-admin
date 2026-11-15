@@ -1532,8 +1532,8 @@ const TripManagement = ({ userRole }) => {
                 <div className="text-white/60">Loading trip data...</div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Left Side - Camera Feed */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {/* Column 1: Video Player & Recordings */}
                 <div className="space-y-4">
                   <div className="bg-black/30 rounded-xl overflow-hidden aspect-video relative">
                     {tripVideoUrl ? (
@@ -1624,56 +1624,6 @@ const TripManagement = ({ userRole }) => {
                     </div>
                   )}
 
-                  {/* Trip Summary */}
-                  <div className="glass-card p-4 rounded-xl">
-                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                      <Bus className="text-orange-400" />
-                      Trip Summary
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                      <div className="bg-white/5 p-3 rounded-lg">
-                        <p className="text-white/60 text-xs">Bus</p>
-                        <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.plate_number || 'N/A'}</p>
-                      </div>
-                      <div className="bg-white/5 p-3 rounded-lg">
-                        <p className="text-white/60 text-xs">Route</p>
-                        <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.route || 'N/A'}</p>
-                      </div>
-                      <div className="bg-white/5 p-3 rounded-lg">
-                        <p className="text-white/60 text-xs">Status</p>
-                        <p className="text-white font-medium text-sm capitalize">{selectedTrip.status?.replace('_', ' ')}</p>
-                      </div>
-                      <div className="bg-white/5 p-3 rounded-lg">
-                        <p className="text-white/60 text-xs">Conductor</p>
-                        <p className="text-white font-medium text-sm">{selectedTrip.conductor?.full_name || selectedTrip.conductor_staff?.full_name || 'N/A'}</p>
-                      </div>
-                      <div className="bg-white/5 p-3 rounded-lg">
-                        <p className="text-white/60 text-xs">Driver</p>
-                        <p className="text-white font-medium text-sm">{selectedTrip.driver?.full_name || selectedTrip.driver_staff?.full_name || 'N/A'}</p>
-                      </div>
-                      <div className="bg-white/5 p-3 rounded-lg">
-                        <p className="text-white/60 text-xs">Start Time</p>
-                        <p className="text-white font-medium text-sm">{new Date(selectedTrip.started_at).toLocaleString()}</p>
-                      </div>
-                      <div className="bg-white/5 p-3 rounded-lg">
-                        <p className="text-white/60 text-xs">End Time</p>
-                        <p className="text-white font-medium text-sm">{selectedTrip.ended_at ? new Date(selectedTrip.ended_at).toLocaleString() : 'In Progress'}</p>
-                      </div>
-                      {selectedTrip.video_recording_duration && (
-                        <div className="bg-white/5 p-3 rounded-lg">
-                          <p className="text-white/60 text-xs">Video Duration</p>
-                          <p className="text-white font-medium text-sm">{Math.floor(selectedTrip.video_recording_duration / 60)}m {selectedTrip.video_recording_duration % 60}s</p>
-                        </div>
-                      )}
-                      {selectedTrip.video_recording_file_size && (
-                        <div className="bg-white/5 p-3 rounded-lg">
-                          <p className="text-white/60 text-xs">File Size</p>
-                          <p className="text-white font-medium text-sm">{(selectedTrip.video_recording_file_size / (1024 * 1024)).toFixed(2)} MB</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
                   {/* Video Recordings List */}
                   {tripVideoRecordings.length > 0 && (
                     <div className="glass-card p-4 rounded-xl">
@@ -1753,8 +1703,58 @@ const TripManagement = ({ userRole }) => {
                   )}
                 </div>
 
-                {/* Right Side - Analytics */}
+                {/* Column 2: Operations & Revenue */}
                 <div className="space-y-4">
+                  {/* Trip Summary */}
+                  <div className="glass-card p-4 rounded-xl">
+                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                      <Bus className="text-orange-400" />
+                      Trip Summary
+                    </h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Bus</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.plate_number || 'N/A'}</p>
+                      </div>
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Route</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.route || 'N/A'}</p>
+                      </div>
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Status</p>
+                        <p className="text-white font-medium text-sm capitalize">{selectedTrip.status?.replace('_', ' ')}</p>
+                      </div>
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Conductor</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.conductor?.full_name || selectedTrip.conductor_staff?.full_name || 'N/A'}</p>
+                      </div>
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Driver</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.driver?.full_name || selectedTrip.driver_staff?.full_name || 'N/A'}</p>
+                      </div>
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Start Time</p>
+                        <p className="text-white font-medium text-sm">{new Date(selectedTrip.started_at).toLocaleString()}</p>
+                      </div>
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">End Time</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.ended_at ? new Date(selectedTrip.ended_at).toLocaleString() : 'In Progress'}</p>
+                      </div>
+                      {selectedTrip.video_recording_duration && (
+                        <div className="bg-white/5 p-3 rounded-lg">
+                          <p className="text-white/60 text-xs">Video Duration</p>
+                          <p className="text-white font-medium text-sm">{Math.floor(selectedTrip.video_recording_duration / 60)}m {selectedTrip.video_recording_duration % 60}s</p>
+                        </div>
+                      )}
+                      {selectedTrip.video_recording_file_size && (
+                        <div className="bg-white/5 p-3 rounded-lg">
+                          <p className="text-white/60 text-xs">File Size</p>
+                          <p className="text-white font-medium text-sm">{(selectedTrip.video_recording_file_size / (1024 * 1024)).toFixed(2)} MB</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
                   {/* Fare Statistics */}
                   <div className="glass-card p-4 rounded-xl">
                     <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
@@ -1789,11 +1789,11 @@ const TripManagement = ({ userRole }) => {
                       <BarChart3 className="text-orange-400" />
                       Transactions ({tripTransactions.length})
                     </h3>
-                    <div className="max-h-40 overflow-y-auto space-y-2">
+                    <div className="max-h-48 overflow-y-auto space-y-2">
                       {tripTransactions.length === 0 ? (
                         <p className="text-white/40 text-sm text-center py-4">No transactions recorded</p>
                       ) : (
-                        tripTransactions.slice(0, 5).map((tx) => (
+                        tripTransactions.slice(0, 10).map((tx) => (
                           <div key={tx.id} className="bg-white/5 p-3 rounded-lg flex justify-between items-center">
                             <div>
                               <p className="text-white text-sm font-medium">{tx.card_id || 'Cash'}</p>
@@ -1808,16 +1808,22 @@ const TripManagement = ({ userRole }) => {
                       )}
                     </div>
                   </div>
+                </div>
 
+                {/* Column 3: Safety & Irregularities */}
+                <div className="space-y-4">
                   {/* Anomalies */}
                   <div className="glass-card p-4 rounded-xl">
                     <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
                       <Activity className="text-red-400" />
                       Anomalies ({tripAnomalies.length})
                     </h3>
-                    <div className="max-h-32 overflow-y-auto space-y-2">
+                    <div className="max-h-48 overflow-y-auto space-y-2">
                       {tripAnomalies.length === 0 ? (
-                        <p className="text-white/40 text-sm text-center py-4">No anomalies detected</p>
+                        <div className="bg-green-500/10 border border-green-500/20 p-4 rounded-lg text-center">
+                          <p className="text-green-400 text-sm font-medium">No Anomalies Detected</p>
+                          <p className="text-white/40 text-xs mt-1">AI passenger count synced normally</p>
+                        </div>
                       ) : (
                         tripAnomalies.map((anomaly) => (
                           <div key={anomaly.id} className="bg-red-500/10 border border-red-500/20 p-3 rounded-lg">
@@ -1842,7 +1848,7 @@ const TripManagement = ({ userRole }) => {
                       <AlertTriangle className="text-yellow-400" />
                       Fare Irregularities ({tripIrregularities.length})
                     </h3>
-                    <div className="max-h-32 overflow-y-auto space-y-2">
+                    <div className="max-h-48 overflow-y-auto space-y-2">
                       {tripIrregularities.length === 0 ? (
                         <p className="text-white/40 text-sm text-center py-4">No irregularities reported</p>
                       ) : (
