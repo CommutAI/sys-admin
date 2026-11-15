@@ -208,7 +208,7 @@ const VideoMonitoring = ({ autoConnect = true }) => {
           </div>
           <div>
             <p className="text-white/50">Stream FPS</p>
-            <p className="text-white font-medium">30 FPS Live</p>
+            <p className="text-white font-medium">60 FPS Live</p>
           </div>
           <div>
             <p className="text-white/50">Tracking Engine</p>

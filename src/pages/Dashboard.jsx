@@ -430,7 +430,7 @@ const CompactVideoFeed = ({
         <div className="flex items-center gap-2">
           <span className="text-xs text-white/80 font-medium">EMEET C60E 4K Sensor</span>
           <span className="text-[10px] text-white/30">·</span>
-          <span className="text-xs text-emerald-400 font-mono font-medium">30 FPS Live</span>
+          <span className="text-xs text-emerald-400 font-mono font-medium">60 FPS Live</span>
           <span className="text-[10px] text-white/30">·</span>
           <span className="text-xs text-purple-300 font-medium">YOLOv8n ONNX Edge</span>
         </div>
@@ -589,7 +589,7 @@ const CompactVideoFeed = ({
                 <Zap size={11} className="text-yellow-400" />
                 <span className="text-white/90 font-medium">Zero-Delay Sync</span>
                 <span className="text-white/40">·</span>
-                <span className="text-emerald-400 font-semibold">30 FPS</span>
+                <span className="text-emerald-400 font-semibold">60 FPS</span>
               </div>
               {(locationSource?.includes('phone') || locationSource?.includes('driver')) && (
                 <div className="bg-emerald-950/80 backdrop-blur-md border border-emerald-500/30 text-emerald-300 rounded px-2 py-0.5 flex items-center gap-1">
@@ -1427,7 +1427,7 @@ const Dashboard = () => {
                 <div>
                   <p className="text-white/50 text-[10px]">Camera</p>
                   <p className="text-white text-xs font-semibold">EMEET C60E</p>
-                  <span className="text-[10px] text-cyan-400">{(piIsStreaming || piCameraActive) ? '30 FPS' : 'Offline'}</span>
+                  <span className="text-[10px] text-cyan-400">{(piIsStreaming || piCameraActive) ? '60 FPS' : 'Offline'}</span>
                 </div>
               </div>
 
@@ -1560,7 +1560,7 @@ const Dashboard = () => {
                         ? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20'
                         : 'text-red-400 bg-red-500/10 border-red-500/20'
                     }`}>
-                      {(piIsStreaming || piCameraActive) ? '30 FPS' : 'Offline'}
+                      {(piIsStreaming || piCameraActive) ? '60 FPS' : 'Offline'}
                     </span>
                   </div>
 

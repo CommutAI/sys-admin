@@ -604,7 +604,7 @@ else:
     CAMERA_DEVICE = f'/dev/video{CAMERA_ID}' if isinstance(CAMERA_ID, int) else _camera_id_env
 CAMERA_WIDTH = int(os.getenv('CAMERA_WIDTH', '640'))
 CAMERA_HEIGHT = int(os.getenv('CAMERA_HEIGHT', '480'))
-FPS = int(os.getenv('FPS', '15'))
+FPS = int(os.getenv('FPS', '60'))
 
 # Performance settings
 ENABLE_REALTIME_MODE = os.getenv('ENABLE_REALTIME_MODE', 'false').lower() == 'true'
@@ -620,12 +620,12 @@ DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
 _count_method_default = 'onnx' if ONNX_AVAILABLE else 'backend'
 COUNT_METHOD = os.getenv('COUNT_METHOD', _count_method_default)
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.onnx')
-CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))  # 0.25 captures seated/dim passengers; _is_valid_person_box rejects objects
+CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.15'))  # 0.15 to detect farther passengers
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.35'))  # 0.35 NMS IoU to eliminate duplicate bounding boxes on same person
 JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '50'))
 
 # YOLO-specific confidence threshold for person detection
-YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.25'))
+YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.15'))
 MAX_DET = int(os.getenv('MAX_DET', '50'))
 
 # Video Recording configuration
@@ -651,7 +651,7 @@ class PassengerTracker:
     to follow moving persons seamlessly, eliminate box oscillation/jitter,
     and prevent hallucinated passenger counts."""
     
-    def __init__(self, hit_thresh=0.35, keep_thresh=0.20, max_missed=4, min_hits=2):
+    def __init__(self, hit_thresh=0.15, keep_thresh=0.10, max_missed=5, min_hits=2):
         self.hit_thresh = hit_thresh
         self.keep_thresh = keep_thresh
         self.max_missed = max_missed
@@ -792,7 +792,7 @@ class VideoProcessor:
     def __init__(self):
         self.camera = None
         self.model = None
-        self.tracker = PassengerTracker(hit_thresh=YOLO_CONFIDENCE_THRESHOLD, keep_thresh=0.20, max_missed=3)
+        self.tracker = PassengerTracker(hit_thresh=YOLO_CONFIDENCE_THRESHOLD, keep_thresh=min(0.12, YOLO_CONFIDENCE_THRESHOLD * 0.8), max_missed=5)
         self.frame_queue = queue.Queue(maxsize=1)  # Strictly latest-frame only (maxsize=1)
         self.latest_frame = None
         self.latest_frame_seq = 0
@@ -851,9 +851,9 @@ class VideoProcessor:
                         self._latest_hw_time = time.time()
                         self._hw_frame_seq += 1
                 else:
-                    time.sleep(0.004)
+                    time.sleep(0.001)
             except Exception:
-                time.sleep(0.004)
+                time.sleep(0.001)
 
     def get_fresh_frame(self):
         """Retrieve the absolute latest hardware frame with zero kernel queue delay."""
@@ -1138,7 +1138,7 @@ class VideoProcessor:
                 max_class_ids = np.argmax(class_scores, axis=1)
                 person_scores = predictions[:, 4]
                 
-                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if (YOLO_CONFIDENCE_THRESHOLD and YOLO_CONFIDENCE_THRESHOLD > 0.05) else 0.25
+                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if (YOLO_CONFIDENCE_THRESHOLD and YOLO_CONFIDENCE_THRESHOLD > 0.01) else 0.15
                 
                 # Strict check: object's TOP predicted class must be person (class 0)
                 # This prevents chairs, helmets, and hanging clothes from false-triggering
@@ -1389,8 +1389,8 @@ class VideoProcessor:
                         box_area = box_width * box_height
                         frame_area = frame.shape[0] * frame.shape[1]
                         
-                        # Minimum size: should be at least 2% of frame area
-                        if box_area < frame_area * 0.02:
+                        # Minimum size: should be at least 0.2% of frame area (permits far passengers)
+                        if box_area < frame_area * 0.002:
                             continue
                         
                         bbox = [int(x1), int(y1), int(x2), int(y2)]
@@ -1437,13 +1437,13 @@ class VideoProcessor:
         w = x2 - x1
         h = y2 - y1
 
-        # 1. Minimum person dimensions (must have sufficient pixels)
-        if h < 45 or w < 25:
+        # 1. Minimum person dimensions: allow farther passengers (down to 20px height, 10px width)
+        if h < 20 or w < 10:
             return False
 
         # 2. Ceiling / wall-hung object rejection:
         # Only reject objects entirely confined to the upper section
-        if y2 <= int(frame_h * 0.45) and y1 < int(frame_h * 0.15) and h < int(frame_h * 0.35):
+        if y2 <= int(frame_h * 0.35) and y1 < int(frame_h * 0.10) and h < int(frame_h * 0.25):
             return False
 
         # 3. Reject extreme full-screen bounding box artifacts (>85% width and height)
@@ -2152,7 +2152,9 @@ class VideoProcessor:
                     stream_counter = 0
                     last_stream_time = current_time
 
-                await asyncio.sleep(0.02)  # Fast 25-30fps stream pacing with low latency
+                # Stream pacing configured for target FPS (e.g. 60 FPS = ~16.6ms frame interval)
+                stream_target_delay = 1.0 / max(1, FPS)
+                await asyncio.sleep(max(0.002, stream_target_delay - 0.003))
             except Exception as e:
                 print(f"Streaming error: {e}")
                 await asyncio.sleep(0.1)
