@@ -347,7 +347,7 @@ const AnimatedBusMarker = ({ bus, onClick }) => {
   );
 };
 
-// Compact video widget — shows backend YOLO when available, otherwise Pi local ONNX/MJPEG
+// Video monitoring feed viewport with tactical HUD overlays
 const CompactVideoFeed = ({
   online,
   connectionStatus,
@@ -360,6 +360,7 @@ const CompactVideoFeed = ({
   currentTripId,
   assignedBus,
   locationSource,
+  isFullWidth = false,
 }) => {
   const [useMjpeg, setUseMjpeg] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
@@ -424,24 +425,14 @@ const CompactVideoFeed = ({
 
   return (
     <div ref={containerRef} className="flex flex-col h-full">
-      {/* Header row */}
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+      {/* Sub-header tool strip */}
+      <div className="flex items-center justify-between mb-2.5 flex-wrap gap-2">
         <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400">
-            <Video size={16} />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-white font-bold text-sm tracking-wide">Bus Video Monitoring</h2>
-              <span className="px-2 py-0.5 rounded-full bg-orange-500/15 text-orange-300 text-[11px] font-semibold border border-orange-500/30">
-                Bus {assignedBus?.busNumber || '001'}
-              </span>
-              <span className={`text-[11px] font-medium flex items-center gap-1 ${statusColor}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${showLive ? 'bg-green-400 animate-pulse' : online ? 'bg-yellow-400' : 'bg-red-400'}`} />
-                {statusLabel}
-              </span>
-            </div>
-          </div>
+          <span className="text-xs text-white/80 font-medium">EMEET C60E 4K Sensor</span>
+          <span className="text-[10px] text-white/30">·</span>
+          <span className="text-xs text-emerald-400 font-mono font-medium">30 FPS Live</span>
+          <span className="text-[10px] text-white/30">·</span>
+          <span className="text-xs text-purple-300 font-medium">YOLOv8n ONNX Edge</span>
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -454,7 +445,7 @@ const CompactVideoFeed = ({
             onClick={handleSnapshot}
             disabled={!showLive}
             title="Capture Frame Snapshot"
-            className="bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:hover:bg-white/10 text-white p-1.5 rounded-lg transition-colors"
+            className="bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:hover:bg-white/10 text-white p-1.5 rounded-lg transition-colors cursor-pointer"
           >
             <Download size={14} />
           </button>
@@ -462,7 +453,7 @@ const CompactVideoFeed = ({
           <button
             onClick={toggleFullscreen}
             title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-            className="bg-white/10 hover:bg-white/20 text-white p-1.5 rounded-lg transition-colors"
+            className="bg-white/10 hover:bg-white/20 text-white p-1.5 rounded-lg transition-colors cursor-pointer"
           >
             {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
@@ -470,15 +461,17 @@ const CompactVideoFeed = ({
           <button
             onClick={refresh}
             title="Refresh Video Stream"
-            className="bg-white/10 hover:bg-white/20 text-white p-1.5 rounded-lg transition-colors"
+            className="bg-white/10 hover:bg-white/20 text-white p-1.5 rounded-lg transition-colors cursor-pointer"
           >
             <RefreshCw size={14} />
           </button>
         </div>
       </div>
 
-      {/* Video Viewport Container - Matches map dimensions */}
-      <div className="relative bg-zinc-950 rounded-xl overflow-hidden border border-white/10 shadow-xl h-[350px] sm:h-[500px] w-full">
+      {/* Video Viewport Container - Matches map dimensions in split mode, expands in full width */}
+      <div className={`relative bg-zinc-950 rounded-xl overflow-hidden border border-white/10 shadow-xl ${
+        isFullWidth ? 'h-[400px] sm:h-[520px] lg:h-[580px]' : 'h-[350px] sm:h-[500px]'
+      } w-full`}>
         {/* Live video image */}
         <img
           ref={videoRef}
@@ -647,6 +640,7 @@ const Dashboard = () => {
   const [alertFilterStatus, setAlertFilterStatus] = useState('all');
   const [alertSearchTerm, setAlertSearchTerm] = useState('');
   const [routeCoordinates, setRouteCoordinates] = useState(ROUTE_COORDINATES);
+  const [isVideoFullWidth, setIsVideoFullWidth] = useState(false);
 
   const sharedVideoRef = useRef(null);
 
@@ -1315,188 +1309,337 @@ const Dashboard = () => {
         ))}
       </div>
 
-      {/* Live Video Monitoring and Raspberry Pi Status — Sized identical to Live Map */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-        {/* Live Video Monitoring — matches map size (lg:col-span-2) */}
-        <div className="glass-card p-3 sm:p-4 rounded-xl lg:col-span-2 flex flex-col">
-          <CompactVideoFeed
-            online={backendStreaming || backendConnectionStatus === 'connected' || piOnline}
-            connectionStatus={backendStreaming ? 'connected' : backendConnectionStatus === 'connected' ? 'connected' : piConnectionStatus}
-            passengerCount={backendCount || piPassengerCount}
-            isStreaming={backendStreaming || piIsStreaming}
-            videoRef={sharedVideoRef}
-            refresh={backendStreaming ? backendRefresh : piRefresh}
-            cameraActive={piCameraActive}
-            usingBackend={backendStreaming}
-            currentTripId={piCurrentTripId}
-            assignedBus={piAssignedBus}
-            locationSource={buses.find(b => b.status === 'active')?.locationSource}
-          />
+      {/* Live Bus Video Monitoring Section - Enhanced Full Card */}
+      <div className="glass-card p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h2 className="text-white text-lg sm:text-xl font-bold flex items-center gap-2">
+              <Video className="text-orange-400" />
+              Live Bus Video Monitoring
+              <span className="px-2.5 py-0.5 rounded-full bg-orange-500/15 text-orange-300 text-xs font-semibold border border-orange-500/30">
+                Bus {piAssignedBus?.busNumber || '001'} {piAssignedBus?.busPlate ? `· ${piAssignedBus.busPlate}` : ''}
+              </span>
+            </h2>
+            <span className={`text-xs font-medium flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border ${
+              (backendStreaming || piIsStreaming)
+                ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                : (backendStreaming || backendConnectionStatus === 'connected' || piOnline)
+                ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20'
+                : 'text-red-400 bg-red-500/10 border-red-500/20'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${(backendStreaming || piIsStreaming) ? 'bg-emerald-400 animate-pulse' : (backendStreaming || backendConnectionStatus === 'connected' || piOnline) ? 'bg-yellow-400' : 'bg-red-400'}`} />
+              {(backendStreaming || piIsStreaming) ? 'Live Feed' : (backendStreaming || backendConnectionStatus === 'connected' || piOnline) ? 'Connected' : 'Offline'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            {/* View Mode Toggle: Split View vs Full Width Video */}
+            <button
+              onClick={() => setIsVideoFullWidth(!isVideoFullWidth)}
+              className="bg-white/10 hover:bg-white/20 text-white px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+              title={isVideoFullWidth ? "Switch to Split View with Telemetry" : "Expand Video to Full Width"}
+            >
+              {isVideoFullWidth ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+              <span>{isVideoFullWidth ? "Split View" : "Full Width"}</span>
+            </button>
+
+            {/* Refresh Connection */}
+            <button
+              onClick={() => {
+                if (backendStreaming) backendRefresh();
+                else piRefresh();
+              }}
+              className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-medium flex items-center gap-2 transition-colors cursor-pointer"
+              title="Refresh Video Stream"
+            >
+              <RefreshCw size={16} />
+              <span>Refresh</span>
+            </button>
+          </div>
         </div>
 
-        {/* Video Processing Status Indicators - Sidebar (lg:col-span-1) */}
-        <div className="glass-card p-4 sm:p-5 rounded-xl flex flex-col justify-between lg:col-span-1 border border-white/10">
-          <div>
-            {/* Header */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400">
-                  <Activity size={16} />
+        {/* Video & Telemetry Layout */}
+        <div className={`grid grid-cols-1 ${isVideoFullWidth ? 'lg:grid-cols-1' : 'lg:grid-cols-3'} gap-4 sm:gap-6`}>
+          {/* Live Video Monitoring Viewport */}
+          <div className={isVideoFullWidth ? 'w-full' : 'lg:col-span-2'}>
+            <CompactVideoFeed
+              online={backendStreaming || backendConnectionStatus === 'connected' || piOnline}
+              connectionStatus={backendStreaming ? 'connected' : backendConnectionStatus === 'connected' ? 'connected' : piConnectionStatus}
+              passengerCount={backendCount || piPassengerCount}
+              isStreaming={backendStreaming || piIsStreaming}
+              videoRef={sharedVideoRef}
+              refresh={backendStreaming ? backendRefresh : piRefresh}
+              cameraActive={piCameraActive}
+              usingBackend={backendStreaming}
+              currentTripId={piCurrentTripId}
+              assignedBus={piAssignedBus}
+              locationSource={buses.find(b => b.status === 'active')?.locationSource}
+              isFullWidth={isVideoFullWidth}
+            />
+          </div>
+
+          {/* Video Processing Status Indicators */}
+          {isVideoFullWidth ? (
+            /* Full Width Mode: Horizontal Telemetry Strip below video */
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-2">
+              {/* Occupancy Card */}
+              <div className="bg-white/5 border border-white/10 rounded-xl p-3 flex flex-col justify-between">
+                <div className="flex items-center justify-between text-white/50 text-xs mb-1">
+                  <span className="flex items-center gap-1"><Users size={13} className="text-emerald-400" /> Occupancy</span>
+                  <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/15 px-1 rounded">
+                    {Math.min(100, Math.round(((backendCount || piPassengerCount || 0) / 35) * 100))}%
+                  </span>
+                </div>
+                <div className="text-lg font-bold text-white">
+                  {backendCount || piPassengerCount || 0} <span className="text-white/40 text-xs font-normal">/ 35</span>
+                </div>
+                <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden mt-1.5">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      (backendCount || piPassengerCount) > 31
+                        ? 'bg-red-500'
+                        : (backendCount || piPassengerCount) > 24
+                        ? 'bg-yellow-500'
+                        : 'bg-emerald-500'
+                    }`}
+                    style={{ width: `${Math.min(100, Math.max(3, ((backendCount || piPassengerCount || 0) / 35) * 100))}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* AI Model Card */}
+              <div className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-purple-500/15 text-purple-400">
+                  <Brain size={16} />
                 </div>
                 <div>
-                  <h2 className="text-white text-sm font-bold tracking-wide">Video Processing Status</h2>
-                  <p className="text-white/40 text-[11px]">Edge Telemetry</p>
+                  <p className="text-white/50 text-[10px]">AI Model</p>
+                  <p className="text-white text-xs font-semibold">YOLOv8n ONNX</p>
+                  <span className="text-[10px] text-emerald-400">Synced</span>
                 </div>
               </div>
 
-              <span className="px-2 py-0.5 bg-emerald-500/15 text-emerald-300 text-[11px] rounded-full border border-emerald-500/30 font-medium flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Live
-              </span>
-            </div>
+              {/* Camera Sensor Card */}
+              <div className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-cyan-500/15 text-cyan-400">
+                  <Camera size={16} />
+                </div>
+                <div>
+                  <p className="text-white/50 text-[10px]">Camera</p>
+                  <p className="text-white text-xs font-semibold">EMEET C60E</p>
+                  <span className="text-[10px] text-cyan-400">{(piIsStreaming || piCameraActive) ? '30 FPS' : 'Offline'}</span>
+                </div>
+              </div>
 
-            {/* Minimal Occupancy Meter */}
-            <div className="bg-white/5 border border-white/5 rounded-xl p-3 mb-3">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-white/70 text-xs font-medium flex items-center gap-1.5">
-                  <Users size={14} className="text-emerald-400" />
-                  Passenger Occupancy
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-bold text-white">
-                    {backendCount || piPassengerCount} <span className="text-white/40 font-normal">/ 35</span>
+              {/* Recording Card */}
+              <div className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-amber-500/15 text-amber-400">
+                  <Film size={16} />
+                </div>
+                <div>
+                  <p className="text-white/50 text-[10px]">Recording</p>
+                  <p className="text-white text-xs font-semibold truncate max-w-[100px]">
+                    {(backendTripIdFromWs || backendTripId || piCurrentTripId) ? `Trip #${(backendTripIdFromWs || backendTripId || piCurrentTripId).slice(0, 8)}` : 'Standby'}
+                  </p>
+                  <span className={`text-[10px] ${(backendTripIdFromWs || backendTripId || piCurrentTripId) ? 'text-red-400' : 'text-white/40'}`}>
+                    {(backendTripIdFromWs || backendTripId || piCurrentTripId) ? '● REC' : 'Idle'}
                   </span>
-                  <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/15 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                    {Math.min(100, Math.round(((backendCount || piPassengerCount) / 35) * 100))}%
+                </div>
+              </div>
+
+              {/* Motion Sync Card */}
+              <div className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-yellow-500/15 text-yellow-400">
+                  <Zap size={16} />
+                </div>
+                <div>
+                  <p className="text-white/50 text-[10px]">Motion Sync</p>
+                  <p className="text-white text-xs font-semibold">&lt; 20ms Lag</p>
+                  <span className="text-[10px] text-yellow-400">Zero-Delay</span>
+                </div>
+              </div>
+
+              {/* Safety Card */}
+              <div className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-center gap-2.5">
+                <div className={`p-2 rounded-lg ${piEmergencyStatus.emergency_active ? 'bg-red-500/15 text-red-400' : 'bg-emerald-500/15 text-emerald-400'}`}>
+                  {piEmergencyStatus.emergency_active ? <AlertTriangle size={16} /> : <ShieldCheck size={16} />}
+                </div>
+                <div>
+                  <p className="text-white/50 text-[10px]">Safety System</p>
+                  <p className={`text-xs font-semibold ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-white'}`}>
+                    {piEmergencyStatus.emergency_active ? 'EMERGENCY' : 'All Clear'}
+                  </p>
+                  <span className={`text-[10px] ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-emerald-400'}`}>
+                    {piEmergencyStatus.emergency_active ? 'Alert' : 'Normal'}
                   </span>
                 </div>
               </div>
-              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    (backendCount || piPassengerCount) > 31
-                      ? 'bg-red-500'
-                      : (backendCount || piPassengerCount) > 24
-                      ? 'bg-yellow-500'
-                      : 'bg-emerald-500'
-                  }`}
-                  style={{ width: `${Math.min(100, Math.max(3, ((backendCount || piPassengerCount) / 35) * 100))}%` }}
-                />
+            </div>
+          ) : (
+            /* Split Mode: Sleek Sidebar (lg:col-span-1) */
+            <div className="bg-white/5 p-4 sm:p-5 rounded-xl flex flex-col justify-between border border-white/10 lg:col-span-1">
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400">
+                      <Activity size={16} />
+                    </div>
+                    <div>
+                      <h3 className="text-white text-sm font-bold tracking-wide">Video Processing Status</h3>
+                      <p className="text-white/40 text-[11px]">Edge Telemetry</p>
+                    </div>
+                  </div>
+
+                  <span className="px-2 py-0.5 bg-emerald-500/15 text-emerald-300 text-[11px] rounded-full border border-emerald-500/30 font-medium flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Live
+                  </span>
+                </div>
+
+                {/* Minimal Occupancy Meter */}
+                <div className="bg-white/5 border border-white/5 rounded-xl p-3 mb-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-white/70 text-xs font-medium flex items-center gap-1.5">
+                      <Users size={14} className="text-emerald-400" />
+                      Passenger Occupancy
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-white">
+                        {backendCount || piPassengerCount || 0} <span className="text-white/40 font-normal">/ 35</span>
+                      </span>
+                      <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/15 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                        {Math.min(100, Math.round(((backendCount || piPassengerCount || 0) / 35) * 100))}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        (backendCount || piPassengerCount) > 31
+                          ? 'bg-red-500'
+                          : (backendCount || piPassengerCount) > 24
+                          ? 'bg-yellow-500'
+                          : 'bg-emerald-500'
+                      }`}
+                      style={{ width: `${Math.min(100, Math.max(3, ((backendCount || piPassengerCount || 0) / 35) * 100))}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Status Rows */}
+                <div className="space-y-2">
+                  {/* AI Model */}
+                  <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 rounded-md bg-purple-500/15 text-purple-400">
+                        <Brain size={14} />
+                      </div>
+                      <div>
+                        <p className="text-white/50 text-[10px]">AI Model</p>
+                        <p className="text-white text-xs font-semibold">YOLOv8n ONNX</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                      Synced
+                    </span>
+                  </div>
+
+                  {/* Camera */}
+                  <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 rounded-md bg-cyan-500/15 text-cyan-400">
+                        <Camera size={14} />
+                      </div>
+                      <div>
+                        <p className="text-white/50 text-[10px]">Camera</p>
+                        <p className="text-white text-xs font-semibold">EMEET C60E 4K</p>
+                      </div>
+                    </div>
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${
+                      (piIsStreaming || piCameraActive)
+                        ? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20'
+                        : 'text-red-400 bg-red-500/10 border-red-500/20'
+                    }`}>
+                      {(piIsStreaming || piCameraActive) ? '30 FPS' : 'Offline'}
+                    </span>
+                  </div>
+
+                  {/* Trip Recording */}
+                  <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 rounded-md bg-amber-500/15 text-amber-400">
+                        <Film size={14} />
+                      </div>
+                      <div>
+                        <p className="text-white/50 text-[10px]">Trip Recording</p>
+                        <p className="text-white text-xs font-semibold truncate max-w-[130px]">
+                          {(backendTripIdFromWs || backendTripId || piCurrentTripId)
+                            ? `Trip #${(backendTripIdFromWs || backendTripId || piCurrentTripId).slice(0, 8)}`
+                            : 'Standby'}
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded border flex items-center gap-1 ${
+                      (backendTripIdFromWs || backendTripId || piCurrentTripId)
+                        ? 'text-red-400 bg-red-500/10 border-red-500/20'
+                        : 'text-white/40 bg-white/5 border-white/10'
+                    }`}>
+                      {(backendTripIdFromWs || backendTripId || piCurrentTripId) && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                      )}
+                      {(backendTripIdFromWs || backendTripId || piCurrentTripId) ? 'REC' : 'Idle'}
+                    </span>
+                  </div>
+
+                  {/* Motion Sync */}
+                  <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 rounded-md bg-yellow-500/15 text-yellow-400">
+                        <Zap size={14} />
+                      </div>
+                      <div>
+                        <p className="text-white/50 text-[10px]">Motion Sync</p>
+                        <p className="text-white text-xs font-semibold">&lt; 20ms Lag</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] text-yellow-400 font-medium bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20">
+                      Zero-Delay
+                    </span>
+                  </div>
+
+                  {/* Safety System */}
+                  <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`p-1.5 rounded-md ${
+                        piEmergencyStatus.emergency_active ? 'bg-red-500/15 text-red-400' : 'bg-emerald-500/15 text-emerald-400'
+                      }`}>
+                        {piEmergencyStatus.emergency_active ? <AlertTriangle size={14} /> : <ShieldCheck size={14} />}
+                      </div>
+                      <div>
+                        <p className="text-white/50 text-[10px]">Safety System</p>
+                        <p className={`text-xs font-semibold ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-white'}`}>
+                          {piEmergencyStatus.emergency_active ? 'EMERGENCY' : 'All Clear'}
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${
+                      piEmergencyStatus.emergency_active
+                        ? 'text-red-400 bg-red-500/10 border-red-500/20 animate-pulse'
+                        : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                    }`}>
+                      {piEmergencyStatus.emergency_active ? 'ALERT' : 'Normal'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Minimal Footer */}
+              <div className="pt-3 mt-3 border-t border-white/10 flex items-center justify-between text-[11px] text-white/40">
+                <span>Bus {piAssignedBus?.busNumber || '001'}</span>
+                <span>Edge Engine Active</span>
               </div>
             </div>
-
-            {/* Minimal Status Rows */}
-            <div className="space-y-2">
-              {/* AI Model */}
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-1.5 rounded-md bg-purple-500/15 text-purple-400">
-                    <Brain size={14} />
-                  </div>
-                  <div>
-                    <p className="text-white/50 text-[10px]">AI Model</p>
-                    <p className="text-white text-xs font-semibold">YOLOv8n ONNX</p>
-                  </div>
-                </div>
-                <span className="text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                  Synced
-                </span>
-              </div>
-
-              {/* Camera Sensor */}
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-1.5 rounded-md bg-cyan-500/15 text-cyan-400">
-                    <Camera size={14} />
-                  </div>
-                  <div>
-                    <p className="text-white/50 text-[10px]">Camera</p>
-                    <p className="text-white text-xs font-semibold">EMEET C60E 4K</p>
-                  </div>
-                </div>
-                <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${
-                  (piIsStreaming || piCameraActive)
-                    ? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20'
-                    : 'text-red-400 bg-red-500/10 border-red-500/20'
-                }`}>
-                  {(piIsStreaming || piCameraActive) ? '30 FPS' : 'Offline'}
-                </span>
-              </div>
-
-              {/* Trip Recording */}
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-1.5 rounded-md bg-amber-500/15 text-amber-400">
-                    <Film size={14} />
-                  </div>
-                  <div>
-                    <p className="text-white/50 text-[10px]">Trip Recording</p>
-                    <p className="text-white text-xs font-semibold truncate max-w-[130px]">
-                      {(backendTripIdFromWs || backendTripId || piCurrentTripId)
-                        ? `Trip #${(backendTripIdFromWs || backendTripId || piCurrentTripId).slice(0, 8)}`
-                        : 'Standby'}
-                    </p>
-                  </div>
-                </div>
-                <span className={`text-[10px] font-medium px-2 py-0.5 rounded border flex items-center gap-1 ${
-                  (backendTripIdFromWs || backendTripId || piCurrentTripId)
-                    ? 'text-red-400 bg-red-500/10 border-red-500/20'
-                    : 'text-white/40 bg-white/5 border-white/10'
-                }`}>
-                  {(backendTripIdFromWs || backendTripId || piCurrentTripId) && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
-                  )}
-                  {(backendTripIdFromWs || backendTripId || piCurrentTripId) ? 'REC' : 'Idle'}
-                </span>
-              </div>
-
-              {/* Kinematic Motion Sync */}
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-1.5 rounded-md bg-yellow-500/15 text-yellow-400">
-                    <Zap size={14} />
-                  </div>
-                  <div>
-                    <p className="text-white/50 text-[10px]">Motion Sync</p>
-                    <p className="text-white text-xs font-semibold">&lt; 20ms Lag</p>
-                  </div>
-                </div>
-                <span className="text-[10px] text-yellow-400 font-medium bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20">
-                  Zero-Delay
-                </span>
-              </div>
-
-              {/* Safety System */}
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
-                <div className="flex items-center gap-2.5">
-                  <div className={`p-1.5 rounded-md ${
-                    piEmergencyStatus.emergency_active ? 'bg-red-500/15 text-red-400' : 'bg-emerald-500/15 text-emerald-400'
-                  }`}>
-                    {piEmergencyStatus.emergency_active ? <AlertTriangle size={14} /> : <ShieldCheck size={14} />}
-                  </div>
-                  <div>
-                    <p className="text-white/50 text-[10px]">Safety System</p>
-                    <p className={`text-xs font-semibold ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-white'}`}>
-                      {piEmergencyStatus.emergency_active ? 'EMERGENCY' : 'All Clear'}
-                    </p>
-                  </div>
-                </div>
-                <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${
-                  piEmergencyStatus.emergency_active
-                    ? 'text-red-400 bg-red-500/10 border-red-500/20 animate-pulse'
-                    : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
-                }`}>
-                  {piEmergencyStatus.emergency_active ? 'ALERT' : 'Normal'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Minimal Footer */}
-          <div className="pt-3 mt-3 border-t border-white/10 flex items-center justify-between text-[11px] text-white/40">
-            <span>Bus {piAssignedBus?.busNumber || '001'}</span>
-            <span>Edge Engine Active</span>
-          </div>
+          )}
         </div>
       </div>
 
