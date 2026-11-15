@@ -156,17 +156,10 @@ async function checkSmsApi(ip) {
  * Scans common network ranges to find the Raspberry Pi server
  */
 export async function discoverRaspberryPi(onProgress = null) {
-  // Skip local IP scanning on HTTPS unless a secure Pi URL (https://) is set.
-  // Browsers block http:// fetch requests from https:// pages (Mixed Content).
-  const piEnvUrl = typeof import.meta !== 'undefined' ? import.meta.env?.VITE_RASPBERRY_PI_URL : null;
-  const secureUrl = piEnvUrl || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
-  if (isSecureOrigin() && (!secureUrl || !secureUrl.startsWith('https://'))) {
-    console.log('[Pi Discovery] Skipping — running on HTTPS with no secure Pi URL configured');
-    return null;
-  }
+  // On HTTPS origins, browsers block insecure http:// local scans due to Mixed Content.
+  // Remote access uses dynamic secure tunnels registered in Supabase pi_devices or backend proxy.
   if (isSecureOrigin()) {
-    // On HTTPS, don't scan local IPs — the ngrok URL handles remote access
-    console.log('[Pi Discovery] Skipping local scan — using ngrok URL on HTTPS');
+    console.log('[Pi Discovery] Skipping local scan on HTTPS origin — using Supabase dynamic tunnel or proxy');
     return null;
   }
 

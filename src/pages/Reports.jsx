@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import AuditService from '../services/auditService';
+import { resolvePiUrl } from '../services/raspberryPiApi';
 
 const Reports = () => {
   const [loading, setLoading] = useState(false);
@@ -570,8 +571,10 @@ const Reports = () => {
       setTripVideoRecordings(recordingsData || []);
 
       // Build video URL - check source to use correct endpoint
-      const piBaseUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+      const resolvedPi = await resolvePiUrl();
+      const piBaseUrl = resolvedPi || import.meta.env.VITE_RASPBERRY_PI_URL || '';
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
+      const completedRecording = (recordingsData || []).find(r => r.status === 'completed' && r.file_name);
 
       if (trip.video_recording_url && trip.video_recording_status === 'available') {
         // If it's a full remote URL (Cloudflare R2 / Supabase Storage), use directly
@@ -583,11 +586,24 @@ const Reports = () => {
           const backendRecording = (recordingsData || []).find(r => r.metadata?.source === 'backend_processor');
           if (backendRecording) {
             setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${fileName}`);
-          } else {
+          } else if (piBaseUrl) {
             setTripVideoUrl(`${piBaseUrl}/download-video/${fileName}`);
+          } else {
+            setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${fileName}`);
           }
         }
         setTripVideoStatus('available');
+      } else if (completedRecording) {
+        if (completedRecording.metadata?.source === 'backend_processor') {
+          setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${completedRecording.file_name}`);
+        } else if (piBaseUrl) {
+          setTripVideoUrl(`${piBaseUrl}/download-video/${completedRecording.file_name}`);
+        } else {
+          setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${completedRecording.file_name}`);
+        }
+        setTripVideoStatus('available');
+      } else if ((recordingsData || []).length > 0) {
+        setTripVideoStatus('processing');
       } else if (trip.video_recording_status === 'not_recorded') {
         setTripVideoStatus('not_available');
       } else if (trip.video_recording_status === 'error') {
@@ -604,13 +620,13 @@ const Reports = () => {
 
   const handleDownloadVideo = async (recording) => {
     try {
-      const piIp = localStorage.getItem('raspberryPiIp');
-      const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+      const piBase = await resolvePiUrl();
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
 
       let downloadUrl = `${backendUrl}/api/video-processing/download-video/${recording.file_name}`;
 
       if (recording.metadata?.source === 'pi_server' || recording.storage_type === 'local') {
-        downloadUrl = `${backendUrl}/download-video/${recording.file_name}`;
+        downloadUrl = piBase ? `${piBase}/download-video/${recording.file_name}` : `${backendUrl}/api/video-processing/download-video/${recording.file_name}`;
       }
 
       window.open(downloadUrl, '_blank');

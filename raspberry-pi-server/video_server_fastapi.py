@@ -19,6 +19,8 @@ from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import queue
 import os
+import subprocess
+import threading
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from hardware_integration import HardwareManager
@@ -1597,6 +1599,10 @@ class VideoProcessor:
             # Save metadata to database
             recording_id = self._save_video_metadata_internal(video_path, trip_id, start_time, frame_count, duration, file_size)
 
+            # Auto-transcode recording to native H.264 (avc1) + faststart for browser playback
+            if video_path and os.path.exists(video_path):
+                self._transcode_to_h264_async(video_path)
+
             return {
                 'file_path': video_path,
                 'duration': duration,
@@ -1608,6 +1614,31 @@ class VideoProcessor:
         except Exception as e:
             print(f"Error stopping recording: {e}")
             return None
+
+    def _transcode_to_h264_async(self, video_path):
+        """Transcode video to web-compatible H.264 (avc1) with +faststart for browser playback in background thread"""
+        def _runner():
+            if not video_path or not os.path.exists(video_path):
+                return
+            h264_temp = video_path + ".h264.mp4"
+            try:
+                cmd = [
+                    "ffmpeg", "-y", "-i", video_path,
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
+                    "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                    h264_temp
+                ]
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=240)
+                if res.returncode == 0 and os.path.exists(h264_temp) and os.path.getsize(h264_temp) > 1000:
+                    os.replace(h264_temp, video_path)
+                    print(f"[VideoProcessor] Video transcoded to H.264 successfully: {video_path}")
+                else:
+                    if os.path.exists(h264_temp):
+                        os.remove(h264_temp)
+            except Exception as e:
+                print(f"[VideoProcessor] Error transcoding video {video_path}: {e}")
+
+        threading.Thread(target=_runner, daemon=True).start()
 
     def _upload_to_cloudflare_stream(self, video_path, trip_id):
         """Upload video to Cloudflare Stream and return playback URL"""

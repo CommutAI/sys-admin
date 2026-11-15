@@ -4,7 +4,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
-import { clearPiTrip } from '../services/raspberryPiApi';
+import { clearPiTrip, resolvePiUrl } from '../services/raspberryPiApi';
 import AuditService from '../services/auditService';
 
 const TripManagement = ({ userRole }) => {
@@ -28,15 +28,15 @@ const TripManagement = ({ userRole }) => {
 
   const handleDownloadVideo = async (recording) => {
     try {
-      const piIp = localStorage.getItem('raspberryPiIp');
-      const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+      const piBase = await resolvePiUrl();
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
 
       // Try backend first
       let downloadUrl = `${backendUrl}/api/video-processing/download-video/${recording.file_name}`;
 
       // If it's from Pi, use Pi's download endpoint
       if (recording.metadata?.source === 'pi_server' || recording.storage_type === 'local') {
-        downloadUrl = `${backendUrl}/download-video/${recording.file_name}`;
+        downloadUrl = piBase ? `${piBase}/download-video/${recording.file_name}` : `${backendUrl}/api/video-processing/download-video/${recording.file_name}`;
       }
 
       window.open(downloadUrl, '_blank');
@@ -258,8 +258,7 @@ const TripManagement = ({ userRole }) => {
 
       // Stop video recording on backend
       try {
-        const piIp = localStorage.getItem('raspberryPiIp');
-        const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
         await fetch(`${backendUrl}/api/video-processing/clear-trip`, { method: 'POST' });
       } catch (videoError) {
         console.error('Error stopping video recording:', videoError);
@@ -294,8 +293,7 @@ const TripManagement = ({ userRole }) => {
 
       // Stop video recording on backend
       try {
-        const piIp = localStorage.getItem('raspberryPiIp');
-        const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
         await fetch(`${backendUrl}/api/video-processing/clear-trip`, { method: 'POST' });
       } catch (videoError) {
         console.error('Error stopping video recording:', videoError);
@@ -335,8 +333,7 @@ const TripManagement = ({ userRole }) => {
 
         // Stop video recording on backend
         try {
-          const piIp = localStorage.getItem('raspberryPiIp');
-          const backendUrl = piIp ? `http://${piIp}:5000` : 'https://hertz-osmosis-squiggly.ngrok-free.dev';
+          const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
           await fetch(`${backendUrl}/api/video-processing/clear-trip`, { method: 'POST' });
         } catch (videoError) {
           console.error('Error stopping video recording:', videoError);
@@ -486,8 +483,9 @@ const TripManagement = ({ userRole }) => {
       // Build video URL — priority:
       // 1. trip.video_recording_url if set and available
       // 2. First completed recording from video_recordings table
-      const piBaseUrl = import.meta.env.VITE_RASPBERRY_PI_URL || 'https://hertz-osmosis-squiggly.ngrok-free.dev';
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+      const resolvedPi = await resolvePiUrl();
+      const piBaseUrl = resolvedPi || import.meta.env.VITE_RASPBERRY_PI_URL || '';
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
       const completedRecording = (recordingsData || []).find(r => r.status === 'completed' && r.file_name);
 
       if (trip.video_recording_url && trip.video_recording_status === 'available') {
@@ -500,8 +498,10 @@ const TripManagement = ({ userRole }) => {
           const backendRecording = (recordingsData || []).find(r => r.metadata?.source === 'backend_processor');
           if (backendRecording) {
             setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${fileName}`);
-          } else {
+          } else if (piBaseUrl) {
             setTripVideoUrl(`${piBaseUrl}/download-video/${fileName}`);
+          } else {
+            setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${fileName}`);
           }
         }
         setTripVideoStatus('available');
@@ -509,8 +509,10 @@ const TripManagement = ({ userRole }) => {
         // Use appropriate URL based on recording source
         if (completedRecording.metadata?.source === 'backend_processor') {
           setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${completedRecording.file_name}`);
-        } else {
+        } else if (piBaseUrl) {
           setTripVideoUrl(`${piBaseUrl}/download-video/${completedRecording.file_name}`);
+        } else {
+          setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${completedRecording.file_name}`);
         }
         setTripVideoStatus('available');
       } else if ((recordingsData || []).length > 0) {
