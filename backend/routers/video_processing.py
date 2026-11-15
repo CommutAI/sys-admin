@@ -29,6 +29,7 @@ class ConnectionManager:
         self.active_connections: Dict[str, WebSocket] = {}
         self.pi_connections: Set[WebSocket] = set()
         self.frontend_connections: Set[WebSocket] = set()
+        self.frontend_in_flight: Set[WebSocket] = set()
         self.latest_frame: str = None  # Store latest processed frame for new clients
 
     async def connect_pi(self, websocket: WebSocket, client_id: str):
@@ -68,20 +69,29 @@ class ConnectionManager:
         """Disconnect a frontend client"""
         if websocket in self.frontend_connections:
             self.frontend_connections.remove(websocket)
+        self.frontend_in_flight.discard(websocket)
         print(f"[Video Router] Frontend disconnected")
 
     async def broadcast_to_frontends(self, message: dict):
-        """Broadcast to all frontend clients, removing dead connections"""
-        dead = set()
-        for connection in self.frontend_connections:
+        """Broadcast to frontend clients with backpressure protection (drops stale frames on slow networks)"""
+        if not self.frontend_connections:
+            return
+        payload = json.dumps(message)
+        
+        async def _send_one(conn):
             try:
-                await connection.send_json(message)
+                await asyncio.wait_for(conn.send_text(payload), timeout=0.30)
             except Exception:
-                dead.add(connection)
-        # Remove dead connections to prevent unbounded growth
-        self.frontend_connections -= dead
-        if dead:
-            print(f"[Video Router] Removed {len(dead)} dead frontend connection(s)")
+                self.frontend_connections.discard(conn)
+            finally:
+                self.frontend_in_flight.discard(conn)
+
+        for connection in list(self.frontend_connections):
+            if connection in self.frontend_in_flight:
+                # Client connection still transmitting previous frame: skip to prevent buffering
+                continue
+            self.frontend_in_flight.add(connection)
+            asyncio.create_task(_send_one(connection))
 
 manager = ConnectionManager()
 

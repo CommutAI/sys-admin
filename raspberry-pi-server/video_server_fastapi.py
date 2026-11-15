@@ -562,12 +562,12 @@ else:
     CAMERA_DEVICE = f'/dev/video{CAMERA_ID}' if isinstance(CAMERA_ID, int) else _camera_id_env
 CAMERA_WIDTH = int(os.getenv('CAMERA_WIDTH', '640'))
 CAMERA_HEIGHT = int(os.getenv('CAMERA_HEIGHT', '480'))
-FPS = int(os.getenv('FPS', '30'))
+FPS = int(os.getenv('FPS', '15'))
 
 # Performance settings
 ENABLE_REALTIME_MODE = os.getenv('ENABLE_REALTIME_MODE', 'false').lower() == 'true'
 SKIP_DETECTION_FRAMES = int(os.getenv('SKIP_DETECTION_FRAMES', '9'))  # Process every 10th frame for 30fps
-FRAME_QUEUE_SIZE = int(os.getenv('FRAME_QUEUE_SIZE', '5'))
+FRAME_QUEUE_SIZE = int(os.getenv('FRAME_QUEUE_SIZE', '1'))
 DISABLE_DRAWING = os.getenv('DISABLE_DRAWING', 'false').lower() == 'true'
 DISABLE_DB_WRITES = os.getenv('DISABLE_DB_WRITES', 'false').lower() == 'true'
 SKIP_WEBSOCKET_THROTTLE = os.getenv('SKIP_WEBSOCKET_THROTTLE', 'false').lower() == 'true'
@@ -580,7 +580,7 @@ COUNT_METHOD = os.getenv('COUNT_METHOD', _count_method_default)
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.onnx')
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))  # 0.25 captures seated/dim passengers; _is_valid_person_box rejects objects
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.35'))  # 0.35 NMS IoU to eliminate duplicate bounding boxes on same person
-JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '60'))
+JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '50'))
 
 # YOLO-specific confidence threshold for person detection
 YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.25'))
@@ -687,12 +687,15 @@ class VideoProcessor:
         self.camera = None
         self.model = None
         self.tracker = PassengerTracker(hit_thresh=YOLO_CONFIDENCE_THRESHOLD, keep_thresh=0.20, max_missed=3)
-        self.frame_queue = queue.Queue(maxsize=FRAME_QUEUE_SIZE)  # Optimized queue size
+        self.frame_queue = queue.Queue(maxsize=1)  # Strictly latest-frame only (maxsize=1)
         self.latest_frame = None
+        self.latest_frame_seq = 0
+        self.latest_frame_time = 0.0
         self.running = False
         self.passenger_count = 0
         self.detection_history = []
         self.websocket_clients = set()
+        self.clients_in_flight = set()
         self.current_trip_id = None
         self.current_bus_id = None
         self.last_db_save = 0
@@ -1285,33 +1288,26 @@ class VideoProcessor:
 
     @staticmethod
     def _is_valid_person_box(bbox, frame_w, frame_h):
-        """Reject non-human objects, materials, and ceiling/wall-hung clothes.
-        A real passenger is standing or seated, extending down into the seating/floor area.
-        Hanging clothes, curtains, and objects floating in the upper half of the view
-        are strictly rejected."""
+        """Reject non-human ceiling artifacts and curtains while allowing seated, leaning, or partially visible passengers."""
         x1, y1, x2, y2 = bbox
         w = x2 - x1
         h = y2 - y1
 
         # 1. Minimum person dimensions (must have sufficient pixels)
-        if h < 80 or w < 40:
+        if h < 45 or w < 25:
             return False
 
         # 2. Ceiling / wall-hung object rejection:
-        # Real passengers stand on the floor or sit on seats (y2 > 0.58 * frame_h).
-        # Any detection whose bottom edge ends in mid-air in the upper half (y2 <= 0.58 * frame_h)
-        # while originating near the top/wall (y1 < 0.25 * frame_h) is a hanging object
-        # (clothes on hangers, hooks, bags, curtains, overhead gear).
-        if y2 <= int(frame_h * 0.58) and y1 < int(frame_h * 0.25):
+        # Only reject objects entirely confined to the upper section
+        if y2 <= int(frame_h * 0.45) and y1 < int(frame_h * 0.15) and h < int(frame_h * 0.35):
             return False
 
-        # 3. Reject abnormally wide composite boxes (e.g. mega box covering table + clothes)
-        if w > int(frame_w * 0.50) and h < int(frame_h * 0.85):
+        # 3. Reject extreme full-screen bounding box artifacts (>85% width and height)
+        if w > int(frame_w * 0.85) and h > int(frame_h * 0.85):
             return False
 
-        # 4. Aspect ratio: human passengers are vertically oriented or seated (h/w >= 0.65)
-        # Flat horizontal inanimate objects (countertops, benches, blankets) are rejected
-        if (h / float(w)) < 0.65:
+        # 4. Aspect ratio: human passengers can be standing, seated, or reclining (h/w >= 0.40)
+        if (h / float(max(1, w))) < 0.40:
             return False
 
         return True
@@ -1833,13 +1829,18 @@ class VideoProcessor:
                 
                 if frame_base64:
                     self.latest_frame = frame_base64
-                    # Put frame in queue for streaming (drop old frames if queue is full)
+                    self.latest_frame_seq += 1
+                    self.latest_frame_time = time.time()
+                    # Put frame in queue for streaming (keep only single newest frame)
                     if self.frame_queue.full():
                         try:
                             self.frame_queue.get_nowait()
                         except queue.Empty:
                             pass
-                    self.frame_queue.put(frame_base64)
+                    try:
+                        self.frame_queue.put_nowait(frame_base64)
+                    except queue.Full:
+                        pass
                 
                 # Minimal frame rate control - rely on camera's natural timing
                 if ENABLE_REALTIME_MODE:
@@ -1852,47 +1853,56 @@ class VideoProcessor:
                 await asyncio.sleep(0.1)
     
     async def stream_frames(self):
-        """Background task to stream frames - Optimized for low latency"""
+        """Background task to stream frames - Optimized for ultra-low latency and zero buffer bloat"""
         last_stream_time = time.time()
         stream_counter = 0
+        last_sent_seq = -1
         
         while self.running:
             try:
-                frame_base64 = None
-                if not self.frame_queue.empty():
-                    try:
-                        frame_base64 = self.frame_queue.get_nowait()
-                    except queue.Empty:
-                        pass
-                elif getattr(self, 'latest_frame', None):
-                    frame_base64 = self.latest_frame
-
-                if frame_base64 and self.websocket_clients:
+                # Always grab the ABSOLUTE LATEST frame - zero FIFO queue delay
+                frame_base64 = self.latest_frame
+                curr_seq = getattr(self, 'latest_frame_seq', 0)
+                
+                if frame_base64 and self.websocket_clients and curr_seq != last_sent_seq:
+                    last_sent_seq = curr_seq
                     stream_counter += 1
                     msg = {
                         'video_frame': frame_base64,
                         'count': self.passenger_count,
                         'average_count': getattr(self, 'average_count', 0),
-                        'camera_active': True
+                        'camera_active': True,
+                        'seq': curr_seq,
+                        'timestamp': getattr(self, 'latest_frame_time', time.time())
                     }
-                    disconnected_clients = set()
-                    for client in list(self.websocket_clients):
-                        try:
-                            await client.send_json(msg)
-                        except Exception:
-                            disconnected_clients.add(client)
+                    payload = json.dumps(msg)
                     
-                    if disconnected_clients:
-                        self.websocket_clients -= disconnected_clients
+                    # Deliver with backpressure protection:
+                    # If a client is still transmitting its previous frame over a slow/unstable connection,
+                    # skip sending to that client. This prevents TCP send-buffer bloat and guarantees
+                    # that the moment a client is ready, it receives the REAL-TIME current frame.
+                    async def _send_client(client, data_str):
+                        try:
+                            await asyncio.wait_for(client.send_text(data_str), timeout=0.25)
+                        except Exception:
+                            self.websocket_clients.discard(client)
+                        finally:
+                            self.clients_in_flight.discard(client)
+
+                    for client in list(self.websocket_clients):
+                        if client in self.clients_in_flight:
+                            continue
+                        self.clients_in_flight.add(client)
+                        asyncio.create_task(_send_client(client, payload))
 
                 current_time = time.time()
                 if current_time - last_stream_time >= 5.0:
                     stream_fps = stream_counter / (current_time - last_stream_time)
-                    print(f"[STREAM] Streaming FPS: {stream_fps:.1f}, Clients: {len(self.websocket_clients)}")
+                    print(f"[STREAM] Streaming FPS: {stream_fps:.1f}, Clients: {len(self.websocket_clients)}, In-flight: {len(self.clients_in_flight)}")
                     stream_counter = 0
                     last_stream_time = current_time
 
-                await asyncio.sleep(0.04)  # ~25 FPS pacing, yields cleanly to event loop
+                await asyncio.sleep(0.05)  # Paced for smooth real-time video without network buffer bloat
             except Exception as e:
                 print(f"Streaming error: {e}")
                 await asyncio.sleep(0.1)
@@ -2620,9 +2630,22 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         print("Client disconnected")
         video_processor.websocket_clients.discard(websocket)
+        video_processor.clients_in_flight.discard(websocket)
     except Exception as e:
         print(f"WebSocket error: {e}")
         video_processor.websocket_clients.discard(websocket)
+        video_processor.clients_in_flight.discard(websocket)
+
+
+@app.post("/restart")
+@app.get("/restart")
+async def restart_endpoint():
+    """Trigger clean process restart (systemd will immediately restart it)"""
+    def _do_exit():
+        time.sleep(0.5)
+        os._exit(0)
+    threading.Thread(target=_do_exit, daemon=True).start()
+    return {"status": "restarting"}
 
 if __name__ == '__main__':
     import fcntl
@@ -2630,15 +2653,19 @@ if __name__ == '__main__':
     import uvicorn
 
     # Prevent double-start races (systemd restart vs leftover process on :8080)
-    lock_path = os.path.join('/tmp', 'commutai-pi-server.lock')
-    lock_fd = open(lock_path, 'w')
+    import getpass
+    lock_user = getpass.getuser()
+    lock_path = os.path.join('/tmp', f'commutai-pi-server-{lock_user}.lock')
     try:
+        lock_fd = open(lock_path, 'w')
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         lock_fd.write(str(os.getpid()))
         lock_fd.flush()
     except BlockingIOError:
         print(f"Another commutai video server instance already holds {lock_path} — exiting")
         sys.exit(0)
+    except Exception as e:
+        print(f"Warning: could not acquire lock at {lock_path}: {e}")
 
     print("Starting Bus Monitoring Video Server (FastAPI)...")
     print(f"Camera ID: {CAMERA_ID} (device={CAMERA_DEVICE})")

@@ -482,32 +482,26 @@ class VideoProcessor:
     
     @staticmethod
     def _is_valid_person_box(bbox: List[int], frame_w: int, frame_h: int) -> bool:
-        """Reject non-human objects, materials, and ceiling/wall-hung clothes.
-        A real passenger is standing or seated, extending down into the seating/floor area.
-        Hanging clothes, curtains, and objects floating in the upper half of the view
-        are strictly rejected."""
+        """Reject non-human ceiling artifacts and curtains while allowing seated, leaning, or partially visible passengers."""
         x1, y1, x2, y2 = bbox
         w = x2 - x1
         h = y2 - y1
 
         # 1. Minimum person dimensions
-        if h < 80 or w < 40:
+        if h < 45 or w < 25:
             return False
 
         # 2. Ceiling / wall-hung object rejection:
-        # Real passengers stand on the floor or sit on seats (y2 > 0.58 * frame_h).
-        # Any detection whose bottom edge ends in mid-air in the upper half (y2 <= 0.58 * frame_h)
-        # while originating near the top/wall (y1 < 0.25 * frame_h) is a hanging object
-        # (clothes on hangers, hooks, bags, curtains, overhead gear).
-        if y2 <= int(frame_h * 0.58) and y1 < int(frame_h * 0.25):
+        # Only reject objects entirely confined to the upper section
+        if y2 <= int(frame_h * 0.45) and y1 < int(frame_h * 0.15) and h < int(frame_h * 0.35):
             return False
 
-        # 3. Reject abnormally wide composite boxes (e.g. mega box covering table + clothes)
-        if w > int(frame_w * 0.50) and h < int(frame_h * 0.85):
+        # 3. Reject extreme full-screen bounding box artifacts (>85% width and height)
+        if w > int(frame_w * 0.85) and h > int(frame_h * 0.85):
             return False
 
-        # 4. Aspect ratio: human passengers are vertically oriented or seated (h/w >= 0.65)
-        if (h / float(w)) < 0.65:
+        # 4. Aspect ratio: human passengers can be standing, seated, or reclining (h/w >= 0.40)
+        if (h / float(max(1, w))) < 0.40:
             return False
 
         return True

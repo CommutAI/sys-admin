@@ -64,6 +64,8 @@ export function useRaspberryPi(options = {}) {
   const attemptsRef       = useRef(0);
   const deadRef           = useRef(false);
   const fallbackModeRef   = useRef(false); // true if we've switched to DB mode
+  const latestFrameDataRef = useRef(null);
+  const rafIdRef           = useRef(null);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function safeSet(setter, value) {
@@ -74,6 +76,10 @@ export function useRaspberryPi(options = {}) {
     clearTimeout(reconnectTimer.current);
     clearTimeout(connectTimer.current);
     clearInterval(heartbeatTimer.current);
+    if (rafIdRef.current) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
   }
 
   function closeSocket(ws) {
@@ -424,8 +430,14 @@ export function useRaspberryPi(options = {}) {
 
         const frameData = data.video_frame || data.frame;
         if (frameData) {
-          if (videoRef?.current) {
-            videoRef.current.src = `data:image/jpeg;base64,${frameData}`;
+          latestFrameDataRef.current = frameData;
+          if (!rafIdRef.current) {
+            rafIdRef.current = requestAnimationFrame(() => {
+              if (videoRef?.current && latestFrameDataRef.current) {
+                videoRef.current.src = `data:image/jpeg;base64,${latestFrameDataRef.current}`;
+              }
+              rafIdRef.current = null;
+            });
           }
           safeSet(setIsStreaming, true);
           safeSet(setCameraActive, true);

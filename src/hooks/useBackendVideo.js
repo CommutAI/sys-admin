@@ -25,6 +25,8 @@ export function useBackendVideo({ autoConnect = true, videoRef: externalVideoRef
   const deadRef         = useRef(false);
   const autoConnectRef  = useRef(autoConnect);
   autoConnectRef.current = autoConnect;
+  const latestFrameDataRef = useRef(null);
+  const rafIdRef           = useRef(null);
 
   // Stable — read once at mount so the ref never changes identity
   const backendUrl = useRef(
@@ -37,6 +39,10 @@ export function useBackendVideo({ autoConnect = true, videoRef: externalVideoRef
     clearTimeout(reconnectTimer.current);
     heartbeatTimer.current = null;
     reconnectTimer.current = null;
+    if (rafIdRef.current) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
   }
 
   function closeSocket(ws) {
@@ -94,18 +100,17 @@ export function useBackendVideo({ autoConnect = true, videoRef: externalVideoRef
       try {
         const data = JSON.parse(event.data);
 
-        // Backend sends: { type:'video_frame', frame:'<base64>', count: N }
-        if (data.type === 'video_frame' && data.frame) {
-          if (videoRef.current) {
-            videoRef.current.src = `data:image/jpeg;base64,${data.frame}`;
-          }
-          setIsStreaming(true);
-        }
-
-        // Also handle flat format from Pi direct: { video_frame:'<base64>' }
-        if (data.video_frame) {
-          if (videoRef.current) {
-            videoRef.current.src = `data:image/jpeg;base64,${data.video_frame}`;
+        // Backend sends: { type:'video_frame', frame:'<base64>', count: N } or flat { video_frame:'<base64>' }
+        const frameData = (data.type === 'video_frame' && data.frame) ? data.frame : data.video_frame;
+        if (frameData) {
+          latestFrameDataRef.current = frameData;
+          if (!rafIdRef.current) {
+            rafIdRef.current = requestAnimationFrame(() => {
+              if (videoRef?.current && latestFrameDataRef.current) {
+                videoRef.current.src = `data:image/jpeg;base64,${latestFrameDataRef.current}`;
+              }
+              rafIdRef.current = null;
+            });
           }
           setIsStreaming(true);
         }
