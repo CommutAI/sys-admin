@@ -1277,185 +1277,167 @@ const Dashboard = () => {
         </div>
 
         {/* Video Processing Status Indicators - Sidebar (lg:col-span-1) */}
-        <div className="glass-card p-4 sm:p-5 rounded-xl flex flex-col justify-between lg:col-span-1">
+        <div className="glass-card p-4 sm:p-5 rounded-xl flex flex-col justify-between lg:col-span-1 border border-white/10">
           <div>
-            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-              <h2 className="text-white text-base sm:text-lg font-bold flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-                  <Activity size={18} />
+            {/* Header */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400">
+                  <Activity size={16} />
                 </div>
-                Video Processing Status
-              </h2>
-
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {piAssignedBus?.busPlate ? (
-                  <span className="px-2 py-0.5 bg-orange-500/15 text-orange-300 text-xs rounded-full border border-orange-500/30 font-medium">
-                    Bus {piAssignedBus.busNumber} · {piAssignedBus.busPlate}
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 bg-orange-500/15 text-orange-300 text-xs rounded-full border border-orange-500/30 font-medium">
-                    Bus 001
-                  </span>
-                )}
-                <span className="px-2 py-0.5 bg-emerald-500/15 text-emerald-300 text-xs rounded-full border border-emerald-500/30 font-medium flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Edge ONNX Engine
-                </span>
+                <div>
+                  <h2 className="text-white text-sm font-bold tracking-wide">Video Processing Status</h2>
+                  <p className="text-white/40 text-[11px]">Edge Telemetry</p>
+                </div>
               </div>
+
+              <span className="px-2 py-0.5 bg-emerald-500/15 text-emerald-300 text-[11px] rounded-full border border-emerald-500/30 font-medium flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live
+              </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-2.5 sm:gap-3">
-              {/* Card 1: AI Model & Tracking */}
-              <div className="bg-white/5 border border-white/5 p-3 rounded-xl hover:border-purple-500/30 transition-colors">
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1 rounded-md bg-purple-500/15 text-purple-400">
-                      <Brain size={14} />
-                    </div>
-                    <p className="text-white/60 text-xs font-medium">AI Model & Tracking</p>
-                  </div>
-                  <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                    Real-Time Sync
+            {/* Minimal Occupancy Meter */}
+            <div className="bg-white/5 border border-white/5 rounded-xl p-3 mb-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-white/70 text-xs font-medium flex items-center gap-1.5">
+                  <Users size={14} className="text-emerald-400" />
+                  Passenger Occupancy
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-white">
+                    {backendCount || piPassengerCount} <span className="text-white/40 font-normal">/ 35</span>
                   </span>
-                </div>
-                <p className="text-base font-bold text-white tracking-tight">YOLOv8n ONNX</p>
-                <p className="text-white/40 text-[11px] mt-0.5">
-                  160px • Kinematic motion tracking
-                </p>
-              </div>
-
-              {/* Card 2: Camera Capture Pipeline */}
-              <div className="bg-white/5 border border-white/5 p-3 rounded-xl hover:border-cyan-500/30 transition-colors">
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1 rounded-md bg-cyan-500/15 text-cyan-400">
-                      <Camera size={14} />
-                    </div>
-                    <p className="text-white/60 text-xs font-medium">Camera Sensor</p>
-                  </div>
-                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
-                    (piIsStreaming || piCameraActive)
-                      ? 'text-cyan-400 bg-cyan-950/40 border-cyan-500/20'
-                      : 'text-red-400 bg-red-950/40 border-red-500/20'
-                  }`}>
-                    {(piIsStreaming || piCameraActive) ? '30 FPS' : 'Offline'}
-                  </span>
-                </div>
-                <p className="text-base font-bold text-white tracking-tight">EMEET C60E 4K</p>
-                <p className="text-white/40 text-[11px] mt-0.5">
-                  V4L2 Zero-Buffer direct pipeline
-                </p>
-              </div>
-
-              {/* Card 3: Passenger Occupancy with progress bar */}
-              <div className="bg-white/5 border border-white/5 p-3 rounded-xl hover:border-emerald-500/30 transition-colors">
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1 rounded-md bg-emerald-500/15 text-emerald-400">
-                      <Users size={14} />
-                    </div>
-                    <p className="text-white/60 text-xs font-medium">Occupancy</p>
-                  </div>
-                  <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                  <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/15 px-1.5 py-0.5 rounded border border-emerald-500/20">
                     {Math.min(100, Math.round(((backendCount || piPassengerCount) / 35) * 100))}%
                   </span>
                 </div>
-                <div className="flex items-baseline gap-1.5">
-                  <p className="text-base font-bold text-white tracking-tight">{backendCount || piPassengerCount}</p>
-                  <span className="text-xs text-white/50">/ 35 Seats</span>
-                </div>
-                {/* Mini occupancy bar */}
-                <div className="w-full h-1.5 bg-white/10 rounded-full mt-2 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      (backendCount || piPassengerCount) > 31
-                        ? 'bg-red-500'
-                        : (backendCount || piPassengerCount) > 24
-                        ? 'bg-yellow-500'
-                        : 'bg-emerald-500'
-                    }`}
-                    style={{ width: `${Math.min(100, Math.max(3, ((backendCount || piPassengerCount) / 35) * 100))}%` }}
-                  />
-                </div>
               </div>
-
-              {/* Card 4: Trip & Storage Management */}
-              <div className="bg-white/5 border border-white/5 p-3 rounded-xl hover:border-amber-500/30 transition-colors">
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1 rounded-md bg-amber-500/15 text-amber-400">
-                      <Film size={14} />
-                    </div>
-                    <p className="text-white/60 text-xs font-medium">Recording & Trip</p>
-                  </div>
-                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
-                    (backendTripIdFromWs || backendTripId || piCurrentTripId)
-                      ? 'text-red-400 bg-red-950/40 border-red-500/20'
-                      : 'text-white/40 bg-white/5 border-white/10'
-                  }`}>
-                    {(backendTripIdFromWs || backendTripId || piCurrentTripId) ? 'REC ACTIVE' : 'STANDBY'}
-                  </span>
-                </div>
-                <p className="text-base font-bold text-white tracking-tight truncate">
-                  {(backendTripIdFromWs || backendTripId || piCurrentTripId)
-                    ? `Trip #${(backendTripIdFromWs || backendTripId || piCurrentTripId).slice(0, 8)}`
-                    : 'Display Only'}
-                </p>
-                <p className="text-white/40 text-[11px] mt-0.5">
-                  {(backendTripIdFromWs || backendTripId || piCurrentTripId)
-                    ? '15m auto-segments to SD buffer'
-                    : 'No disk recording when no trip'}
-                </p>
-              </div>
-
-              {/* Card 5: Motion Sync & Latency */}
-              <div className="bg-white/5 border border-white/5 p-3 rounded-xl hover:border-yellow-500/30 transition-colors">
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1 rounded-md bg-yellow-500/15 text-yellow-400">
-                      <Zap size={14} />
-                    </div>
-                    <p className="text-white/60 text-xs font-medium">Kinematic Sync</p>
-                  </div>
-                  <span className="text-[10px] text-yellow-400 font-semibold bg-yellow-950/40 px-1.5 py-0.5 rounded border border-yellow-500/20">
-                    &lt; 20ms Lag
-                  </span>
-                </div>
-                <p className="text-base font-bold text-white tracking-tight">Zero-Delay Tracking</p>
-                <p className="text-white/40 text-[11px] mt-0.5">
-                  Frame-by-frame velocity projection
-                </p>
-              </div>
-
-              {/* Card 6: Safety & Emergency Status */}
-              <div className="bg-white/5 border border-white/5 p-3 rounded-xl hover:border-green-500/30 transition-colors">
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <div className={`p-1 rounded-md ${
-                      piEmergencyStatus.emergency_active ? 'bg-red-500/15 text-red-400' : 'bg-emerald-500/15 text-emerald-400'
-                    }`}>
-                      {piEmergencyStatus.emergency_active ? <AlertTriangle size={14} /> : <ShieldCheck size={14} />}
-                    </div>
-                    <p className="text-white/60 text-xs font-medium">Safety System</p>
-                  </div>
-                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
-                    piEmergencyStatus.emergency_active
-                      ? 'text-red-400 bg-red-950/40 border-red-500/20 animate-pulse'
-                      : 'text-emerald-400 bg-emerald-950/40 border-emerald-500/20'
-                  }`}>
-                    {piEmergencyStatus.emergency_active ? 'TRIGGERED' : 'NORMAL'}
-                  </span>
-                </div>
-                <p className={`text-base font-bold tracking-tight ${
-                  piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-white'
-                }`}>
-                  {piEmergencyStatus.emergency_active ? 'EMERGENCY ALERT' : 'All Systems Clear'}
-                </p>
-                <p className="text-white/40 text-[11px] mt-0.5">
-                  GPS Active • Hardware Monitored
-                </p>
+              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    (backendCount || piPassengerCount) > 31
+                      ? 'bg-red-500'
+                      : (backendCount || piPassengerCount) > 24
+                      ? 'bg-yellow-500'
+                      : 'bg-emerald-500'
+                  }`}
+                  style={{ width: `${Math.min(100, Math.max(3, ((backendCount || piPassengerCount) / 35) * 100))}%` }}
+                />
               </div>
             </div>
+
+            {/* Minimal Status Rows */}
+            <div className="space-y-2">
+              {/* AI Model */}
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-md bg-purple-500/15 text-purple-400">
+                    <Brain size={14} />
+                  </div>
+                  <div>
+                    <p className="text-white/50 text-[10px]">AI Model</p>
+                    <p className="text-white text-xs font-semibold">YOLOv8n ONNX</p>
+                  </div>
+                </div>
+                <span className="text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                  Synced
+                </span>
+              </div>
+
+              {/* Camera Sensor */}
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-md bg-cyan-500/15 text-cyan-400">
+                    <Camera size={14} />
+                  </div>
+                  <div>
+                    <p className="text-white/50 text-[10px]">Camera</p>
+                    <p className="text-white text-xs font-semibold">EMEET C60E 4K</p>
+                  </div>
+                </div>
+                <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${
+                  (piIsStreaming || piCameraActive)
+                    ? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20'
+                    : 'text-red-400 bg-red-500/10 border-red-500/20'
+                }`}>
+                  {(piIsStreaming || piCameraActive) ? '30 FPS' : 'Offline'}
+                </span>
+              </div>
+
+              {/* Trip Recording */}
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-md bg-amber-500/15 text-amber-400">
+                    <Film size={14} />
+                  </div>
+                  <div>
+                    <p className="text-white/50 text-[10px]">Trip Recording</p>
+                    <p className="text-white text-xs font-semibold truncate max-w-[130px]">
+                      {(backendTripIdFromWs || backendTripId || piCurrentTripId)
+                        ? `Trip #${(backendTripIdFromWs || backendTripId || piCurrentTripId).slice(0, 8)}`
+                        : 'Standby'}
+                    </p>
+                  </div>
+                </div>
+                <span className={`text-[10px] font-medium px-2 py-0.5 rounded border flex items-center gap-1 ${
+                  (backendTripIdFromWs || backendTripId || piCurrentTripId)
+                    ? 'text-red-400 bg-red-500/10 border-red-500/20'
+                    : 'text-white/40 bg-white/5 border-white/10'
+                }`}>
+                  {(backendTripIdFromWs || backendTripId || piCurrentTripId) && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                  )}
+                  {(backendTripIdFromWs || backendTripId || piCurrentTripId) ? 'REC' : 'Idle'}
+                </span>
+              </div>
+
+              {/* Kinematic Motion Sync */}
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-md bg-yellow-500/15 text-yellow-400">
+                    <Zap size={14} />
+                  </div>
+                  <div>
+                    <p className="text-white/50 text-[10px]">Motion Sync</p>
+                    <p className="text-white text-xs font-semibold">&lt; 20ms Lag</p>
+                  </div>
+                </div>
+                <span className="text-[10px] text-yellow-400 font-medium bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20">
+                  Zero-Delay
+                </span>
+              </div>
+
+              {/* Safety System */}
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+                <div className="flex items-center gap-2.5">
+                  <div className={`p-1.5 rounded-md ${
+                    piEmergencyStatus.emergency_active ? 'bg-red-500/15 text-red-400' : 'bg-emerald-500/15 text-emerald-400'
+                  }`}>
+                    {piEmergencyStatus.emergency_active ? <AlertTriangle size={14} /> : <ShieldCheck size={14} />}
+                  </div>
+                  <div>
+                    <p className="text-white/50 text-[10px]">Safety System</p>
+                    <p className={`text-xs font-semibold ${piEmergencyStatus.emergency_active ? 'text-red-400' : 'text-white'}`}>
+                      {piEmergencyStatus.emergency_active ? 'EMERGENCY' : 'All Clear'}
+                    </p>
+                  </div>
+                </div>
+                <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${
+                  piEmergencyStatus.emergency_active
+                    ? 'text-red-400 bg-red-500/10 border-red-500/20 animate-pulse'
+                    : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                }`}>
+                  {piEmergencyStatus.emergency_active ? 'ALERT' : 'Normal'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Minimal Footer */}
+          <div className="pt-3 mt-3 border-t border-white/10 flex items-center justify-between text-[11px] text-white/40">
+            <span>Bus {piAssignedBus?.busNumber || '001'}</span>
+            <span>Edge Engine Active</span>
           </div>
         </div>
       </div>
