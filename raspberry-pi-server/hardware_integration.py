@@ -6,6 +6,7 @@ Integrates SIM900A SMS, NEO-6M GPS, Google Maps Geolocation, and Emergency Butto
 
 import serial
 import time
+import os
 import threading
 import requests
 import json
@@ -630,6 +631,13 @@ class HardwareManager:
         self.sms_available = False
         self.emergency_button_available = False
         self.last_db_log_time: float = 0.0
+
+        # High-precision terminal anchor coordinates (Manolo Fortich Bus Terminal)
+        # Prevents inaccurate wild IP/cell-tower coordinates when satellite GPS is unavailable indoors
+        self.default_lat = float(os.getenv('DEFAULT_LAT', '8.366264'))
+        self.default_lng = float(os.getenv('DEFAULT_LNG', '124.865749'))
+        self.default_location_name = os.getenv('DEFAULT_LOCATION_NAME', 'Manolo Fortich Bus Terminal')
+        self.manual_location: Optional[GPSLocation] = None
         
     def fetch_contacts_from_db(self):
         """Fetch emergency and admin contacts from database"""
@@ -721,31 +729,54 @@ class HardwareManager:
         
         return success
     
+    def set_manual_location(self, lat: float, lng: float, source: str = 'device_gps'):
+        """Manually set or sync high-precision coordinates (e.g. from conductor phone or terminal)"""
+        loc = GPSLocation(
+            latitude=lat,
+            longitude=lng,
+            altitude=0.0,
+            speed=0.0,
+            timestamp=time.time(),
+            accuracy=5.0,
+            source=source
+        )
+        self.manual_location = loc
+        self.current_location = loc
+        logger.info(f"Location manually set/synced: ({lat:.6f}, {lng:.6f}) source: {source}")
+        if self.db_client:
+            self._log_location_to_db(loc, self.current_trip_id, self.db_client)
+
     def get_location(self) -> Optional[GPSLocation]:
-        """Get current location with GPS fallback to geolocation"""
-        # Try GPS first
+        """Get current location with hardware GPS priority and accurate terminal/route fallback"""
+        # 1. Hardware GPS fix from NEO-8M / NEO-6M
         if self.neo6m and self.neo6m.connected:
             location = self.neo6m.read_location(self.current_trip_id, self.db_client)
-            if location:
-                # Check if GPS is stable
-                if self.neo6m.is_location_stable():
-                    self.current_location = location
-                    return location
-                else:
-                    logger.warning("GPS location unstable, using geolocation fallback")
-        
-        # Fallback to OpenStreetMap IP-based geolocation
-        if self.osm_geolocation:
-            location = self.osm_geolocation.get_location()
-            if location:
+            if location and self.neo6m.is_location_stable():
                 self.current_location = location
-                # Log geolocation to database
-                if self.db_client:
-                    self._log_location_to_db(location, self.current_trip_id, self.db_client)
                 return location
-        
-        logger.error("Unable to get location from any source")
-        return None
+
+        # 2. Check if a high-precision phone or manual location was synced
+        if self.manual_location:
+            self.current_location = self.manual_location
+            if self.db_client:
+                self._log_location_to_db(self.manual_location, self.current_trip_id, self.db_client)
+            return self.manual_location
+
+        # 3. High-precision terminal anchor (Manolo Fortich Bus Terminal: 8.366264, 124.865749)
+        # Prevents wild ISP/cellular tower coordinates that jump kilometers away from the route
+        anchor_loc = GPSLocation(
+            latitude=self.default_lat,
+            longitude=self.default_lng,
+            altitude=0.0,
+            speed=0.0,
+            timestamp=time.time(),
+            accuracy=10.0,
+            source='terminal_anchor'
+        )
+        self.current_location = anchor_loc
+        if self.db_client:
+            self._log_location_to_db(anchor_loc, self.current_trip_id, self.db_client)
+        return anchor_loc
     
     def get_address_from_location(self, lat: float, lon: float) -> Optional[dict]:
         """Get address information from coordinates using OpenStreetMap Nominatim"""

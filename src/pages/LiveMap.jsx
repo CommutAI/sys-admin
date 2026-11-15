@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
-import { Bus, Navigation, Users, AlertTriangle } from 'lucide-react';
+import { Bus, Navigation, Users, AlertTriangle, Crosshair, MapPin } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import 'leaflet/dist/leaflet.css';
 
@@ -36,6 +36,73 @@ const LiveMap = () => {
     maintenanceBuses: 0
   });
   const [loading, setLoading] = useState(true);
+  const [syncingGps, setSyncingGps] = useState(false);
+
+  const anchorToTerminal = async (lat, lng, terminalName) => {
+    try {
+      const activeTrip = buses.find(b => b.status === 'active');
+      await supabase.from('gps_locations').insert({
+        latitude: lat,
+        longitude: lng,
+        source: `terminal_anchor (${terminalName})`,
+        accuracy: 10.0,
+        trip_id: activeTrip?.tripId || null
+      });
+      if (activeTrip?.tripId) {
+        await supabase.from('trips').update({
+          current_lat: lat,
+          current_lng: lng,
+          gps_updated_at: new Date().toISOString()
+        }).eq('id', activeTrip.tripId);
+      }
+      fetchLiveMapData();
+    } catch (err) {
+      console.error('Error anchoring to terminal:', err);
+    }
+  };
+
+  const syncFromBrowserGPS = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser');
+      return;
+    }
+    setSyncingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const accuracy = pos.coords.accuracy || 5.0;
+          const activeTrip = buses.find(b => b.status === 'active');
+          await supabase.from('gps_locations').insert({
+            latitude: lat,
+            longitude: lng,
+            source: 'phone_gps_relay',
+            accuracy,
+            trip_id: activeTrip?.tripId || null
+          });
+          if (activeTrip?.tripId) {
+            await supabase.from('trips').update({
+              current_lat: lat,
+              current_lng: lng,
+              gps_updated_at: new Date().toISOString()
+            }).eq('id', activeTrip.tripId);
+          }
+          fetchLiveMapData();
+        } catch (e) {
+          console.error('Failed to sync browser GPS:', e);
+        } finally {
+          setSyncingGps(false);
+        }
+      },
+      (err) => {
+        console.error('Geolocation error:', err);
+        setSyncingGps(false);
+        alert('Could not get device location: ' + err.message);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
 
   useEffect(() => {
     fetchLiveMapData();
@@ -274,9 +341,17 @@ const LiveMap = () => {
             <span className="text-sm">{bus.passengers} passengers</span>
           </div>
           <div className="mt-2.5 flex flex-wrap gap-1.5 items-center">
-            {bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi') ? (
+            {bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi') && !bus.locationSource?.includes('anchor') ? (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
                 <span>🛰️</span> Satellite GPS
+              </span>
+            ) : bus.locationSource?.includes('phone') ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
+                <span>📱</span> Phone GPS
+              </span>
+            ) : bus.locationSource?.includes('terminal') || bus.locationSource?.includes('anchor') ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 border border-purple-200" title="Anchored to Route Terminal">
+                <span>📍</span> Terminal Anchor
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200" title={`Pi Geolocation: ${bus.locationSource}`}>
@@ -313,9 +388,36 @@ const LiveMap = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-white text-3xl font-bold mb-2">Live Map</h1>
-        <p className="text-white/60">Real-time GPS tracking of all buses</p>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-white text-3xl font-bold mb-2">Live Map</h1>
+          <p className="text-white/60">Real-time GPS tracking of all buses</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={syncFromBrowserGPS}
+            disabled={syncingGps}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 transition-colors cursor-pointer"
+            title="Use current device/phone GPS for bus location"
+          >
+            <Crosshair size={14} className={syncingGps ? "animate-spin" : ""} />
+            {syncingGps ? "Syncing GPS..." : "Sync Device GPS"}
+          </button>
+          <button
+            onClick={() => anchorToTerminal(8.366264, 124.865749, 'Manolo Fortich Terminal')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/10 text-white/80 border border-white/10 hover:bg-white/20 transition-colors cursor-pointer"
+          >
+            <MapPin size={14} className="text-orange-400" />
+            Manolo Terminal
+          </button>
+          <button
+            onClick={() => anchorToTerminal(8.488899, 124.657647, 'Agora Terminal')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/10 text-white/80 border border-white/10 hover:bg-white/20 transition-colors cursor-pointer"
+          >
+            <MapPin size={14} className="text-blue-400" />
+            Agora Terminal
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">

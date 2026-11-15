@@ -608,11 +608,14 @@ print(f"Camera settings: {CAMERA_WIDTH}x{CAMERA_HEIGHT} @ {FPS}fps, JPEG_QUALITY
 print(f"Performance optimizations: DISABLE_DRAWING={DISABLE_DRAWING}, DISABLE_DB_WRITES={DISABLE_DB_WRITES}, FRAME_QUEUE_SIZE={FRAME_QUEUE_SIZE}")
 
 class PassengerTracker:
-    """Temporal tracking and box smoothing to eliminate bounding box flicker and count jitter."""
-    def __init__(self, hit_thresh=0.25, keep_thresh=0.20, max_missed=3):
+    """Adaptive temporal tracking with velocity estimation and spatial proximity
+    to seamlessly follow moving persons and prevent hallucinated counts."""
+    
+    def __init__(self, hit_thresh=0.35, keep_thresh=0.20, max_missed=5, min_hits=2):
         self.hit_thresh = hit_thresh
         self.keep_thresh = keep_thresh
         self.max_missed = max_missed
+        self.min_hits = min_hits
         self.tracks = []
         self.next_id = 1
 
@@ -625,67 +628,147 @@ class PassengerTracker:
         if x2 <= x1 or y2 <= y1:
             return 0.0
         inter = (x2 - x1) * (y2 - y1)
-        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
-        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        area1 = max(1, (box1[2] - box1[0]) * (box1[3] - box1[1]))
+        area2 = max(1, (box2[2] - box2[0]) * (box2[3] - box2[1]))
         denom = area1 + area2 - inter
         return inter / float(denom) if denom > 0 else 0.0
 
     def update(self, raw_detections):
+        import math
         matched_track_indices = set()
-        unmatched_dets = []
+        matched_det_indices = set()
 
-        for det in raw_detections:
-            conf = det['confidence']
-            bbox = det['bbox']
+        # Step 1: Evaluate candidate matches using velocity prediction & normalized spatial distance
+        candidate_matches = []
+        for t_idx, track in enumerate(self.tracks):
+            t_box = track['bbox']
+            vx, vy = track.get('vx', 0.0), track.get('vy', 0.0)
+            
+            # Predict position based on person's movement speed
+            pred_box = [
+                t_box[0] + int(vx),
+                t_box[1] + int(vy),
+                t_box[2] + int(vx),
+                t_box[3] + int(vy)
+            ]
+            t_w = max(1, t_box[2] - t_box[0])
+            t_h = max(1, t_box[3] - t_box[1])
+            t_diag = math.hypot(t_w, t_h)
+            pred_cx = (pred_box[0] + pred_box[2]) / 2.0
+            pred_cy = (pred_box[1] + pred_box[3]) / 2.0
 
-            best_iou = 0.0
-            best_t_idx = -1
-            for idx, track in enumerate(self.tracks):
-                if idx in matched_track_indices:
+            for d_idx, det in enumerate(raw_detections):
+                d_box = det['bbox']
+                conf = det['confidence']
+                if conf < self.keep_thresh:
                     continue
-                iou = self._iou(bbox, track['bbox'])
-                if iou > best_iou:
-                    best_iou = iou
-                    best_t_idx = idx
 
-            # If matching an active passenger, keep tracking down to keep_thresh (0.28)
-            if best_iou >= 0.25 and conf >= self.keep_thresh:
-                track = self.tracks[best_t_idx]
-                track['missed'] = 0
-                track['conf'] = conf
-                # Exponential Moving Average for jitter-free bounding box (alpha = 0.70)
-                track['bbox'] = [
-                    int(0.70 * bbox[i] + 0.30 * track['bbox'][i])
-                    for i in range(4)
-                ]
-                matched_track_indices.add(best_t_idx)
-            else:
-                unmatched_dets.append(det)
+                d_w = max(1, d_box[2] - d_box[0])
+                d_h = max(1, d_box[3] - d_box[1])
+                d_cx = (d_box[0] + d_box[2]) / 2.0
+                d_cy = (d_box[1] + d_box[3]) / 2.0
 
-        # Increment missed counter for unobserved tracks
-        for idx, track in enumerate(self.tracks):
-            if idx not in matched_track_indices:
-                track['missed'] += 1
+                iou_curr = self._iou(d_box, t_box)
+                iou_pred = self._iou(d_box, pred_box)
+                best_iou = max(iou_curr, iou_pred)
 
-        # Remove tracks that have departed (missed for >= max_missed frames)
-        self.tracks = [t for t in self.tracks if t['missed'] < self.max_missed]
+                center_dist = math.hypot(d_cx - pred_cx, d_cy - pred_cy)
+                norm_dist = center_dist / max(1.0, t_diag)
+                scale_ratio = (d_w * d_h) / float(t_w * t_h)
 
-        # Only create a NEW passenger track if confidence meets the strict hit_thresh (0.40)
-        for det in unmatched_dets:
-            if det['confidence'] >= self.hit_thresh:
-                self.tracks.append({
-                    'id': self.next_id,
-                    'bbox': det['bbox'],
-                    'conf': det['confidence'],
-                    'missed': 0
-                })
-                self.next_id += 1
+                # Match if IoU >= 0.15 OR (close proximity < 0.85 diagonal and consistent size)
+                is_match = (best_iou >= 0.15) or (norm_dist <= 0.85 and 0.35 <= scale_ratio <= 2.8)
+                if is_match:
+                    score = (best_iou * 2.0) + (1.0 - min(1.0, norm_dist))
+                    candidate_matches.append((score, t_idx, d_idx, det))
 
+        # Sort candidate matches by highest match score
+        candidate_matches.sort(key=lambda x: x[0], reverse=True)
+
+        for score, t_idx, d_idx, det in candidate_matches:
+            if t_idx in matched_track_indices or d_idx in matched_det_indices:
+                continue
+
+            matched_track_indices.add(t_idx)
+            matched_det_indices.add(d_idx)
+            track = self.tracks[t_idx]
+            bbox = det['bbox']
+            conf = det['confidence']
+
+            # Compute observed velocity
+            old_cx = (track['bbox'][0] + track['bbox'][2]) / 2.0
+            old_cy = (track['bbox'][1] + track['bbox'][3]) / 2.0
+            new_cx = (bbox[0] + bbox[2]) / 2.0
+            new_cy = (bbox[1] + bbox[3]) / 2.0
+            obs_vx = new_cx - old_cx
+            obs_vy = new_cy - old_cy
+
+            # Smooth velocity
+            track['vx'] = 0.65 * obs_vx + 0.35 * track.get('vx', 0.0)
+            track['vy'] = 0.65 * obs_vy + 0.35 * track.get('vy', 0.0)
+
+            # Adaptive smoothing alpha based on movement speed:
+            # When person moves fast, use alpha=0.85 to follow instantaneously.
+            # When person is stationary, use alpha=0.55 to kill jitter.
+            speed = math.hypot(obs_vx, obs_vy)
+            alpha = 0.85 if speed > 10.0 else 0.55
+
+            track['bbox'] = [
+                int(alpha * bbox[i] + (1.0 - alpha) * track['bbox'][i])
+                for i in range(4)
+            ]
+            track['conf'] = conf
+            track['missed'] = 0
+            track['hits'] = track.get('hits', 1) + 1
+            if track['hits'] >= self.min_hits:
+                track['confirmed'] = True
+
+        # Handle unmatched tracks (increment missed, project forward if confirmed)
+        for t_idx, track in enumerate(self.tracks):
+            if t_idx not in matched_track_indices:
+                track['missed'] = track.get('missed', 0) + 1
+                if track.get('confirmed', False) and track['missed'] <= 2:
+                    vx, vy = int(track.get('vx', 0.0)), int(track.get('vy', 0.0))
+                    track['bbox'] = [
+                        track['bbox'][0] + vx,
+                        track['bbox'][1] + vy,
+                        track['bbox'][2] + vx,
+                        track['bbox'][3] + vy
+                    ]
+
+        # Purge departed tracks
+        self.tracks = [
+            t for t in self.tracks
+            if (t['missed'] < self.max_missed and t.get('confirmed', False)) or
+               (t['missed'] < 1 and not t.get('confirmed', False))
+        ]
+
+        # Handle unmatched raw detections (potential new passengers)
+        for d_idx, det in enumerate(raw_detections):
+            if d_idx not in matched_det_indices:
+                conf = det['confidence']
+                if conf >= self.hit_thresh:
+                    # High confidence (>=0.55) confirmed immediately; lower requires 2 hits
+                    is_conf = conf >= 0.55
+                    self.tracks.append({
+                        'id': self.next_id,
+                        'bbox': det['bbox'],
+                        'conf': conf,
+                        'vx': 0.0,
+                        'vy': 0.0,
+                        'hits': 2 if is_conf else 1,
+                        'missed': 0,
+                        'confirmed': is_conf
+                    })
+                    self.next_id += 1
+
+        # Return confirmed passengers to eliminate hallucinated counts
+        confirmed_tracks = [t for t in self.tracks if t.get('confirmed', False)]
         return [{
             'bbox': t['bbox'],
             'confidence': float(t['conf']),
             'class': 'person'
-        } for t in self.tracks]
+        } for t in confirmed_tracks]
 
 class VideoProcessor:
     def __init__(self):
@@ -971,8 +1054,9 @@ class VideoProcessor:
             import numpy as np
 
             original_h, original_w = frame.shape[:2]
-            # Use 4:3 640x480 matching the camera frame proportions
-            in_w, in_h = 640, 480
+            # Sized for real-time CPU performance on Raspberry Pi
+            det_sz = int(os.getenv('DETECTION_SIZE', '192'))
+            in_w, in_h = det_sz, det_sz
 
             # Convert BGR to RGB (YOLOv8 was trained on RGB)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -2021,7 +2105,7 @@ class VideoProcessor:
                     stream_counter = 0
                     last_stream_time = current_time
 
-                await asyncio.sleep(0.05)  # Paced for smooth real-time video without network buffer bloat
+                await asyncio.sleep(0.02)  # Fast 25-30fps stream pacing with low latency
             except Exception as e:
                 print(f"Streaming error: {e}")
                 await asyncio.sleep(0.1)
@@ -2239,6 +2323,23 @@ async def get_location():
             return JSONResponse({'status': 'error', 'message': f'Location error: {str(e)}'}, status_code=500)
     else:
         return JSONResponse({'status': 'error', 'message': 'Hardware manager not available'}, status_code=503)
+
+@app.post("/set-location")
+async def set_location(loc_data: dict):
+    """Set high-precision or device-synced GPS coordinates (e.g. from conductor phone or terminal anchor)"""
+    if not hardware_manager:
+        return JSONResponse({'status': 'error', 'message': 'Hardware manager not available'}, status_code=503)
+    try:
+        lat = float(loc_data.get('latitude', 0.0))
+        lng = float(loc_data.get('longitude', 0.0))
+        source = loc_data.get('source', 'device_gps')
+        if abs(lat) < 0.001 and abs(lng) < 0.001:
+            return JSONResponse({'status': 'error', 'message': 'Invalid coordinates'}, status_code=400)
+        
+        hardware_manager.set_manual_location(lat, lng, source=source)
+        return JSONResponse({'status': 'success', 'latitude': lat, 'longitude': lng, 'source': source})
+    except Exception as e:
+        return JSONResponse({'status': 'error', 'message': str(e)}, status_code=500)
 
 @app.post("/send-sms")
 async def send_sms(sms_data: dict):
