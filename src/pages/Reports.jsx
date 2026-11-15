@@ -2419,14 +2419,18 @@ const Reports = () => {
                     <Bus className="text-orange-400" />
                     Trip Summary
                   </h3>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                     <div className="bg-white/5 p-3 rounded-lg">
                       <p className="text-white/60 text-xs">Bus</p>
-                      <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.plate_number}</p>
+                      <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.plate_number || 'N/A'}</p>
+                    </div>
+                    <div className="bg-white/5 p-3 rounded-lg">
+                      <p className="text-white/60 text-xs">Route</p>
+                      <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.route || 'N/A'}</p>
                     </div>
                     <div className="bg-white/5 p-3 rounded-lg">
                       <p className="text-white/60 text-xs">Status</p>
-                      <p className="text-white font-medium text-sm capitalize">{selectedTrip.status.replace('_', ' ')}</p>
+                      <p className="text-white font-medium text-sm capitalize">{selectedTrip.status?.replace('_', ' ')}</p>
                     </div>
                     <div className="bg-white/5 p-3 rounded-lg">
                       <p className="text-white/60 text-xs">Conductor</p>
