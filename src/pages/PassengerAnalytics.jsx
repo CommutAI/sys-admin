@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { TrendingUp, Users, Armchair, Calendar, Brain, AlertTriangle, Eye, Scan, XCircle, CheckCircle, Search, Filter, Video, Camera, Wifi, WifiOff, RefreshCw } from 'lucide-react';
+import { TrendingUp, Users, Armchair, Calendar, Brain, AlertTriangle, Eye, Scan, XCircle, CheckCircle, Search, Filter, Video, Camera, Wifi, WifiOff, RefreshCw, Zap } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useRaspberryPi } from '../hooks/useRaspberryPi';
 import { useBackendVideo } from '../hooks/useBackendVideo';
+import { getPiVideoFeedUrl } from '../services/raspberryPiApi';
 import AuditService from '../services/auditService';
 
 const PassengerAnalytics = () => {
@@ -18,6 +19,7 @@ const PassengerAnalytics = () => {
   const [showCameraFeeds, setShowCameraFeeds] = useState(false);
   const [cameraFeeds, setCameraFeeds] = useState([]);
   const [selectedCamera, setSelectedCamera] = useState(null);
+  const [useMjpeg, setUseMjpeg] = useState(false);
   const [stats, setStats] = useState({
     totalPassengers: 0,
     yoloCount: 0,
@@ -26,6 +28,9 @@ const PassengerAnalytics = () => {
     anomaliesDetected: 0
   });
 
+  const sharedVideoRef = useRef(null);
+
+  // Raspberry Pi connection for live stream — autoConnect enabled for auto-play
   const {
     online,
     connectionStatus,
@@ -33,25 +38,25 @@ const PassengerAnalytics = () => {
     averageCount,
     isStreaming,
     lastUpdate,
-    videoRef,
     refresh,
     assignedBus,
     activeTripId,
     cameraActive,
-  } = useRaspberryPi({ autoConnect: false, enableHealthCheck: false });
+  } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true, videoRef: sharedVideoRef });
 
-  // Backend video connection for YOLOv8m processing
+  // Backend video connection for YOLOv8 processing
   const {
     isStreaming: backendStreaming,
     passengerCount: backendCount,
-    videoRef: backendVideoRef,
     refresh: backendRefresh,
-  } = useBackendVideo({ autoConnect: true });
+  } = useBackendVideo({ autoConnect: true, videoRef: sharedVideoRef });
 
-  // Use backend video if available, otherwise fall back to Pi
-  const videoConnected = backendStreaming || isStreaming;
-  const videoSourceRef = backendStreaming ? backendVideoRef : videoRef;
-  const videoRefresh = backendStreaming ? backendRefresh : refresh;
+  // Video is active if backend is streaming, Pi WebSocket is streaming, or MJPEG mode is active with online Pi
+  const videoConnected = backendStreaming || isStreaming || (online && useMjpeg);
+  const videoRefresh = () => {
+    refresh();
+    backendRefresh();
+  };
   const currentPassengerCount = backendCount || passengerCount;
 
   const fetchAnalyticsData = async () => {
@@ -427,23 +432,38 @@ const PassengerAnalytics = () => {
 
       {/* Live Video Monitoring Section */}
       <div className="glass-card p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-white text-xl font-bold flex items-center gap-2">
-            <Video className="text-orange-400" />
-            Live Bus Video Monitoring
-            {assignedBus?.busPlate && (
-              <span className="px-2 py-0.5 bg-orange-500/20 text-orange-300 text-xs rounded-full border border-orange-500/30">
-                Bus {assignedBus.busNumber} · {assignedBus.busPlate}
-              </span>
-            )}
-          </h2>
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-white text-xl font-bold flex items-center gap-2">
+              <Video className="text-orange-400" />
+              Live Bus Video Monitoring
+              {assignedBus?.busPlate && (
+                <span className="px-2 py-0.5 bg-orange-500/20 text-orange-300 text-xs rounded-full border border-orange-500/30">
+                  Bus {assignedBus.busNumber} · {assignedBus.busPlate}
+                </span>
+              )}
+            </h2>
+            <span className="text-xs text-emerald-400 font-mono font-medium bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+              60 FPS Live
+            </span>
+            <span className="text-xs text-purple-300 font-medium bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full">
+              0.15 Conf
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setUseMjpeg(prev => !prev)}
+              className="px-2.5 py-1.5 text-xs bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors border border-white/10"
+              title="Toggle between WebSocket (60 FPS) and MJPEG Stream"
+            >
+              {useMjpeg ? 'Switch to WebSocket' : 'Switch to MJPEG'}
+            </button>
             <button
               onClick={videoRefresh}
               className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg transition-colors"
               title="Refresh Connection"
             >
-              <RefreshCw size={20} />
+              <RefreshCw size={18} />
             </button>
           </div>
         </div>
@@ -459,7 +479,7 @@ const PassengerAnalytics = () => {
           )}
           <div className="flex-1">
             <p className="text-white font-medium">
-              {backendStreaming ? 'Backend Stream Active' : cameraActive === false ? 'Camera Disabled (GPS Only Mode)' : online ? 'Raspberry Pi Connected' : 'Connecting…'}
+              {backendStreaming ? 'Backend Stream Active' : cameraActive === false ? 'Camera Disabled (GPS Only Mode)' : online ? 'Raspberry Pi Connected' : 'Connecting to Raspberry Pi…'}
             </p>
             <p className="text-white/60 text-sm">
               {backendStreaming
@@ -467,8 +487,8 @@ const PassengerAnalytics = () => {
                 : cameraActive === false
                 ? 'Pi running in GPS-only mode. Camera disabled for stability.'
                 : online
-                ? `Stream Status: ${isStreaming ? 'Active' : 'Inactive'}`
-                : 'Connecting…'}
+                ? `Stream Status: ${isStreaming || useMjpeg ? 'Active (60 FPS)' : 'Starting Stream…'}`
+                : 'Connecting to Onboard Video Server (192.168.1.54:8080)…'}
             </p>
           </div>
         </div>
@@ -476,16 +496,39 @@ const PassengerAnalytics = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Video Feed */}
           <div className="lg:col-span-2">
-            <div className="bg-black/30 rounded-xl overflow-hidden relative aspect-video">
+            <div className="bg-black/40 rounded-xl overflow-hidden relative aspect-video border border-white/10 flex items-center justify-center">
+              {/* WebSocket 60 FPS live video image */}
               <img
-                ref={videoSourceRef}
+                ref={sharedVideoRef}
                 alt="Live video feed"
-                className={`w-full h-full object-cover ${videoConnected ? 'block' : 'hidden'}`}
+                className={`w-full h-full object-contain ${videoConnected && !useMjpeg ? 'block' : 'hidden'}`}
               />
+
+              {/* MJPEG fallback stream */}
+              {useMjpeg && (online || videoConnected) && (
+                <img
+                  src={getPiVideoFeedUrl()}
+                  alt="Live MJPEG feed"
+                  className="w-full h-full object-contain"
+                />
+              )}
+
+              {/* Tactical HUD Corner Reticles */}
+              <div className="pointer-events-none absolute inset-0 p-3 flex flex-col justify-between">
+                <div className="flex justify-between">
+                  <div className="w-3 h-3 border-t-2 border-l-2 border-cyan-400/50" />
+                  <div className="w-3 h-3 border-t-2 border-r-2 border-cyan-400/50" />
+                </div>
+                <div className="flex justify-between">
+                  <div className="w-3 h-3 border-b-2 border-l-2 border-cyan-400/50" />
+                  <div className="w-3 h-3 border-b-2 border-r-2 border-cyan-400/50" />
+                </div>
+              </div>
+
               {!videoConnected && (
-                <div className="absolute inset-0 flex items-center justify-center">
+                <div className="absolute inset-0 flex items-center justify-center bg-black/60">
                   <div className="text-center px-6">
-                    {cameraActive === false ? (
+                    {cameraActive === false && online ? (
                       <>
                         <Camera className="w-16 h-16 text-red-400 mx-auto mb-4" />
                         <p className="text-red-400 font-medium mb-1">Camera not connected</p>
@@ -493,21 +536,24 @@ const PassengerAnalytics = () => {
                       </>
                     ) : (
                       <>
-                        <Video className="w-16 h-16 text-white/30 mx-auto mb-4" />
-                        <p className="text-white/50">
-                          {backendStreaming ? 'Connecting to Backend...' : online ? 'Starting stream…' : 'Connecting…'}
+                        <Video className="w-16 h-16 text-cyan-400/60 animate-pulse mx-auto mb-4" />
+                        <p className="text-white/70 font-medium">
+                          {backendStreaming ? 'Connecting to Backend...' : online ? 'Starting 60 FPS stream…' : 'Connecting to Raspberry Pi…'}
                         </p>
+                        <p className="text-white/40 text-xs mt-1">Connecting to Zero-Delay ONNX WebSocket stream</p>
                       </>
                     )}
                   </div>
                 </div>
               )}
               {videoConnected && (
-                <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-2">
+                <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-2 border border-white/10">
                   <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-                    <span className="text-white text-sm font-medium">LIVE</span>
-                    {backendStreaming && <span className="text-green-400 text-xs ml-2">· AI Processing</span>}
+                    <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
+                    <span className="text-white text-xs font-semibold">LIVE</span>
+                    <span className="text-emerald-400 text-xs font-mono">60 FPS</span>
+                    {backendStreaming && <span className="text-green-400 text-xs ml-2">· AI Cloud</span>}
+                    {useMjpeg && <span className="text-yellow-400 text-xs ml-2">· MJPEG</span>}
                   </div>
                 </div>
               )}
@@ -541,8 +587,8 @@ const PassengerAnalytics = () => {
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-white/60">Stream Status</span>
-                  <span className={`font-medium ${isStreaming ? 'text-green-400' : 'text-red-400'}`}>
-                    {isStreaming ? 'Active' : 'Inactive'}
+                  <span className={`font-medium ${videoConnected ? 'text-green-400' : 'text-red-400'}`}>
+                    {videoConnected ? 'Active (60 FPS)' : 'Inactive'}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
@@ -566,12 +612,20 @@ const PassengerAnalytics = () => {
                   <span className="text-white">320x240</span>
                 </div>
                 <div className="flex justify-between">
+                  <span className="text-white/60">Frame Rate</span>
+                  <span className="text-emerald-400 font-mono">60 FPS</span>
+                </div>
+                <div className="flex justify-between">
                   <span className="text-white/60">AI Model</span>
-                  <span className="text-white">YOLOv8n</span>
+                  <span className="text-white">YOLOv8n ONNX Edge</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-white/60">Confidence Thresh</span>
+                  <span className="text-purple-300 font-mono">0.15</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-white/60">Detection Method</span>
-                  <span className="text-white">YOLO</span>
+                  <span className="text-white">YOLO Edge Inference</span>
                 </div>
               </div>
             </div>
