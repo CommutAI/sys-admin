@@ -608,10 +608,11 @@ print(f"Camera settings: {CAMERA_WIDTH}x{CAMERA_HEIGHT} @ {FPS}fps, JPEG_QUALITY
 print(f"Performance optimizations: DISABLE_DRAWING={DISABLE_DRAWING}, DISABLE_DB_WRITES={DISABLE_DB_WRITES}, FRAME_QUEUE_SIZE={FRAME_QUEUE_SIZE}")
 
 class PassengerTracker:
-    """Adaptive temporal tracking with velocity estimation and spatial proximity
-    to seamlessly follow moving persons and prevent hallucinated counts."""
+    """Stable temporal tracking with exponential smoothing and centroid matching
+    to follow moving persons seamlessly, eliminate box oscillation/jitter,
+    and prevent hallucinated passenger counts."""
     
-    def __init__(self, hit_thresh=0.35, keep_thresh=0.20, max_missed=5, min_hits=2):
+    def __init__(self, hit_thresh=0.35, keep_thresh=0.20, max_missed=4, min_hits=2):
         self.hit_thresh = hit_thresh
         self.keep_thresh = keep_thresh
         self.max_missed = max_missed
@@ -642,21 +643,9 @@ class PassengerTracker:
         } for t in confirmed_tracks]
 
     def step(self):
-        """Kinematic extrapolation for intermediate video frames.
-        Propagates bounding boxes along their velocity vector on EVERY single frame (25-30 FPS).
-        This guarantees that bounding boxes stay glued to the person as they move with zero frame lag."""
-        for track in self.tracks:
-            if track.get('confirmed', False):
-                vx = track.get('vx', 0.0)
-                vy = track.get('vy', 0.0)
-                if abs(vx) > 0.3 or abs(vy) > 0.3:
-                    # Move bounding box synchronously with the person in real time
-                    track['bbox'] = [
-                        int(track['bbox'][0] + vx),
-                        int(track['bbox'][1] + vy),
-                        int(track['bbox'][2] + vx),
-                        int(track['bbox'][3] + vy)
-                    ]
+        """Intermediate frame query: returns stable confirmed bounding boxes.
+        No open-loop velocity drift is applied so bounding boxes remain solidly locked
+        to detected persons without oscillation, snapping, or back-and-forth jitter."""
         return self.get_confirmed_detections()
 
     def update(self, raw_detections, lag_frames=0):
@@ -664,55 +653,35 @@ class PassengerTracker:
         matched_track_indices = set()
         matched_det_indices = set()
 
-        comp_detections = []
-        for det in raw_detections:
-            comp_detections.append(dict(det))
+        comp_detections = [dict(d) for d in (raw_detections or []) if d.get('confidence', 0) >= self.keep_thresh]
 
-        # Step 1: Evaluate candidate matches using velocity prediction & normalized spatial distance
+        # Step 1: Match detections to existing tracks using IoU & centroid proximity
         candidate_matches = []
         for t_idx, track in enumerate(self.tracks):
             t_box = track['bbox']
-            vx, vy = track.get('vx', 0.0), track.get('vy', 0.0)
-            
-            # Predict position based on person's movement speed
-            pred_box = [
-                t_box[0] + int(vx),
-                t_box[1] + int(vy),
-                t_box[2] + int(vx),
-                t_box[3] + int(vy)
-            ]
             t_w = max(1, t_box[2] - t_box[0])
             t_h = max(1, t_box[3] - t_box[1])
             t_diag = math.hypot(t_w, t_h)
-            pred_cx = (pred_box[0] + pred_box[2]) / 2.0
-            pred_cy = (pred_box[1] + pred_box[3]) / 2.0
+            t_cx = (t_box[0] + t_box[2]) / 2.0
+            t_cy = (t_box[1] + t_box[3]) / 2.0
 
             for d_idx, det in enumerate(comp_detections):
                 d_box = det['bbox']
-                conf = det['confidence']
-                if conf < self.keep_thresh:
-                    continue
-
                 d_w = max(1, d_box[2] - d_box[0])
                 d_h = max(1, d_box[3] - d_box[1])
                 d_cx = (d_box[0] + d_box[2]) / 2.0
                 d_cy = (d_box[1] + d_box[3]) / 2.0
 
-                iou_curr = self._iou(d_box, t_box)
-                iou_pred = self._iou(d_box, pred_box)
-                best_iou = max(iou_curr, iou_pred)
-
-                center_dist = math.hypot(d_cx - pred_cx, d_cy - pred_cy)
+                iou = self._iou(d_box, t_box)
+                center_dist = math.hypot(d_cx - t_cx, d_cy - t_cy)
                 norm_dist = center_dist / max(1.0, t_diag)
                 scale_ratio = (d_w * d_h) / float(t_w * t_h)
 
-                # Match if IoU >= 0.15 OR (close proximity < 0.85 diagonal and consistent size)
-                is_match = (best_iou >= 0.15) or (norm_dist <= 0.85 and 0.35 <= scale_ratio <= 2.8)
-                if is_match:
-                    score = (best_iou * 2.0) + (1.0 - min(1.0, norm_dist))
+                # Match if overlapping (IoU >= 0.15) OR close spatial proximity with similar size
+                if iou >= 0.15 or (norm_dist <= 0.70 and 0.40 <= scale_ratio <= 2.5):
+                    score = (iou * 2.0) + (1.0 - min(1.0, norm_dist))
                     candidate_matches.append((score, t_idx, d_idx, det))
 
-        # Sort candidate matches by highest match score
         candidate_matches.sort(key=lambda x: x[0], reverse=True)
 
         for score, t_idx, d_idx, det in candidate_matches:
@@ -722,91 +691,62 @@ class PassengerTracker:
             matched_track_indices.add(t_idx)
             matched_det_indices.add(d_idx)
             track = self.tracks[t_idx]
-            raw_box = det['bbox']
+            new_box = det['bbox']
             conf = det['confidence']
 
-            # If this detection had lag_frames, project raw_box forward to match the current frame
-            if lag_frames > 0:
-                cur_vx = track.get('vx', 0.0)
-                cur_vy = track.get('vy', 0.0)
-                bbox = [
-                    int(raw_box[0] + cur_vx * lag_frames),
-                    int(raw_box[1] + cur_vy * lag_frames),
-                    int(raw_box[2] + cur_vx * lag_frames),
-                    int(raw_box[3] + cur_vy * lag_frames)
-                ]
+            # Deadband check: if center moved < 3.5 pixels, keep existing box to eliminate micro-jitter
+            old_box = track['bbox']
+            old_cx = (old_box[0] + old_box[2]) / 2.0
+            old_cy = (old_box[1] + old_box[3]) / 2.0
+            new_cx = (new_box[0] + new_box[2]) / 2.0
+            new_cy = (new_box[1] + new_box[3]) / 2.0
+            shift = math.hypot(new_cx - old_cx, new_cy - old_cy)
+
+            if shift < 3.5:
+                # Negligible movement — freeze position to kill sensor jitter
+                pass
             else:
-                bbox = raw_box
+                # Responsive EMA smoothing: alpha=0.70 follows moving person smoothly without lagging or overshooting
+                alpha = 0.70
+                track['bbox'] = [
+                    int(round(alpha * new_box[i] + (1.0 - alpha) * old_box[i]))
+                    for i in range(4)
+                ]
 
-            # Compute observed velocity
-            old_cx = (track['bbox'][0] + track['bbox'][2]) / 2.0
-            old_cy = (track['bbox'][1] + track['bbox'][3]) / 2.0
-            new_cx = (bbox[0] + bbox[2]) / 2.0
-            new_cy = (bbox[1] + bbox[3]) / 2.0
-            divisor = max(1.0, float(lag_frames))
-            obs_vx = (new_cx - old_cx) / divisor
-            obs_vy = (new_cy - old_cy) / divisor
-
-            # Smooth velocity
-            track['vx'] = 0.70 * obs_vx + 0.30 * track.get('vx', 0.0)
-            track['vy'] = 0.70 * obs_vy + 0.30 * track.get('vy', 0.0)
-
-            # High-responsiveness adaptive smoothing:
-            # When person moves, snap to the box with alpha=0.90 so there is 0 dragging.
-            # When stationary, alpha=0.60 to avoid jitter.
-            speed = math.hypot(obs_vx, obs_vy)
-            alpha = 0.90 if speed > 5.0 else 0.60
-
-            track['bbox'] = [
-                int(alpha * bbox[i] + (1.0 - alpha) * track['bbox'][i])
-                for i in range(4)
-            ]
             track['conf'] = conf
             track['missed'] = 0
             track['hits'] = track.get('hits', 1) + 1
-            if track['hits'] >= self.min_hits:
+            if track['hits'] >= self.min_hits or conf >= 0.50:
                 track['confirmed'] = True
 
-        # Handle unmatched tracks (increment missed, project forward if confirmed)
+        # Step 2: Unmatched tracks: increment missed counter without moving position
         for t_idx, track in enumerate(self.tracks):
             if t_idx not in matched_track_indices:
                 track['missed'] = track.get('missed', 0) + 1
-                if track.get('confirmed', False) and track['missed'] <= 2:
-                    vx, vy = int(track.get('vx', 0.0)), int(track.get('vy', 0.0))
-                    track['bbox'] = [
-                        track['bbox'][0] + vx,
-                        track['bbox'][1] + vy,
-                        track['bbox'][2] + vx,
-                        track['bbox'][3] + vy
-                    ]
 
-        # Purge departed tracks
+        # Step 3: Remove lost tracks
         self.tracks = [
             t for t in self.tracks
             if (t['missed'] < self.max_missed and t.get('confirmed', False)) or
                (t['missed'] < 1 and not t.get('confirmed', False))
         ]
 
-        # Handle unmatched raw detections (potential new passengers)
+        # Step 4: Add new detections
         for d_idx, det in enumerate(comp_detections):
             if d_idx not in matched_det_indices:
                 conf = det['confidence']
                 if conf >= self.hit_thresh:
-                    # High confidence (>=0.55) confirmed immediately; lower requires 2 hits
-                    is_conf = conf >= 0.55
+                    is_conf = conf >= 0.50
                     self.tracks.append({
                         'id': self.next_id,
-                        'bbox': det['bbox'],
+                        'bbox': list(det['bbox']),
                         'conf': conf,
-                        'vx': 0.0,
-                        'vy': 0.0,
                         'hits': 2 if is_conf else 1,
                         'missed': 0,
                         'confirmed': is_conf
                     })
                     self.next_id += 1
 
-        # Return confirmed passengers to eliminate hallucinated counts
         return self.get_confirmed_detections()
 
 class VideoProcessor:
@@ -2060,8 +2000,7 @@ class VideoProcessor:
                         async def _run_detection_async(det_frame, start_seq):
                             try:
                                 raw_dets = await asyncio.to_thread(self.detect_passengers, det_frame)
-                                lag_frames = max(0, self.frame_count - start_seq)
-                                stable_dets = self.tracker.update(raw_dets, lag_frames=lag_frames)
+                                stable_dets = self.tracker.update(raw_dets)
                                 self.passenger_count = len(stable_dets)
                                 self.last_detections = stable_dets
                                 self.last_detection_count = self.frame_count
@@ -2072,8 +2011,7 @@ class VideoProcessor:
                         
                         asyncio.create_task(_run_detection_async(detection_frame, det_start_seq))
                     
-                    # On EVERY video frame, advance active tracks along velocity vector
-                    # This ensures the bounding box follows the moving person synchronously with 0 lag
+                    # Query stable tracked detections on every video frame without open-loop drift
                     detections = self.tracker.step()
                 else:
                     detections = getattr(self, 'last_detections', [])

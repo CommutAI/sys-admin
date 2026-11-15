@@ -366,7 +366,7 @@ const CompactVideoFeed = ({
   useEffect(() => {
     const updateTime = () => {
       const now = new Date();
-      setCurrentTime(now.toLocaleTimeString('en-US', { hour12: false }));
+      setCurrentTime(now.toLocaleTimeString('en-US', { hour12: true, hour: 'numeric', minute: '2-digit', second: '2-digit' }));
     };
     updateTime();
     const interval = setInterval(updateTime, 1000);
@@ -471,8 +471,8 @@ const CompactVideoFeed = ({
         </div>
       </div>
 
-      {/* Video Viewport Container - Compact & proportional */}
-      <div className="relative bg-zinc-950 rounded-xl overflow-hidden border border-white/10 shadow-xl" style={{ height: '300px', minHeight: '260px' }}>
+      {/* Video Viewport Container - Matches map dimensions */}
+      <div className="relative bg-zinc-950 rounded-xl overflow-hidden border border-white/10 shadow-xl h-[350px] sm:h-[500px] w-full">
         {/* Live video image */}
         <img
           ref={videoRef}
@@ -1257,10 +1257,10 @@ const Dashboard = () => {
         ))}
       </div>
 
-      {/* Live Video Monitoring and Raspberry Pi Status — Balanced 2-Column Responsive */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-        {/* Live Video Monitoring — compact widget */}
-        <div className="glass-card p-3 sm:p-4 rounded-xl">
+      {/* Live Video Monitoring and Raspberry Pi Status — Sized identical to Live Map */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+        {/* Live Video Monitoring — matches map size (lg:col-span-2) */}
+        <div className="glass-card p-3 sm:p-4 rounded-xl lg:col-span-2 flex flex-col">
           <CompactVideoFeed
             online={backendStreaming || backendConnectionStatus === 'connected' || piOnline}
             connectionStatus={backendStreaming ? 'connected' : backendConnectionStatus === 'connected' ? 'connected' : piConnectionStatus}
@@ -1276,8 +1276,8 @@ const Dashboard = () => {
           />
         </div>
 
-        {/* Video Processing Status Indicators - Redesigned Command Center */}
-        <div className="glass-card p-4 sm:p-5 rounded-xl flex flex-col justify-between">
+        {/* Video Processing Status Indicators - Sidebar (lg:col-span-1) */}
+        <div className="glass-card p-4 sm:p-5 rounded-xl flex flex-col justify-between lg:col-span-1">
           <div>
             <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h2 className="text-white text-base sm:text-lg font-bold flex items-center gap-2">
@@ -1304,9 +1304,9 @@ const Dashboard = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-3.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-2.5 sm:gap-3">
               {/* Card 1: AI Model & Tracking */}
-              <div className="bg-white/5 border border-white/5 p-3.5 rounded-xl hover:border-purple-500/30 transition-colors">
+              <div className="bg-white/5 border border-white/5 p-3 rounded-xl hover:border-purple-500/30 transition-colors">
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2">
                     <div className="p-1 rounded-md bg-purple-500/15 text-purple-400">
@@ -1325,7 +1325,7 @@ const Dashboard = () => {
               </div>
 
               {/* Card 2: Camera Capture Pipeline */}
-              <div className="bg-white/5 border border-white/5 p-3.5 rounded-xl hover:border-cyan-500/30 transition-colors">
+              <div className="bg-white/5 border border-white/5 p-3 rounded-xl hover:border-cyan-500/30 transition-colors">
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2">
                     <div className="p-1 rounded-md bg-cyan-500/15 text-cyan-400">
@@ -1348,7 +1348,7 @@ const Dashboard = () => {
               </div>
 
               {/* Card 3: Passenger Occupancy with progress bar */}
-              <div className="bg-white/5 border border-white/5 p-3.5 rounded-xl hover:border-emerald-500/30 transition-colors">
+              <div className="bg-white/5 border border-white/5 p-3 rounded-xl hover:border-emerald-500/30 transition-colors">
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2">
                     <div className="p-1 rounded-md bg-emerald-500/15 text-emerald-400">
@@ -1357,30 +1357,30 @@ const Dashboard = () => {
                     <p className="text-white/60 text-xs font-medium">Occupancy</p>
                   </div>
                   <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                    {Math.min(100, Math.round(((backendCount || piPassengerCount) / 31) * 100))}%
+                    {Math.min(100, Math.round(((backendCount || piPassengerCount) / 35) * 100))}%
                   </span>
                 </div>
                 <div className="flex items-baseline gap-1.5">
                   <p className="text-base font-bold text-white tracking-tight">{backendCount || piPassengerCount}</p>
-                  <span className="text-xs text-white/50">/ 31 Seats</span>
+                  <span className="text-xs text-white/50">/ 35 Seats</span>
                 </div>
                 {/* Mini occupancy bar */}
                 <div className="w-full h-1.5 bg-white/10 rounded-full mt-2 overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${
-                      (backendCount || piPassengerCount) > 28
+                      (backendCount || piPassengerCount) > 31
                         ? 'bg-red-500'
-                        : (backendCount || piPassengerCount) > 20
+                        : (backendCount || piPassengerCount) > 24
                         ? 'bg-yellow-500'
                         : 'bg-emerald-500'
                     }`}
-                    style={{ width: `${Math.min(100, Math.max(3, ((backendCount || piPassengerCount) / 31) * 100))}%` }}
+                    style={{ width: `${Math.min(100, Math.max(3, ((backendCount || piPassengerCount) / 35) * 100))}%` }}
                   />
                 </div>
               </div>
 
               {/* Card 4: Trip & Storage Management */}
-              <div className="bg-white/5 border border-white/5 p-3.5 rounded-xl hover:border-amber-500/30 transition-colors">
+              <div className="bg-white/5 border border-white/5 p-3 rounded-xl hover:border-amber-500/30 transition-colors">
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2">
                     <div className="p-1 rounded-md bg-amber-500/15 text-amber-400">
@@ -1409,7 +1409,7 @@ const Dashboard = () => {
               </div>
 
               {/* Card 5: Motion Sync & Latency */}
-              <div className="bg-white/5 border border-white/5 p-3.5 rounded-xl hover:border-yellow-500/30 transition-colors">
+              <div className="bg-white/5 border border-white/5 p-3 rounded-xl hover:border-yellow-500/30 transition-colors">
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2">
                     <div className="p-1 rounded-md bg-yellow-500/15 text-yellow-400">
@@ -1428,7 +1428,7 @@ const Dashboard = () => {
               </div>
 
               {/* Card 6: Safety & Emergency Status */}
-              <div className="bg-white/5 border border-white/5 p-3.5 rounded-xl hover:border-green-500/30 transition-colors">
+              <div className="bg-white/5 border border-white/5 p-3 rounded-xl hover:border-green-500/30 transition-colors">
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2">
                     <div className={`p-1 rounded-md ${
