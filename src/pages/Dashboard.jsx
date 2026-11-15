@@ -323,7 +323,7 @@ const AnimatedBusMarker = ({ bus, onClick }) => {
 };
 
 // Compact video widget — shows backend YOLO when available, otherwise Pi local ONNX/MJPEG
-const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreaming, videoRef, refresh, cameraActive, usingBackend }) => {
+const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreaming, videoRef, refresh, cameraActive, usingBackend, currentTripId }) => {
   const [useMjpeg, setUseMjpeg] = useState(false);
   const showLive = isStreaming || useMjpeg;
 
@@ -385,11 +385,21 @@ const CompactVideoFeed = ({ online, connectionStatus, passengerCount, isStreamin
           </div>
         )}
 
-        {/* LIVE badge */}
+        {/* LIVE / REC badge */}
         {showLive && (
           <div className="absolute top-2 left-2 bg-black/70 rounded px-2 py-0.5 flex items-center gap-1.5">
-            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-          <span className="text-white text-xs font-medium">LIVE</span>
+            {currentTripId ? (
+              <>
+                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                <span className="text-red-400 text-xs font-semibold">REC</span>
+              </>
+            ) : (
+              <>
+                <div className="w-2 h-2 bg-green-400 rounded-full" />
+                <span className="text-white text-xs font-medium">LIVE</span>
+                <span className="text-white/50 text-[10px] hidden sm:inline">(Display Only)</span>
+              </>
+            )}
           </div>
         )}
 
@@ -1064,6 +1074,7 @@ const Dashboard = () => {
             refresh={backendStreaming ? backendRefresh : piRefresh}
             cameraActive={piCameraActive}
             usingBackend={backendStreaming}
+            currentTripId={piCurrentTripId}
           />
         </div>
 

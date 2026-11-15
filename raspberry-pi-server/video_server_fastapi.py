@@ -1516,6 +1516,11 @@ class VideoProcessor:
             print("Video recording is disabled in configuration")
             return False
         
+        # Only record if there is an active trip ID (camera feed still displays live when idle)
+        if not self.current_trip_id:
+            print("[Recording] No active trip — live camera feed remains active for display, but recording to disk is skipped.")
+            return False
+        
         if self.recording:
             print("Recording already in progress")
             return False
@@ -1829,7 +1834,14 @@ class VideoProcessor:
         )
     
     def write_frame_to_video(self, frame):
-        """Write frame to video file if recording is active"""
+        """Write frame to video file if recording is active and a trip is in progress"""
+        # Do not record if there is no active trip
+        if not self.current_trip_id:
+            if self.recording:
+                print("[Recording] Trip ended or no active trip — stopping video recording immediately")
+                self.stop_recording()
+            return
+
         if self.recording and self.video_writer and self.video_writer.isOpened():
             try:
                 self.video_writer.write(frame)
@@ -1927,8 +1939,8 @@ class VideoProcessor:
                 else:
                     annotated_frame = self.draw_detections(frame, detections)
                 
-                # Write frame to video if recording (can be disabled for max speed)
-                if ENABLE_VIDEO_RECORDING:
+                # Write frame to video ONLY if there is an active trip in progress
+                if ENABLE_VIDEO_RECORDING and self.current_trip_id and self.recording:
                     self.write_frame_to_video(annotated_frame)
                 
                 # Encode frame for streaming
@@ -2105,6 +2117,11 @@ async def clear_trip():
 @app.post("/start-recording")
 async def start_recording():
     """Start video recording"""
+    if not video_processor.current_trip_id:
+        return JSONResponse({
+            'status': 'warning',
+            'message': 'No active trip in progress. Live camera feed remains displayed, but recording is only saved during active trips.'
+        }, status_code=400)
     success = video_processor.start_recording()
     if success:
         return JSONResponse({
@@ -2715,14 +2732,17 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json({"status": "Video stream stopped"})
             
             elif message.get('action') == 'start_recording':
-                success = video_processor.start_recording()
-                if success:
-                    await websocket.send_json({
-                        "status": "Recording started",
-                        "file_path": video_processor.current_video_path
-                    })
+                if not video_processor.current_trip_id:
+                    await websocket.send_json({"error": "No active trip — live feed displays without recording"})
                 else:
-                    await websocket.send_json({"error": "Failed to start recording"})
+                    success = video_processor.start_recording()
+                    if success:
+                        await websocket.send_json({
+                            "status": "Recording started",
+                            "file_path": video_processor.current_video_path
+                        })
+                    else:
+                        await websocket.send_json({"error": "Failed to start recording"})
             
             elif message.get('action') == 'stop_recording':
                 result = video_processor.stop_recording()
