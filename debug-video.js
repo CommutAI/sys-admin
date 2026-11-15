@@ -9,15 +9,15 @@ import WebSocket from 'ws';
 
 // Configuration
 const PI_URL = 'http://192.168.1.45:5000'; // Your Pi URL from .env
-const SUPABASE_URL = 'https://iyacktzzktwrpeibcena.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml5YWNrdHp6a3R3cnBlaWJjZW5hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEwNzAxMzMsImV4cCI6MjEwNjY0NjEzM30.nnUW_wjKE9t6V_ZNNR1u_HqcqQletGEsJ4A2kcBLxl0';
+const SUPABASE_URL = 'your-supabase-url-here';
+const SUPABASE_KEY = 'your-supabase-anon-key-here';
 
 console.log('🔍 Debugging Raspberry Pi Video Connection\n');
 
 // 1. Check if Pi is registered in database
 console.log('1. Checking if Pi is registered in database...');
 const dbOptions = {
-  hostname: 'iyacktzzktwrpeibcena.supabase.co',
+  hostname: new URL(SUPABASE_URL).hostname,
   path: '/rest/v1/pi_devices?bus_number=eq.1',
   method: 'GET',
   headers: {

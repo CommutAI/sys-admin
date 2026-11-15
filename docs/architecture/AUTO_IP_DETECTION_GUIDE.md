@@ -51,7 +51,7 @@ import requests
 import time
 
 # Supabase configuration
-SUPABASE_URL = "https://iyacktzzktwrpeibcena.supabase.co"
+SUPABASE_URL = "your-supabase-url-here"
 SUPABASE_KEY = "YOUR_ANON_KEY"  # Use the anon key from .env
 BUS_NUMBER = 1
 

@@ -92,8 +92,8 @@ SUPABASE_KEY=your_supabase_key_here
 
 **Expected Configuration**:
 ```bash
-SUPABASE_URL=https://iyacktzzktwrpeibcena.supabase.co
-SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml5YWNrdHp6a3R3cnBlaWJjZW5hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEwNzAxMzMsImV4cCI6MjEwNjY0NjEzM30.nnUW_wjKE9t6V_ZNNR1u_HqcqQletGEsJ4A2kcBLxl0
+SUPABASE_URL=your-supabase-url-here
+SUPABASE_KEY=your-supabase-anon-key-here
 ```
 
 **Impact**: **MEDIUM - Pi cannot register with system**
@@ -189,8 +189,8 @@ BACKEND_URL=http://192.168.1.X:8000  # Replace X with your Windows IP
 **Add these lines**:
 ```bash
 # Supabase Configuration
-SUPABASE_URL=https://iyacktzzktwrpeibcena.supabase.co
-SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml5YWNrdHp6a3R3cnBlaWJjZW5hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEwNzAxMzMsImV4cCI6MjEwNjY0NjEzM30.nnUW_wjKE9t6V_ZNNR1u_HqcqQletGEsJ4A2kcBLxl0
+SUPABASE_URL=your-supabase-url-here
+SUPABASE_KEY=your-supabase-anon-key-here
 ```
 
 ---

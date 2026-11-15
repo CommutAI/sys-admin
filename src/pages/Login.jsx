@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Lock, Mail, Bus, Eye, EyeOff } from 'lucide-react';
 import AuditService from '../services/auditService';
-import bcrypt from 'bcryptjs';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -24,69 +23,28 @@ const Login = () => {
     try {
       console.log('Attempting login for:', email);
 
-      // Check if user exists in staff_users table
-      const { data: staffUser, error: staffError } = await supabase
-        .from('staff_users')
-        .select('*')
-        .eq('email', email)
-        .single();
-
-      console.log('Staff user query result:', staffUser);
-      console.log('Staff user query error:', staffError);
-
-      if (staffError) {
-        console.error('User not found in staff_users:', staffError);
-        setError('Invalid email or password');
-        setLoading(false);
-        return;
-      }
-
-      if (!staffUser) {
-        console.error('No user data returned');
-        setError('Invalid email or password');
-        setLoading(false);
-        return;
-      }
-
-      if (!staffUser.is_active) {
-        console.error('User account is inactive');
-        setError('Your account has been deactivated. Please contact administrator.');
-        setLoading(false);
-        return;
-      }
-
-      // Verify password — support both bcrypt hashes and plain text passwords
-      const storedPassword = staffUser.password;
-      const isBcrypt = storedPassword && storedPassword.startsWith('$2');
-      const passwordMatch = isBcrypt
-        ? await bcrypt.compare(password, storedPassword)
-        : storedPassword === password;
-
-      if (!passwordMatch) {
-        console.error('Password mismatch');
-        setError('Invalid email or password');
-        setLoading(false);
-        return;
-      }
-
-      console.log('User found in staff_users, is_active:', staffUser.is_active);
-
-      // Sign in with Supabase auth to create a session (best-effort — not all
-      // staff users have a Supabase Auth account; fallback to localStorage is fine)
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: email,
-        password: password,
+      // Call backend login endpoint
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com'}/api/staff/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
       });
 
-      if (authError) {
-        // Expected for users who only exist in staff_users (no Supabase Auth account)
-        // Store session info in localStorage as fallback
-        localStorage.setItem('staff_user_id', staffUser.id);
-        localStorage.setItem('staff_user_email', staffUser.email);
-        localStorage.setItem('staff_user_role', staffUser.role);
-      } else {
-        console.log('Supabase auth sign-in successful');
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || 'Invalid email or password');
       }
+
+      console.log('Login successful:', data.user);
+
+      // Store session info in localStorage
+      localStorage.setItem('staff_user_id', data.user.id);
+      localStorage.setItem('staff_user_email', data.user.email);
+      localStorage.setItem('staff_user_role', data.user.role);
+      localStorage.setItem('staff_user_name', data.user.full_name);
 
       // Log login event to audit logs
       await AuditService.logLogin(email);

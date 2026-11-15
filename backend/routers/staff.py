@@ -7,6 +7,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 from database import supabase
+import bcrypt
 
 router = APIRouter()
 
@@ -138,6 +139,12 @@ class StaffUserCreate(BaseModel):
     password: str
 
 
+class LoginRequest(BaseModel):
+    """Login request model"""
+    email: str
+    password: str
+
+
 class StaffUserUpdate(BaseModel):
     """Staff user update model"""
     full_name: str
@@ -146,12 +153,51 @@ class StaffUserUpdate(BaseModel):
     is_active: bool
 
 
+@router.post("/login")
+async def login(request: LoginRequest):
+    """
+    Staff login endpoint - verifies credentials and returns user info
+    """
+    try:
+        # Check if user exists in staff_users table
+        result = supabase.table('staff_users').select('*').eq('email', request.email).single().execute()
+        user = result[1] if result[1] else None
+
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+
+        if not user.get('is_active'):
+            raise HTTPException(status_code=403, detail="Account is deactivated")
+
+        # Verify password - support both bcrypt hashes and plain text passwords
+        stored_password = user.get('password')
+        is_bcrypt = stored_password and stored_password.startswith('$2')
+
+        if is_bcrypt:
+            if not bcrypt.checkpw(request.password.encode('utf-8'), stored_password.encode('utf-8')):
+                raise HTTPException(status_code=401, detail="Invalid email or password")
+        else:
+            if stored_password != request.password:
+                raise HTTPException(status_code=401, detail="Invalid email or password")
+
+        # Return user info (excluding password)
+        user.pop('password', None)
+        return {"message": "Login successful", "user": user}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/staff")
 async def create_staff_user(user: StaffUserCreate):
     """
     Create a new staff user (requires admin privileges)
     """
     try:
+        # Hash password with bcrypt
+        hashed_password = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
         # Create auth user first
         auth_result = supabase.auth.sign_up({
             "email": user.email,
@@ -163,10 +209,10 @@ async def create_staff_user(user: StaffUserCreate):
                 }
             }
         })
-        
+
         if auth_result[1] is None:
             raise HTTPException(status_code=400, detail="Failed to create auth user")
-        
+
         return {"message": "Staff user created successfully", "user": auth_result[1]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
