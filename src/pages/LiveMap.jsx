@@ -341,13 +341,13 @@ const LiveMap = () => {
             <span className="text-sm">{bus.passengers} passengers</span>
           </div>
           <div className="mt-2.5 flex flex-wrap gap-1.5 items-center">
-            {bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi') && !bus.locationSource?.includes('anchor') ? (
+            {bus.locationSource?.includes('driver_phone') || bus.locationSource?.includes('phone') ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                <span>📱</span> Driver Phone GPS (Live)
+              </span>
+            ) : bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi') && !bus.locationSource?.includes('anchor') ? (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
                 <span>🛰️</span> Satellite GPS
-              </span>
-            ) : bus.locationSource?.includes('phone') ? (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
-                <span>📱</span> Phone GPS
               </span>
             ) : bus.locationSource?.includes('terminal') || bus.locationSource?.includes('anchor') ? (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 border border-purple-200" title="Anchored to Route Terminal">
@@ -501,11 +501,15 @@ const LiveMap = () => {
                         <span>{bus.passengers} passengers</span>
                       </div>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                        bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi')
+                        bus.locationSource?.includes('driver_phone') || bus.locationSource?.includes('phone')
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi')
                           ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                           : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
                       }`}>
-                        {bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi')
+                        {bus.locationSource?.includes('driver_phone') || bus.locationSource?.includes('phone')
+                          ? '📱 Driver GPS'
+                          : bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi')
                           ? '🛰️ GPS'
                           : '📶 Pi Loc'}
                       </span>

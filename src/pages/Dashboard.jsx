@@ -307,14 +307,33 @@ const AnimatedBusMarker = ({ bus, onClick }) => {
             <p className="text-gray-500 text-xs mt-2">
               GPS: {Number(bus.lat).toFixed(6)}, {Number(bus.lng).toFixed(6)}
             </p>
-            <p className="text-gray-500 text-xs">
-              Source: {bus.locationSource || 'fallback'}
-            </p>
-            {bus.locationUpdatedAt && (
-              <p className="text-gray-500 text-xs">
-                Last update: {new Date(bus.locationUpdatedAt).toLocaleString()}
-              </p>
-            )}
+            <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-gray-500">Source:</span>
+                {bus.locationSource?.includes('driver_phone') || bus.locationSource?.includes('phone') ? (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    📱 Driver Phone GPS
+                  </span>
+                ) : bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi') && !bus.locationSource?.includes('anchor') ? (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    🛰️ Satellite GPS
+                  </span>
+                ) : bus.locationSource?.includes('terminal') || bus.locationSource?.includes('anchor') ? (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-300">
+                    📍 Terminal Anchor
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-blue-100 text-blue-800 border border-blue-300">
+                    📶 {bus.locationSource || 'fallback'}
+                  </span>
+                )}
+              </div>
+              {bus.locationUpdatedAt && (
+                <p className="text-gray-400 text-[11px]">
+                  Last update: {new Date(bus.locationUpdatedAt).toLocaleTimeString()}
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </Popup>
@@ -334,6 +353,7 @@ const CompactVideoFeed = ({
   usingBackend,
   currentTripId,
   assignedBus,
+  locationSource,
 }) => {
   const [useMjpeg, setUseMjpeg] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
@@ -451,13 +471,13 @@ const CompactVideoFeed = ({
         </div>
       </div>
 
-      {/* Video Viewport Container */}
-      <div className="relative bg-zinc-950 rounded-xl overflow-hidden border border-white/10 shadow-2xl flex-1" style={{ minHeight: '380px', height: '460px' }}>
+      {/* Video Viewport Container - Compact & proportional */}
+      <div className="relative bg-zinc-950 rounded-xl overflow-hidden border border-white/10 shadow-xl" style={{ height: '300px', minHeight: '260px' }}>
         {/* Live video image */}
         <img
           ref={videoRef}
           alt="Live bus camera feed"
-          className="w-full h-full object-cover"
+          className="w-full h-full object-contain"
           style={{ visibility: isStreaming && !useMjpeg ? 'visible' : 'hidden' }}
         />
 
@@ -565,11 +585,19 @@ const CompactVideoFeed = ({
         {/* HUD Bottom Bar Overlay */}
         {showLive && (
           <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between pointer-events-none text-[10px] font-mono text-white/70">
-            <div className="bg-black/70 backdrop-blur-md border border-white/10 rounded px-2 py-0.5 flex items-center gap-1.5">
-              <Zap size={11} className="text-yellow-400" />
-              <span className="text-white/90 font-medium">Zero-Delay Motion Sync</span>
-              <span className="text-white/40">·</span>
-              <span className="text-emerald-400 font-semibold">30 FPS</span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="bg-black/70 backdrop-blur-md border border-white/10 rounded px-2 py-0.5 flex items-center gap-1.5">
+                <Zap size={11} className="text-yellow-400" />
+                <span className="text-white/90 font-medium">Zero-Delay Sync</span>
+                <span className="text-white/40">·</span>
+                <span className="text-emerald-400 font-semibold">30 FPS</span>
+              </div>
+              {locationSource?.includes('phone') && (
+                <div className="bg-emerald-950/80 backdrop-blur-md border border-emerald-500/30 text-emerald-300 rounded px-2 py-0.5 flex items-center gap-1">
+                  <span>📱</span>
+                  <span className="font-semibold">Driver GPS Active</span>
+                </div>
+              )}
             </div>
 
             <div className="hidden sm:flex bg-black/70 backdrop-blur-md border border-white/10 rounded px-2 py-0.5 items-center gap-1.5">
@@ -1229,10 +1257,10 @@ const Dashboard = () => {
         ))}
       </div>
 
-      {/* Live Video Monitoring and Raspberry Pi Status — Responsive */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+      {/* Live Video Monitoring and Raspberry Pi Status — Balanced 2-Column Responsive */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Live Video Monitoring — compact widget */}
-        <div className="glass-card p-3 sm:p-4 rounded-xl lg:col-span-2">
+        <div className="glass-card p-3 sm:p-4 rounded-xl">
           <CompactVideoFeed
             online={backendStreaming || backendConnectionStatus === 'connected' || piOnline}
             connectionStatus={backendStreaming ? 'connected' : backendConnectionStatus === 'connected' ? 'connected' : piConnectionStatus}
@@ -1244,11 +1272,12 @@ const Dashboard = () => {
             usingBackend={backendStreaming}
             currentTripId={piCurrentTripId}
             assignedBus={piAssignedBus}
+            locationSource={buses.find(b => b.status === 'active')?.locationSource}
           />
         </div>
 
         {/* Video Processing Status Indicators - Redesigned Command Center */}
-        <div className="glass-card p-4 sm:p-6 rounded-xl flex flex-col justify-between">
+        <div className="glass-card p-4 sm:p-5 rounded-xl flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h2 className="text-white text-base sm:text-lg font-bold flex items-center gap-2">
