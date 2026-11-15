@@ -357,6 +357,16 @@ class NEO6M:
                     if db_client:
                         db_client.table('gps_locations').insert(data).execute()
                         logger.debug(f"GPS location logged to Supabase")
+                        if trip_id:
+                            try:
+                                from datetime import datetime, timezone
+                                db_client.table('trips').update({
+                                    'current_lat': data['latitude'],
+                                    'current_lng': data['longitude'],
+                                    'gps_updated_at': datetime.now(timezone.utc).isoformat()
+                                }).eq('id', trip_id).execute()
+                            except Exception as te:
+                                logger.debug(f"Could not sync trips table with hardware GPS: {te}")
                 except Exception as e:
                     logger.error(f"Failed to log GPS location: {e}")
 
@@ -410,7 +420,7 @@ class NEO6M:
             logger.info("NEO-6M GPS disconnected")
 
 class OpenStreetMapGeolocation:
-    """OpenStreetMap-based geolocation using multiple free services"""
+    """OpenStreetMap/IP-based geolocation using multiple free services with caching"""
     
     def __init__(self, user_agent: str = "BusMonitoringSystem"):
         self.user_agent = user_agent
@@ -420,9 +430,16 @@ class OpenStreetMapGeolocation:
             "https://ip-api.com/json/"  # Free IP geolocation (45 requests/minute)
         ]
         self.current_ip_index = 0
+        self.cached_location: Optional[GPSLocation] = None
+        self.last_fetch_time: float = 0.0
+        self.cache_ttl: float = 60.0  # Cache for 60s to prevent API rate limit exhaustion
         
-    def get_ip_location(self) -> Optional[GPSLocation]:
-        """Get location using IP-based geolocation services"""
+    def get_ip_location(self, force_refresh: bool = False) -> Optional[GPSLocation]:
+        """Get location using IP-based geolocation services with caching"""
+        now = time.time()
+        if not force_refresh and self.cached_location and (now - self.last_fetch_time < self.cache_ttl):
+            return self.cached_location
+
         for attempt in range(len(self.ips)):
             try:
                 ip_service = self.ips[(self.current_ip_index + attempt) % len(self.ips)]
@@ -454,21 +471,33 @@ class OpenStreetMapGeolocation:
                         logger.warning(f"Unknown response format from {ip_service}")
                         continue
                     
-                    logger.info(f"IP geolocation successful using {ip_service}")
-                    return GPSLocation(
+                    # Ignore 0,0
+                    if lat == 0.0 and lon == 0.0:
+                        continue
+
+                    logger.info(f"Pi IP geolocation resolved: ({lat}, {lon}) via {ip_service}")
+                    loc_obj = GPSLocation(
                         latitude=lat,
                         longitude=lon,
                         altitude=0.0,
                         speed=0.0,
-                        timestamp=time.time(),
+                        timestamp=now,
                         accuracy=accuracy,
-                        source='ip_geolocation'
+                        source='pi_geolocation'
                     )
+                    self.cached_location = loc_obj
+                    self.last_fetch_time = now
+                    return loc_obj
                     
             except Exception as e:
                 logger.warning(f"IP geolocation attempt {attempt + 1} failed: {e}")
                 continue
         
+        # If all current attempts failed but we have a previous cached location, reuse it
+        if self.cached_location:
+            logger.info("Using previously cached Pi location due to network timeout")
+            return self.cached_location
+
         logger.error("All IP geolocation services failed")
         return None
     
@@ -600,6 +629,7 @@ class HardwareManager:
         self.gps_available = False
         self.sms_available = False
         self.emergency_button_available = False
+        self.last_db_log_time: float = 0.0
         
     def fetch_contacts_from_db(self):
         """Fetch emergency and admin contacts from database"""
@@ -879,7 +909,7 @@ class HardwareManager:
             return None
     
     def _log_location_to_db(self, location: GPSLocation, trip_id: Optional[int], db_client):
-        """Log geolocation fallback to database"""
+        """Log geolocation fallback to database (rate-limited to avoid database flooding)"""
         try:
             # Validate geolocation data - reject invalid coordinates
             if location.latitude == 0.0 and location.longitude == 0.0:
@@ -889,6 +919,15 @@ class HardwareManager:
             if abs(location.latitude) < 0.001 and abs(location.longitude) < 0.001:
                 logger.debug(f"Skipping geolocation log — coordinates too close to zero: {location.latitude}, {location.longitude}")
                 return
+
+            # Rate limit database writes:
+            # Active trip: every 10 seconds
+            # Idle (no trip): every 60 seconds
+            now = time.time()
+            interval = 10.0 if trip_id else 60.0
+            if (now - getattr(self, 'last_db_log_time', 0.0)) < interval:
+                return
+            self.last_db_log_time = now
 
             data = {
                 'latitude': location.latitude,
@@ -912,17 +951,31 @@ class HardwareManager:
                             altitude=data.get('altitude'),
                             speed=data.get('speed'),
                             accuracy=data.get('accuracy'),
-                            source=data.get('source', 'geolocation'),
+                            source=data.get('source', 'pi_geolocation'),
                         )
-                        logger.debug(f"Geolocation buffered to SQLite")
+                        logger.debug("Geolocation buffered to SQLite")
                     # Also insert directly to Supabase if connected
                     if db_client:
                         db_client.table('gps_locations').insert(data).execute()
-                        logger.debug(f"Geolocation logged to Supabase")
+                        logger.info(f"Pi location logged to Supabase: ({data['latitude']}, {data['longitude']}) [trip: {trip_id or 'idle'}]")
+                        
+                        # Sync active trip record
+                        if trip_id:
+                            try:
+                                from datetime import datetime, timezone
+                                db_client.table('trips').update({
+                                    'current_lat': data['latitude'],
+                                    'current_lng': data['longitude'],
+                                    'gps_updated_at': datetime.now(timezone.utc).isoformat()
+                                }).eq('id', trip_id).execute()
+                            except Exception as te:
+                                logger.debug(f"Could not update trips table current_lat/lng: {te}")
                 except Exception as e:
                     logger.error(f"Failed to log geolocation: {e}")
             
             threading.Thread(target=log_to_db, daemon=True).start()
+        except Exception as e:
+            logger.error(f"Failed to start geolocation logging thread: {e}")
         except Exception as e:
             logger.error(f"Failed to start geolocation logging thread: {e}")
     

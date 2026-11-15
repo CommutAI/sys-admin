@@ -273,13 +273,24 @@ const LiveMap = () => {
             <Users size={16} className="text-orange-500" />
             <span className="text-sm">{bus.passengers} passengers</span>
           </div>
-          <span className={`inline-block px-2 py-1 rounded text-xs mt-2 ${
-            bus.status === 'active' ? 'bg-green-100 text-green-800' :
-            bus.status === 'idle' ? 'bg-yellow-100 text-yellow-800' :
-            'bg-gray-100 text-gray-800'
-          }`}>
-            {bus.status === 'idle' ? 'No active trip' : bus.status}
-          </span>
+          <div className="mt-2.5 flex flex-wrap gap-1.5 items-center">
+            {bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi') ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
+                <span>🛰️</span> Satellite GPS
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200" title={`Pi Geolocation: ${bus.locationSource}`}>
+                <span>📶</span> Pi Fallback
+              </span>
+            )}
+            <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+              bus.status === 'active' ? 'bg-green-100 text-green-800' :
+              bus.status === 'idle' ? 'bg-yellow-100 text-yellow-800' :
+              'bg-gray-100 text-gray-800'
+            }`}>
+              {bus.status === 'idle' ? 'No active trip' : bus.status}
+            </span>
+          </div>
         </div>
       </Popup>
     </Marker>
@@ -298,7 +309,7 @@ const LiveMap = () => {
 
   const center = buses.length > 0 && buses[0].lat
     ? [buses[0].lat, buses[0].lng]
-    : [14.5995, 120.9842];
+    : [8.4822, 124.6472]; // Northern Mindanao (CDO / Bukidnon)
 
   return (
     <div className="space-y-6">
@@ -382,9 +393,20 @@ const LiveMap = () => {
                         'bg-gray-400'
                       }`} />
                     </div>
-                    <div className="flex items-center gap-2 text-white/70 text-xs">
-                      <Users size={14} />
-                      <span>{bus.passengers} passengers</span>
+                    <div className="flex items-center justify-between text-white/70 text-xs mt-2 pt-2 border-t border-white/10">
+                      <div className="flex items-center gap-1.5">
+                        <Users size={14} className="text-orange-400" />
+                        <span>{bus.passengers} passengers</span>
+                      </div>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi')
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                      }`}>
+                        {bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi')
+                          ? '🛰️ GPS'
+                          : '📶 Pi Loc'}
+                      </span>
                     </div>
                   </div>
                 ))
