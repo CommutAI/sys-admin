@@ -1625,14 +1625,12 @@ const TripManagement = ({ userRole }) => {
                       </div>
                       <div className="bg-white/5 p-3 rounded-lg">
                         <p className="text-white/60 text-xs">Conductor</p>
-                        <p className="text-white font-medium text-sm">{selectedTrip.conductor?.full_name || 'N/A'}</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.conductor?.full_name || selectedTrip.conductor_staff?.full_name || 'N/A'}</p>
                       </div>
-                      {selectedTrip.driver && (
-                        <div className="bg-white/5 p-3 rounded-lg">
-                          <p className="text-white/60 text-xs">Driver</p>
-                          <p className="text-white font-medium text-sm">{selectedTrip.driver.full_name}</p>
-                        </div>
-                      )}
+                      <div className="bg-white/5 p-3 rounded-lg">
+                        <p className="text-white/60 text-xs">Driver</p>
+                        <p className="text-white font-medium text-sm">{selectedTrip.driver?.full_name || selectedTrip.driver_staff?.full_name || 'N/A'}</p>
+                      </div>
                       <div className="bg-white/5 p-3 rounded-lg">
                         <p className="text-white/60 text-xs">Start Time</p>
                         <p className="text-white font-medium text-sm">{new Date(selectedTrip.started_at).toLocaleString()}</p>

@@ -2430,11 +2430,19 @@ const Reports = () => {
                     </div>
                     <div className="bg-white/5 p-3 rounded-lg">
                       <p className="text-white/60 text-xs">Conductor</p>
-                      <p className="text-white font-medium text-sm">{selectedTrip.conductor_staff?.full_name || 'N/A'}</p>
+                      <p className="text-white font-medium text-sm">{selectedTrip.conductor_staff?.full_name || selectedTrip.conductor?.full_name || 'N/A'}</p>
+                    </div>
+                    <div className="bg-white/5 p-3 rounded-lg">
+                      <p className="text-white/60 text-xs">Driver</p>
+                      <p className="text-white font-medium text-sm">{selectedTrip.driver_staff?.full_name || selectedTrip.driver?.full_name || 'N/A'}</p>
                     </div>
                     <div className="bg-white/5 p-3 rounded-lg">
                       <p className="text-white/60 text-xs">Start Time</p>
                       <p className="text-white font-medium text-sm">{new Date(selectedTrip.started_at).toLocaleString()}</p>
+                    </div>
+                    <div className="bg-white/5 p-3 rounded-lg">
+                      <p className="text-white/60 text-xs">End Time</p>
+                      <p className="text-white font-medium text-sm">{selectedTrip.ended_at ? new Date(selectedTrip.ended_at).toLocaleString() : 'In Progress'}</p>
                     </div>
                     {selectedTrip.video_recording_duration && (
                       <div className="bg-white/5 p-3 rounded-lg">
