@@ -4,7 +4,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
-import { clearPiTrip, resolvePiUrl } from '../services/raspberryPiApi';
+import { setPiTrip, clearPiTrip, resolvePiUrl } from '../services/raspberryPiApi';
 import AuditService from '../services/auditService';
 
 const TripManagement = ({ userRole }) => {
@@ -327,8 +327,14 @@ const TripManagement = ({ userRole }) => {
       // Log trip status change to audit logs
       await AuditService.logTripStatusChanged(tripId, oldStatus, newStatus, busInfo);
 
-      // Tell the Pi the trip is over if cancelled or completed
-      if (newStatus === 'completed' || newStatus === 'cancelled') {
+      // Notify Pi to start recording if in_progress, or finalize if ended
+      if (newStatus === 'in_progress') {
+        try {
+          await setPiTrip(tripId);
+        } catch (e) {
+          console.warn('Could not notify Pi of in_progress trip:', e);
+        }
+      } else if (newStatus === 'completed' || newStatus === 'cancelled') {
         await clearPiTrip();
 
         // Stop video recording on backend
@@ -378,7 +384,7 @@ const TripManagement = ({ userRole }) => {
   const handleCreateTrip = async (e) => {
     e.preventDefault();
     try {
-      const { error } = await supabase
+      const { data: createdTrip, error } = await supabase
         .from('trips')
         .insert({
           bus_id: newTrip.bus_id,
@@ -387,9 +393,19 @@ const TripManagement = ({ userRole }) => {
           route: newTrip.route,
           status: newTrip.status,
           started_at: new Date().toISOString()
-        });
+        })
+        .select()
+        .single();
 
       if (error) throw error;
+
+      if (createdTrip && newTrip.status === 'in_progress') {
+        try {
+          await setPiTrip(createdTrip.id);
+        } catch (piErr) {
+          console.warn('Could not notify Pi of newly created trip:', piErr);
+        }
+      }
 
       alert('Trip created successfully!');
       setShowCreateTripModal(false);

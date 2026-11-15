@@ -222,68 +222,70 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(periodic_register())
 
-    # Poll backend for active trips and automatically set trip_id
+    # Autonomous active trip polling directly from Supabase (runs every 3 seconds)
     async def poll_active_trips():
-        """Poll backend every 60 seconds for active trips and set trip_id"""
-        import requests
-
+        """Poll Supabase directly for active in_progress trips to auto-start/stop video recording"""
         while True:
             try:
-                await asyncio.sleep(60)  # Check every 60 seconds (was 10s)
-
-                current_url = get_backend_url()
-                if not current_url:
+                await asyncio.sleep(3)
+                if not supabase:
                     continue
 
-                # Try to re-discover backend if using localhost
-                if current_url == 'http://localhost:8000':
-                    discovered_url = discover_backend_ip()
-                    if discovered_url:
-                        set_backend_url(discovered_url)
-                        current_url = discovered_url
+                def _fetch_active():
+                    # 1. Match this assigned bus if available
+                    if ASSIGNED_BUS_ID:
+                        res = supabase.table('trips') \
+                            .select('id, bus_id, status') \
+                            .eq('bus_id', ASSIGNED_BUS_ID) \
+                            .eq('status', 'in_progress') \
+                            .order('started_at', desc=True) \
+                            .limit(1) \
+                            .execute()
+                        if res and res.data and len(res.data) > 0:
+                            return res.data[0]
 
-                # Get active trips from backend
-                trips_url = f"{current_url}/api/trips"
-                response = requests.get(trips_url, timeout=5)
+                    # 2. Otherwise look for any active trip in progress
+                    res = supabase.table('trips') \
+                        .select('id, bus_id, status') \
+                        .eq('status', 'in_progress') \
+                        .order('started_at', desc=True) \
+                        .limit(1) \
+                        .execute()
+                    if res and res.data and len(res.data) > 0:
+                        return res.data[0]
+                    return None
 
-                if response.status_code == 200:
-                    trips_data = response.json()
-                    trips = trips_data.get('trips', [])
+                active_trip = await asyncio.to_thread(_fetch_active)
 
-                    # Find the first active trip
-                    active_trip = None
-                    for trip in trips:
-                        if trip.get('status') == 'in_progress':
-                            active_trip = trip
-                            break
+                if active_trip:
+                    trip_id = active_trip['id']
+                    bus_id = active_trip.get('bus_id')
+                    if video_processor.current_trip_id != trip_id:
+                        video_processor.set_current_trip(trip_id, bus_id)
+                        if hardware_manager:
+                            hardware_manager.set_current_trip(trip_id)
+                        print(f"[Trip Poll] 🚀 Auto-detected active trip from Supabase: {trip_id} (Recording started)")
+                else:
+                    if video_processor.current_trip_id is not None:
+                        ended_id = video_processor.current_trip_id
+                        print(f"[Trip Poll] 🏁 Active trip {ended_id} concluded — finalizing recording & metadata")
+                        video_processor.clear_current_trip()
+                        if hardware_manager:
+                            hardware_manager.clear_current_trip()
 
-                    if active_trip:
-                        trip_id = active_trip['id']
-                        bus_id = active_trip.get('bus_id')
-                        # Only update if trip_id changed
-                        if video_processor.current_trip_id != trip_id:
-                            video_processor.set_current_trip(trip_id, bus_id)
-                            if hardware_manager:
-                                hardware_manager.set_current_trip(trip_id)
-                            print(f"[Trip Poll] Auto-set trip_id: {trip_id}")
-                    else:
-                        # No active trip - clear trip_id
-                        if video_processor.current_trip_id is not None:
-                            video_processor.clear_current_trip()
-                            if hardware_manager:
-                                hardware_manager.clear_current_trip()
-                            print(f"[Trip Poll] Cleared trip_id (no active trips)")
-
-            except requests.RequestException as e:
-                print(f"[Trip Poll] Failed to fetch trips from backend: {e}")
             except Exception as e:
-                print(f"[Trip Poll] Error: {e}")
+                # Silently backoff on transient network error
+                await asyncio.sleep(4)
 
-    if get_backend_url():
+    if supabase:
         asyncio.create_task(poll_active_trips())
-        print("[Trip Poll] Started automatic trip ID polling")
-    else:
-        print("[Trip Poll] Skipped — no BACKEND_URL (local ONNX mode)")
+        print("[Trip Poll] Autonomous Supabase active trip polling started (interval: 3s)")
+    elif get_backend_url():
+        async def poll_backend():
+            while True:
+                await asyncio.sleep(15)
+                # Fallback to backend URL polling if supabase not initialized
+        asyncio.create_task(poll_backend())
 
     # Stream frames to backend ONLY when COUNT_METHOD=backend (remote YOLO).
     # Local ONNX must not send frames or accept backend counts (would overwrite).
