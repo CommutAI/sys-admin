@@ -21,6 +21,7 @@ import queue
 import os
 import subprocess
 import threading
+import shutil
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from hardware_integration import HardwareManager
@@ -591,9 +592,11 @@ MAX_DET = int(os.getenv('MAX_DET', '50'))
 # Video Recording configuration
 ENABLE_VIDEO_RECORDING = os.getenv('ENABLE_VIDEO_RECORDING', 'false').lower() == 'true'
 VIDEO_STORAGE_PATH = os.getenv('VIDEO_STORAGE_PATH', './recordings')
-MAX_VIDEO_DURATION = int(os.getenv('MAX_VIDEO_DURATION', '300'))
+MAX_VIDEO_DURATION = int(os.getenv('MAX_VIDEO_DURATION', '900'))  # Default 15 minutes (900s) per segment (Option B)
 VIDEO_FORMAT = os.getenv('VIDEO_FORMAT', 'mp4')
 VIDEO_BITRATE = int(os.getenv('VIDEO_BITRATE', '1000000'))
+MIN_FREE_DISK_GB = float(os.getenv('MIN_FREE_DISK_GB', '5.0'))  # Reserve at least 5GB free on SD card
+MAX_RECORDING_DAYS = int(os.getenv('MAX_RECORDING_DAYS', '14'))  # Retain recordings up to 14 days (FIFO ring buffer)
 
 # Passenger detection classes (COCO dataset)
 PASSENGER_CLASSES = ['person']
@@ -1525,12 +1528,20 @@ class VideoProcessor:
             # Create recordings directory if it doesn't exist
             os.makedirs(VIDEO_STORAGE_PATH, exist_ok=True)
             
-            # Generate filename with timestamp
+            # Storage Guard: ensure disk has sufficient free space
+            self._check_storage_and_cleanup()
+
+            # Generate filename with timestamp (and counter if needed to avoid collision)
             timestamp = time.strftime('%Y%m%d_%H%M%S')
             trip_suffix = f"_trip_{self.current_trip_id}" if self.current_trip_id else ""
-            # Use MP4 format with mp4v codec - browser compatible
             filename = f"video_{timestamp}{trip_suffix}.mp4"
-            self.current_video_path = os.path.join(VIDEO_STORAGE_PATH, filename)
+            target_path = os.path.join(VIDEO_STORAGE_PATH, filename)
+            counter = 1
+            while os.path.exists(target_path):
+                filename = f"video_{timestamp}_{counter}{trip_suffix}.mp4"
+                target_path = os.path.join(VIDEO_STORAGE_PATH, filename)
+                counter += 1
+            self.current_video_path = target_path
 
             # Read actual camera dimensions — they may differ from requested resolution
             actual_w = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -1603,6 +1614,9 @@ class VideoProcessor:
             if video_path and os.path.exists(video_path):
                 self._transcode_to_h264_async(video_path)
 
+            # Check and maintain SD card disk storage
+            self._check_storage_and_cleanup()
+
             return {
                 'file_path': video_path,
                 'duration': duration,
@@ -1639,6 +1653,61 @@ class VideoProcessor:
                 print(f"[VideoProcessor] Error transcoding video {video_path}: {e}")
 
         threading.Thread(target=_runner, daemon=True).start()
+
+    def _check_storage_and_cleanup(self):
+        """
+        Long-Term Storage Guard:
+        1. Deletes recordings older than MAX_RECORDING_DAYS (FIFO).
+        2. Ensures at least MIN_FREE_DISK_GB remains on the SD card to prevent corruption/crashes.
+        """
+        try:
+            if not os.path.exists(VIDEO_STORAGE_PATH):
+                return
+
+            total, used, free = shutil.disk_usage(VIDEO_STORAGE_PATH)
+            free_gb = free / (1024 ** 3)
+            now = time.time()
+            max_age_secs = MAX_RECORDING_DAYS * 86400
+
+            files = [
+                os.path.join(VIDEO_STORAGE_PATH, f) for f in os.listdir(VIDEO_STORAGE_PATH)
+                if f.endswith('.mp4') and not f.endswith('.tmp.mp4')
+            ]
+            files.sort(key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0)
+
+            # Never delete the currently active recording file
+            active_path = self.current_video_path
+
+            # 1. Purge files older than MAX_RECORDING_DAYS
+            for f in list(files):
+                if f == active_path:
+                    continue
+                try:
+                    if (now - os.path.getmtime(f)) > max_age_secs:
+                        print(f"[StorageGuard] Purging recording older than {MAX_RECORDING_DAYS}d: {os.path.basename(f)}")
+                        os.remove(f)
+                        files.remove(f)
+                except Exception:
+                    pass
+
+            # 2. Free disk space safeguard (FIFO: delete oldest first)
+            total, used, free = shutil.disk_usage(VIDEO_STORAGE_PATH)
+            free_gb = free / (1024 ** 3)
+            while free_gb < MIN_FREE_DISK_GB and files:
+                oldest = files.pop(0)
+                if oldest == active_path:
+                    continue
+                try:
+                    sz_mb = os.path.getsize(oldest) / (1024 * 1024)
+                    print(f"[StorageGuard] Low disk space ({free_gb:.1f}GB < {MIN_FREE_DISK_GB}GB). Removing oldest: {os.path.basename(oldest)} ({sz_mb:.1f}MB)")
+                    os.remove(oldest)
+                except Exception:
+                    pass
+                total, used, free = shutil.disk_usage(VIDEO_STORAGE_PATH)
+                free_gb = free / (1024 ** 3)
+
+        except Exception as e:
+            print(f"[StorageGuard] Error checking storage: {e}")
 
     def _upload_to_cloudflare_stream(self, video_path, trip_id):
         """Upload video to Cloudflare Stream and return playback URL"""
@@ -1731,17 +1800,17 @@ class VideoProcessor:
                 recording_id = result.data[0].get('id')
                 print(f"[DB] Video metadata saved: id={recording_id}, trip={trip_id}, size={file_size}b, storage={data['storage_type']}")
                 
-                # Also update trips table with Cloudflare URL
-                if cloudflare_url:
+                # Also update trips table so the video is marked available for this trip
+                if trip_id:
                     trips_update = {
-                        'video_recording_url': cloudflare_url,
+                        'video_recording_url': cloudflare_url if cloudflare_url else os.path.basename(video_path),
                         'video_recording_duration': duration,
                         'video_recording_status': 'available',
                         'video_recording_file_size': file_size,
                         'video_recording_uploaded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())
                     }
                     supabase.table('trips').update(trips_update).eq('id', trip_id).execute()
-                    print(f"[DB] Updated trips table with Cloudflare URL")
+                    print(f"[DB] Updated trips table video status to available for trip {trip_id}")
                 
                 return str(recording_id) if recording_id else None
             else:
@@ -1766,10 +1835,17 @@ class VideoProcessor:
                 self.video_writer.write(frame)
                 self.recording_frame_count += 1
                 
-                # Check max duration
+                # Check max duration for Option B: Auto-segmentation
                 if self.recording_start_time and (time.time() - self.recording_start_time) >= MAX_VIDEO_DURATION:
-                    print("Max recording duration reached, stopping recording")
+                    print(f"[Recording] Segment limit reached ({MAX_VIDEO_DURATION}s). Rolling over to next segment...")
+                    ongoing_trip_id = self.current_trip_id
                     self.stop_recording()
+                    
+                    # If trip is still active, immediately start next segment
+                    if ongoing_trip_id:
+                        print(f"[Recording] Trip {ongoing_trip_id} is active — automatically starting segment rollover.")
+                        self.current_trip_id = ongoing_trip_id
+                        self.start_recording()
                     
             except Exception as e:
                 print(f"Error writing frame to video: {e}")

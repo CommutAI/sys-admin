@@ -2475,13 +2475,30 @@ const Reports = () => {
                                 {recording.status}
                               </span>
                               {recording.status === 'completed' && (
-                                <button
-                                  onClick={() => handleDownloadVideo(recording)}
-                                  className="text-blue-400 hover:text-blue-300 transition-colors"
-                                  title="Download video"
-                                >
-                                  <DownloadIcon size={16} />
-                                </button>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={async () => {
+                                      const piBase = await resolvePiUrl();
+                                      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
+                                      const url = (recording.metadata?.source === 'backend_processor')
+                                        ? `${backendUrl}/api/video-processing/download-video/${recording.file_name}`
+                                        : (piBase ? `${piBase}/download-video/${recording.file_name}` : `${backendUrl}/api/video-processing/download-video/${recording.file_name}`);
+                                      setTripVideoUrl(url);
+                                      setTripVideoStatus('available');
+                                    }}
+                                    className="p-1 rounded bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 transition-colors"
+                                    title="Play this segment"
+                                  >
+                                    <Play size={14} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDownloadVideo(recording)}
+                                    className="p-1 rounded bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors"
+                                    title="Download segment"
+                                  >
+                                    <DownloadIcon size={14} />
+                                  </button>
+                                </div>
                               )}
                             </div>
                           </div>
