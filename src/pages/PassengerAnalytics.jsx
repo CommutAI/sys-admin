@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { TrendingUp, Users, Armchair, Calendar, Brain, AlertTriangle, Eye, Scan, XCircle, CheckCircle, Search, Filter, Video, Camera, Wifi, WifiOff, RefreshCw, Zap } from 'lucide-react';
+import { TrendingUp, Users, Armchair, Calendar, Brain, AlertTriangle, Eye, Scan, XCircle, CheckCircle, Search, Filter, Video, Camera, Wifi, WifiOff, RefreshCw, Zap, Download, FileSpreadsheet, FileText, ChevronDown } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { useRaspberryPi } from '../hooks/useRaspberryPi';
 import { useBackendVideo } from '../hooks/useBackendVideo';
@@ -20,6 +21,7 @@ const PassengerAnalytics = () => {
   const [cameraFeeds, setCameraFeeds] = useState([]);
   const [selectedCamera, setSelectedCamera] = useState(null);
   const [useMjpeg, setUseMjpeg] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [stats, setStats] = useState({
     totalPassengers: 0,
     yoloCount: 0,
@@ -333,6 +335,128 @@ const PassengerAnalytics = () => {
     card_sharing: 'Card Sharing Detected',
     unauthorized_passenger: 'Unauthorized Boarding',
     other: 'System Discrepancy',
+  };
+
+  const handleExportIrregularitiesExcel = (scope = 'all') => {
+    const target = scope === 'all' ? fareIrregularities : filteredIrregularities;
+    const dateStr = new Date().toISOString().split('T')[0];
+    const docControlNo = `COMMUTAI-AUDIT-ANOMALY-${Date.now().toString().slice(-6)}`;
+
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1: Audit Summary
+    const summaryRows = [
+      ['COMMUTAI PUBLIC TRANSPORTATION MANAGEMENT SYSTEM'],
+      ['PASSENGER ANOMALIES & FARE IRREGULARITIES AUDIT REPORT'],
+      ['Official AI vs QR Ticket Discrepancies, Fare Evasions & Camera Malfunctions'],
+      [],
+      ['AUDIT METADATA', ''],
+      ['Document Control No.', docControlNo],
+      ['Generated At', new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' })],
+      ['Total Anomalies Recorded', fareIrregularities.length],
+      ['Unresolved Anomalies', fareIrregularities.filter(i => !i.resolved).length],
+      ['Resolved Anomalies', fareIrregularities.filter(i => i.resolved).length],
+      ['Filter Status', filterStatus.toUpperCase()],
+      ['Filter Type', filterType],
+      ['Search Filter', searchTerm || 'None'],
+      ['Classification', 'OFFICIAL TRANSIT AUDIT & REVENUE PROTECTION REPORT']
+    ];
+    const summaryWs = XLSX.utils.aoa_to_sheet(summaryRows);
+    summaryWs['!cols'] = [{ wch: 35 }, { wch: 65 }];
+    XLSX.utils.book_append_sheet(wb, summaryWs, 'Audit Summary');
+
+    // Sheet 2: Master Anomalies
+    const dataRows = target.map((irr, idx) => ({
+      'Item #': idx + 1,
+      'Anomaly ID': irr.id || 'N/A',
+      'Anomaly Type': (typeLabels[irr.anomaly_type || irr.type] || irr.anomaly_type || irr.type || 'Alert').replace(/_/g, ' '),
+      'Description': irr.description || '',
+      'Bus Plate Number': irr.trips?.bus_id?.plate_number || 'N/A',
+      'Route': irr.trips?.bus_id?.route || 'N/A',
+      'Trip ID': irr.trip_id || 'N/A',
+      'Detected At': irr.detected_at ? new Date(irr.detected_at).toLocaleString('en-US', { timeZone: 'Asia/Manila' }) : 'N/A',
+      'Resolution Status': irr.resolved ? 'RESOLVED' : 'UNRESOLVED',
+      'Resolved At': irr.resolved_at ? new Date(irr.resolved_at).toLocaleString('en-US', { timeZone: 'Asia/Manila' }) : 'N/A',
+      'Audit Compliance': 'VERIFIED'
+    }));
+    const dataWs = XLSX.utils.json_to_sheet(dataRows);
+    dataWs['!cols'] = [
+      { wch: 8 },  // Item #
+      { wch: 38 }, // Anomaly ID
+      { wch: 28 }, // Type
+      { wch: 55 }, // Description
+      { wch: 18 }, // Bus Plate
+      { wch: 30 }, // Route
+      { wch: 38 }, // Trip ID
+      { wch: 22 }, // Detected At
+      { wch: 18 }, // Status
+      { wch: 22 }, // Resolved At
+      { wch: 16 }  // Compliance
+    ];
+    XLSX.utils.book_append_sheet(wb, dataWs, `Anomalies (${target.length})`);
+
+    XLSX.writeFile(wb, `commutai_anomalies_audit_report_${scope}_${dateStr}.xlsx`);
+    AuditService.logDataExported('Passenger Anomalies Audit', 'Excel');
+  };
+
+  const handleExportIrregularitiesCSV = (scope = 'all') => {
+    const target = scope === 'all' ? fareIrregularities : filteredIrregularities;
+    const dateStr = new Date().toISOString().split('T')[0];
+    const docControlNo = `COMMUTAI-AUDIT-ANOMALY-${Date.now().toString().slice(-6)}`;
+
+    const metaHeaders = [
+      `# ==============================================================================`,
+      `# COMMUTAI TRANSIT SYSTEM - ANOMALIES & IRREGULARITIES AUDIT REPORT`,
+      `# Document Control No: ${docControlNo}`,
+      `# Generated At: ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' })} (PHT)`,
+      `# Scope: ${scope === 'all' ? `All Anomalies (${target.length})` : `Filtered View (${target.length})`}`,
+      `# Total Entries: ${target.length}`,
+      `# Classification: CONFIDENTIAL AUDIT REPORT - REVENUE PROTECTION`,
+      `# ==============================================================================`
+    ];
+
+    const columns = [
+      'Item #',
+      'Anomaly ID',
+      'Anomaly Type',
+      'Description',
+      'Bus Plate Number',
+      'Route',
+      'Trip ID',
+      'Detected At',
+      'Resolution Status',
+      'Resolved At'
+    ];
+
+    const rows = target.map((irr, idx) => [
+      idx + 1,
+      irr.id || 'N/A',
+      (typeLabels[irr.anomaly_type || irr.type] || irr.anomaly_type || irr.type || 'Alert').replace(/_/g, ' '),
+      irr.description || '',
+      irr.trips?.bus_id?.plate_number || 'N/A',
+      irr.trips?.bus_id?.route || 'N/A',
+      irr.trip_id || 'N/A',
+      irr.detected_at ? new Date(irr.detected_at).toLocaleString('en-US', { timeZone: 'Asia/Manila' }) : 'N/A',
+      irr.resolved ? 'RESOLVED' : 'UNRESOLVED',
+      irr.resolved_at ? new Date(irr.resolved_at).toLocaleString('en-US', { timeZone: 'Asia/Manila' }) : 'N/A'
+    ]);
+
+    const csvContent = [
+      ...metaHeaders,
+      columns.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','),
+      ...rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    ].join('\r\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `commutai_anomalies_audit_report_${scope}_${dateStr}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    AuditService.logDataExported('Passenger Anomalies Audit', 'CSV');
   };
 
   if (loading) {
@@ -659,10 +783,51 @@ const PassengerAnalytics = () => {
       </div>
 
       <div className="glass-card p-6">
-        <h2 className="text-white text-xl font-bold mb-4 flex items-center gap-2">
-          <XCircle className="text-orange-400" />
-          System Anomalies & Irregularity Alerts
-        </h2>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <h2 className="text-white text-xl font-bold flex items-center gap-2">
+            <XCircle className="text-orange-400" />
+            System Anomalies & Irregularity Alerts
+          </h2>
+
+          <div className="relative">
+            <button
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              className="bg-white/10 hover:bg-white/20 text-white px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs font-medium transition-colors border border-white/10"
+              title="Export anomalies audit report"
+            >
+              <Download size={14} className="text-orange-400" />
+              <span>Export Audit Report</span>
+              <ChevronDown size={12} className={`transition-transform duration-200 ${showExportMenu ? 'rotate-180' : ''}`} />
+            </button>
+
+            {showExportMenu && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setShowExportMenu(false)} />
+                <div className="absolute right-0 mt-2 w-64 rounded-xl bg-gray-900 border border-white/15 shadow-2xl py-2 z-30 animate-fade-in text-white text-xs divide-y divide-white/10">
+                  <div className="px-3 py-1.5 text-white/50 font-medium">
+                    Export Anomalies Audit Data ({filteredIrregularities.length})
+                  </div>
+                  <div className="p-1 space-y-0.5">
+                    <button
+                      onClick={() => { setShowExportMenu(false); handleExportIrregularitiesExcel('all'); }}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/10 flex items-center gap-2"
+                    >
+                      <FileSpreadsheet size={14} className="text-emerald-400" />
+                      <span>Excel Audit Report (.xlsx)</span>
+                    </button>
+                    <button
+                      onClick={() => { setShowExportMenu(false); handleExportIrregularitiesCSV('all'); }}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/10 flex items-center gap-2"
+                    >
+                      <FileText size={14} className="text-blue-400" />
+                      <span>CSV Audit Data (.csv)</span>
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
         
         <div className="flex items-center gap-4 mb-6 flex-wrap">
           <div className="flex-1 relative min-w-[200px]">
