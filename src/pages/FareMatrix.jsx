@@ -2,8 +2,9 @@ import { useState, useEffect, useMemo } from 'react';
 import { 
   DollarSign, Plus, Edit, X, ChevronLeft, ChevronRight, 
   Search, ArrowUpDown, ArrowRight, ArrowRightLeft, RefreshCw,
-  Route, CheckCircle2, SlidersHorizontal
+  Route, CheckCircle2, SlidersHorizontal, Download, ChevronDown, FileSpreadsheet
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import AuditService from '../services/auditService';
 
@@ -59,6 +60,7 @@ const FareMatrix = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortColumn, setSortColumn] = useState('default');
   const [sortDirection, setSortDirection] = useState('asc');
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [newFare, setNewFare] = useState({
     route_from: '',
     route_to: '',
@@ -289,6 +291,91 @@ const FareMatrix = () => {
     }
   };
 
+  const handleExportCSV = async () => {
+    try {
+      const headers = ['Direction', 'Stop From', 'Stop To', 'Distance (KM)', 'Regular Fare (PHP)', 'Discounted Fare (PHP)'];
+      const rows = filteredFares.map(f => {
+        const dir = getRouteDirection(f.route_from, f.route_to);
+        const dirLabel = dir === 'manolo-to-agora' 
+          ? 'Manolo Fortich -> Agora Terminal' 
+          : dir === 'agora-to-manolo' 
+          ? 'Agora Terminal -> Manolo Fortich' 
+          : 'Other';
+        return [
+          dirLabel,
+          f.route_from || '',
+          f.route_to || '',
+          f.km_distance !== null && f.km_distance !== undefined && f.km_distance !== '' ? f.km_distance : '',
+          parseFloat(f.regular_fare || 0).toFixed(2),
+          parseFloat(f.discounted_fare || 0).toFixed(2)
+        ];
+      });
+
+      const csvContent = [headers, ...rows]
+        .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+        .join('\r\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const dateStr = new Date().toISOString().split('T')[0];
+      const routeSlug = selectedRoute === 'manolo-to-agora' 
+        ? 'manolo_to_agora' 
+        : selectedRoute === 'agora-to-manolo' 
+        ? 'agora_to_manolo' 
+        : 'all_routes';
+      link.href = url;
+      link.download = `fare_matrix_${routeSlug}_${dateStr}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      await AuditService.logDataExported('Fare Matrix', 'CSV');
+    } catch (err) {
+      console.error('Error exporting fare matrix to CSV:', err);
+      alert('Error exporting CSV: ' + err.message);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      const rows = filteredFares.map(f => {
+        const dir = getRouteDirection(f.route_from, f.route_to);
+        const dirLabel = dir === 'manolo-to-agora' 
+          ? 'Manolo Fortich -> Agora Terminal' 
+          : dir === 'agora-to-manolo' 
+          ? 'Agora Terminal -> Manolo Fortich' 
+          : 'Other';
+        return {
+          'Direction': dirLabel,
+          'Stop From': f.route_from || '',
+          'Stop To': f.route_to || '',
+          'Distance (KM)': f.km_distance !== null && f.km_distance !== undefined && f.km_distance !== '' ? Number(f.km_distance) : '',
+          'Regular Fare (₱)': Number(f.regular_fare || 0),
+          'Discounted Fare (₱)': Number(f.discounted_fare || 0)
+        };
+      });
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Fare Matrix');
+
+      const dateStr = new Date().toISOString().split('T')[0];
+      const routeSlug = selectedRoute === 'manolo-to-agora' 
+        ? 'manolo_to_agora' 
+        : selectedRoute === 'agora-to-manolo' 
+        ? 'agora_to_manolo' 
+        : 'all_routes';
+      XLSX.writeFile(wb, `fare_matrix_${routeSlug}_${dateStr}.xlsx`);
+
+      await AuditService.logDataExported('Fare Matrix', 'Excel');
+    } catch (err) {
+      console.error('Error exporting fare matrix to Excel:', err);
+      alert('Error exporting Excel: ' + err.message);
+    }
+  };
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -318,6 +405,53 @@ const FareMatrix = () => {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Export Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              className="bg-white/5 hover:bg-white/10 text-white/90 hover:text-white border border-white/15 px-4 py-2.5 rounded-xl flex items-center gap-2 font-medium transition-all shadow-sm"
+              title="Export fare matrix"
+            >
+              <Download size={18} className="text-orange-400" />
+              <span>Export</span>
+              <ChevronDown size={14} className={`transition-transform duration-200 ${showExportMenu ? 'rotate-180' : ''}`} />
+            </button>
+
+            {showExportMenu && (
+              <>
+                <div 
+                  className="fixed inset-0 z-20" 
+                  onClick={() => setShowExportMenu(false)} 
+                />
+                <div className="absolute right-0 mt-2 w-52 rounded-xl bg-gray-900 border border-white/15 shadow-2xl py-1.5 z-30 animate-fade-in">
+                  <div className="px-3 py-1.5 border-b border-white/10 text-xs text-white/50 font-medium">
+                    Export {filteredFares.length} pairs ({selectedRoute === 'all' ? 'All Routes' : selectedRoute === 'manolo-to-agora' ? 'Manolo ➔ Agora' : 'Agora ➔ Manolo'})
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowExportMenu(false);
+                      handleExportCSV();
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:text-white hover:bg-white/10 flex items-center gap-2.5 transition-colors"
+                  >
+                    <FileSpreadsheet size={16} className="text-emerald-400" />
+                    <span>Export CSV (.csv)</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowExportMenu(false);
+                      handleExportExcel();
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:text-white hover:bg-white/10 flex items-center gap-2.5 transition-colors"
+                  >
+                    <FileSpreadsheet size={16} className="text-green-400" />
+                    <span>Export Excel (.xlsx)</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
           <button
             onClick={handleRefresh}
             disabled={refreshing}
