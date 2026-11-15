@@ -44,6 +44,13 @@ const Reports = () => {
   const [tripVideoStatus, setTripVideoStatus] = useState(null);
   const [tripVideoRecordings, setTripVideoRecordings] = useState([]);
 
+  // Modal pagination states
+  const [modalVideoPage, setModalVideoPage] = useState(1);
+  const [modalTxPage, setModalTxPage] = useState(1);
+  const [modalAnomaliesPage, setModalAnomaliesPage] = useState(1);
+  const [modalIrregularitiesPage, setModalIrregularitiesPage] = useState(1);
+  const [modalAlertsPage, setModalAlertsPage] = useState(1);
+
   // Transaction state
   const [transactions, setTransactions] = useState([]);
   const [transactionSearchTerm, setTransactionSearchTerm] = useState('');
@@ -531,6 +538,11 @@ const Reports = () => {
     setTripVideoUrl(null);
     setTripVideoStatus(null);
     setTripVideoRecordings([]);
+    setModalVideoPage(1);
+    setModalTxPage(1);
+    setModalAnomaliesPage(1);
+    setModalIrregularitiesPage(1);
+    setModalAlertsPage(1);
 
     try {
       // Fetch transactions for this trip
@@ -2570,6 +2582,11 @@ const Reports = () => {
                 onClick={() => {
                   setShowTripDetailModal(false);
                   setSelectedTrip(null);
+                  setModalVideoPage(1);
+                  setModalTxPage(1);
+                  setModalAnomaliesPage(1);
+                  setModalIrregularitiesPage(1);
+                  setModalAlertsPage(1);
                 }}
                 className="text-white/60 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/10 ml-1"
                 title="Close"
@@ -2660,67 +2677,99 @@ const Reports = () => {
                   </div>
 
                   {tripVideoRecordings.length > 0 ? (
-                    <div className="space-y-2.5 overflow-y-auto max-h-[300px] pr-1">
-                      {tripVideoRecordings.map((recording) => (
-                        <div key={recording.id} className="bg-white/5 hover:bg-white/[0.08] transition-colors p-3 rounded-lg border border-white/5">
-                          <div className="flex justify-between items-start mb-2">
-                            <div className="flex-1 pr-2">
-                              <p className="text-white font-medium text-xs truncate" title={recording.file_name}>{recording.file_name}</p>
-                              <p className="text-white/40 text-[11px] capitalize">{recording.storage_type} storage</p>
+                    <>
+                      <div className="space-y-2.5 overflow-y-auto max-h-[300px] pr-1">
+                        {tripVideoRecordings.slice((modalVideoPage - 1) * 3, modalVideoPage * 3).map((recording) => (
+                          <div key={recording.id} className="bg-white/5 hover:bg-white/[0.08] transition-colors p-3 rounded-lg border border-white/5">
+                            <div className="flex justify-between items-start mb-2">
+                              <div className="flex-1 pr-2">
+                                <p className="text-white font-medium text-xs truncate" title={recording.file_name}>{recording.file_name}</p>
+                                <p className="text-white/40 text-[11px] capitalize">{recording.storage_type} storage</p>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className={`text-[11px] px-2 py-0.5 rounded ${
+                                  recording.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                                  recording.status === 'recording' ? 'bg-yellow-500/20 text-yellow-400' :
+                                  'bg-red-500/20 text-red-400'
+                                }`}>
+                                  {recording.status}
+                                </span>
+                                {recording.status === 'completed' && (
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={async () => {
+                                        const piBase = await resolvePiUrl();
+                                        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
+                                        const url = (recording.metadata?.source === 'backend_processor')
+                                          ? `${backendUrl}/api/video-processing/download-video/${recording.file_name}`
+                                          : (piBase ? `${piBase}/download-video/${recording.file_name}` : `${backendUrl}/api/video-processing/download-video/${recording.file_name}`);
+                                        setTripVideoUrl(url);
+                                        setTripVideoStatus('available');
+                                      }}
+                                      className="p-1 rounded bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 transition-colors"
+                                      title="Play this segment"
+                                    >
+                                      <Play size={13} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDownloadVideo(recording)}
+                                      className="p-1 rounded bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors"
+                                      title="Download segment"
+                                    >
+                                      <DownloadIcon size={13} />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <span className={`text-[11px] px-2 py-0.5 rounded ${
-                                recording.status === 'completed' ? 'bg-green-500/20 text-green-400' :
-                                recording.status === 'recording' ? 'bg-yellow-500/20 text-yellow-400' :
-                                'bg-red-500/20 text-red-400'
-                              }`}>
-                                {recording.status}
-                              </span>
-                              {recording.status === 'completed' && (
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    onClick={async () => {
-                                      const piBase = await resolvePiUrl();
-                                      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
-                                      const url = (recording.metadata?.source === 'backend_processor')
-                                        ? `${backendUrl}/api/video-processing/download-video/${recording.file_name}`
-                                        : (piBase ? `${piBase}/download-video/${recording.file_name}` : `${backendUrl}/api/video-processing/download-video/${recording.file_name}`);
-                                      setTripVideoUrl(url);
-                                      setTripVideoStatus('available');
-                                    }}
-                                    className="p-1 rounded bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 transition-colors"
-                                    title="Play this segment"
-                                  >
-                                    <Play size={13} />
-                                  </button>
-                                  <button
-                                    onClick={() => handleDownloadVideo(recording)}
-                                    className="p-1 rounded bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors"
-                                    title="Download segment"
-                                  >
-                                    <DownloadIcon size={13} />
-                                  </button>
-                                </div>
-                              )}
+                            <div className="grid grid-cols-3 gap-2 text-[11px]">
+                              <div>
+                                <p className="text-white/40">Duration</p>
+                                <p className="text-white">{recording.duration ? `${Math.floor(recording.duration / 60)}m ${recording.duration % 60}s` : 'N/A'}</p>
+                              </div>
+                              <div>
+                                <p className="text-white/40">Size</p>
+                                <p className="text-white">{recording.file_size ? `${(recording.file_size / (1024 * 1024)).toFixed(2)} MB` : 'N/A'}</p>
+                              </div>
+                              <div>
+                                <p className="text-white/40">Format</p>
+                                <p className="text-white">{recording.format || 'mp4'}</p>
+                              </div>
                             </div>
                           </div>
-                          <div className="grid grid-cols-3 gap-2 text-[11px]">
-                            <div>
-                              <p className="text-white/40">Duration</p>
-                              <p className="text-white">{recording.duration ? `${Math.floor(recording.duration / 60)}m ${recording.duration % 60}s` : 'N/A'}</p>
-                            </div>
-                            <div>
-                              <p className="text-white/40">Size</p>
-                              <p className="text-white">{recording.file_size ? `${(recording.file_size / (1024 * 1024)).toFixed(2)} MB` : 'N/A'}</p>
-                            </div>
-                            <div>
-                              <p className="text-white/40">Format</p>
-                              <p className="text-white">{recording.format || 'mp4'}</p>
-                            </div>
+                        ))}
+                      </div>
+
+                      {/* Video Segments Pagination */}
+                      {Math.ceil(tripVideoRecordings.length / 3) > 1 && (
+                        <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-white/10 text-xs">
+                          <span className="text-white/40 text-[11px]">
+                            Showing {((modalVideoPage - 1) * 3) + 1}–{Math.min(modalVideoPage * 3, tripVideoRecordings.length)} of {tripVideoRecordings.length}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => setModalVideoPage(p => Math.max(p - 1, 1))}
+                              disabled={modalVideoPage === 1}
+                              className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                              title="Previous"
+                            >
+                              <ChevronLeft size={14} />
+                            </button>
+                            <span className="px-2 py-0.5 rounded bg-white/5 text-white/70 font-mono text-[11px]">
+                              {modalVideoPage} / {Math.ceil(tripVideoRecordings.length / 3)}
+                            </span>
+                            <button
+                              onClick={() => setModalVideoPage(p => Math.min(p + 1, Math.ceil(tripVideoRecordings.length / 3)))}
+                              disabled={modalVideoPage === Math.ceil(tripVideoRecordings.length / 3)}
+                              className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                              title="Next"
+                            >
+                              <ChevronRight size={14} />
+                            </button>
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      )}
+                    </>
                   ) : (
                     <div className="flex-1 flex flex-col items-center justify-center py-8 text-center text-white/40">
                       <Activity size={28} className="text-white/20 mb-2" />
@@ -2821,28 +2870,56 @@ const Reports = () => {
                       <ArrowLeftRight className="text-blue-400" size={16} />
                       Transactions ({tripTransactions.length})
                     </h3>
-                    <div className="space-y-2 max-h-48 overflow-y-auto">
-                      {tripTransactions.slice(0, 10).map((transaction) => (
-                        <div key={transaction.id} className="bg-white/5 p-2.5 rounded-lg">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <p className="text-white font-medium text-xs">{transaction.type}</p>
-                              <p className="text-white/40 text-[11px]">{transaction.channel}</p>
+                    {tripTransactions.length > 0 ? (
+                      <>
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {tripTransactions.slice((modalTxPage - 1) * 5, modalTxPage * 5).map((transaction) => (
+                            <div key={transaction.id} className="bg-white/5 p-2.5 rounded-lg">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <p className="text-white font-medium text-xs">{transaction.type}</p>
+                                  <p className="text-white/40 text-[11px]">{transaction.channel}</p>
+                                </div>
+                                <p className="text-white font-bold text-sm">₱{transaction.amount?.toFixed(2)}</p>
+                              </div>
+                              <p className="text-white/40 text-[11px] mt-1">{new Date(transaction.created_at).toLocaleString()}</p>
                             </div>
-                            <p className="text-white font-bold text-sm">₱{transaction.amount?.toFixed(2)}</p>
-                          </div>
-                          <p className="text-white/40 text-[11px] mt-1">{new Date(transaction.created_at).toLocaleString()}</p>
+                          ))}
                         </div>
-                      ))}
-                      {tripTransactions.length === 0 && (
-                        <p className="text-white/40 text-xs text-center py-3">No transactions recorded for this trip</p>
-                      )}
-                      {tripTransactions.length > 10 && (
-                        <p className="text-white/40 text-[11px] text-center pt-1">
-                          Showing 10 of {tripTransactions.length} transactions
-                        </p>
-                      )}
-                    </div>
+
+                        {/* Transactions Pagination */}
+                        {Math.ceil(tripTransactions.length / 5) > 1 && (
+                          <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-white/10 text-xs">
+                            <span className="text-white/40 text-[11px]">
+                              Showing {((modalTxPage - 1) * 5) + 1}–{Math.min(modalTxPage * 5, tripTransactions.length)} of {tripTransactions.length}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => setModalTxPage(p => Math.max(p - 1, 1))}
+                                disabled={modalTxPage === 1}
+                                className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                title="Previous"
+                              >
+                                <ChevronLeft size={14} />
+                              </button>
+                              <span className="px-2 py-0.5 rounded bg-white/5 text-white/70 font-mono text-[11px]">
+                                {modalTxPage} / {Math.ceil(tripTransactions.length / 5)}
+                              </span>
+                              <button
+                                onClick={() => setModalTxPage(p => Math.min(p + 1, Math.ceil(tripTransactions.length / 5)))}
+                                disabled={modalTxPage === Math.ceil(tripTransactions.length / 5)}
+                                className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                title="Next"
+                              >
+                                <ChevronRight size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-white/40 text-xs text-center py-3">No transactions recorded for this trip</p>
+                    )}
                   </div>
                 </div>
 
@@ -2860,26 +2937,58 @@ const Reports = () => {
                       Anomalies ({tripAnomalies.length})
                     </h3>
                     {tripAnomalies.length > 0 ? (
-                      <div className="space-y-2 max-h-40 overflow-y-auto">
-                        {tripAnomalies.map((anomaly) => (
-                          <div key={anomaly.id} className="bg-white/5 p-3 rounded-lg">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <p className="text-white font-medium text-sm">{anomaly.anomaly_type}</p>
-                                <p className="text-white/40 text-xs">{anomaly.description}</p>
+                      <>
+                        <div className="space-y-2 max-h-40 overflow-y-auto">
+                          {tripAnomalies.slice((modalAnomaliesPage - 1) * 3, modalAnomaliesPage * 3).map((anomaly) => (
+                            <div key={anomaly.id} className="bg-white/5 p-3 rounded-lg">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <p className="text-white font-medium text-sm">{anomaly.anomaly_type}</p>
+                                  <p className="text-white/40 text-xs">{anomaly.description}</p>
+                                </div>
+                                <span className={`text-xs px-2 py-1 rounded ${
+                                  anomaly.severity === 'high' ? 'bg-red-500/20 text-red-400' :
+                                  anomaly.severity === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
+                                  'bg-blue-500/20 text-blue-400'
+                                }`}>
+                                  {anomaly.severity}
+                                </span>
                               </div>
-                              <span className={`text-xs px-2 py-1 rounded ${
-                                anomaly.severity === 'high' ? 'bg-red-500/20 text-red-400' :
-                                anomaly.severity === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
-                                'bg-blue-500/20 text-blue-400'
-                              }`}>
-                                {anomaly.severity}
-                              </span>
+                              <p className="text-white/40 text-xs mt-1">{new Date(anomaly.detected_at).toLocaleString()}</p>
                             </div>
-                            <p className="text-white/40 text-xs mt-1">{new Date(anomaly.detected_at).toLocaleString()}</p>
+                          ))}
+                        </div>
+
+                        {/* Anomalies Pagination */}
+                        {Math.ceil(tripAnomalies.length / 3) > 1 && (
+                          <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-white/10 text-xs">
+                            <span className="text-white/40 text-[11px]">
+                              Showing {((modalAnomaliesPage - 1) * 3) + 1}–{Math.min(modalAnomaliesPage * 3, tripAnomalies.length)} of {tripAnomalies.length}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => setModalAnomaliesPage(p => Math.max(p - 1, 1))}
+                                disabled={modalAnomaliesPage === 1}
+                                className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                title="Previous"
+                              >
+                                <ChevronLeft size={14} />
+                              </button>
+                              <span className="px-2 py-0.5 rounded bg-white/5 text-white/70 font-mono text-[11px]">
+                                {modalAnomaliesPage} / {Math.ceil(tripAnomalies.length / 3)}
+                              </span>
+                              <button
+                                onClick={() => setModalAnomaliesPage(p => Math.min(p + 1, Math.ceil(tripAnomalies.length / 3)))}
+                                disabled={modalAnomaliesPage === Math.ceil(tripAnomalies.length / 3)}
+                                className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                title="Next"
+                              >
+                                <ChevronRight size={14} />
+                              </button>
+                            </div>
                           </div>
-                        ))}
-                      </div>
+                        )}
+                      </>
                     ) : (
                       <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg flex items-center gap-2 text-emerald-400 text-xs">
                         <CheckCircle size={14} />
@@ -2895,24 +3004,56 @@ const Reports = () => {
                       Irregularities ({tripIrregularities.length})
                     </h3>
                     {tripIrregularities.length > 0 ? (
-                      <div className="space-y-2 max-h-40 overflow-y-auto">
-                        {tripIrregularities.map((irregularity) => (
-                          <div key={irregularity.id} className="bg-white/5 p-3 rounded-lg">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <p className="text-white font-medium text-sm">{irregularity.type}</p>
-                                <p className="text-white/40 text-xs">{irregularity.description}</p>
+                      <>
+                        <div className="space-y-2 max-h-40 overflow-y-auto">
+                          {tripIrregularities.slice((modalIrregularitiesPage - 1) * 3, modalIrregularitiesPage * 3).map((irregularity) => (
+                            <div key={irregularity.id} className="bg-white/5 p-3 rounded-lg">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <p className="text-white font-medium text-sm">{irregularity.type}</p>
+                                  <p className="text-white/40 text-xs">{irregularity.description}</p>
+                                </div>
+                                <span className={`text-xs px-2 py-1 rounded ${
+                                  irregularity.resolved ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                                }`}>
+                                  {irregularity.resolved ? 'Resolved' : 'Open'}
+                                </span>
                               </div>
-                              <span className={`text-xs px-2 py-1 rounded ${
-                                irregularity.resolved ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                              }`}>
-                                {irregularity.resolved ? 'Resolved' : 'Open'}
-                              </span>
+                              <p className="text-white/40 text-xs mt-1">{new Date(irregularity.detected_at).toLocaleString()}</p>
                             </div>
-                            <p className="text-white/40 text-xs mt-1">{new Date(irregularity.detected_at).toLocaleString()}</p>
+                          ))}
+                        </div>
+
+                        {/* Irregularities Pagination */}
+                        {Math.ceil(tripIrregularities.length / 3) > 1 && (
+                          <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-white/10 text-xs">
+                            <span className="text-white/40 text-[11px]">
+                              Showing {((modalIrregularitiesPage - 1) * 3) + 1}–{Math.min(modalIrregularitiesPage * 3, tripIrregularities.length)} of {tripIrregularities.length}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => setModalIrregularitiesPage(p => Math.max(p - 1, 1))}
+                                disabled={modalIrregularitiesPage === 1}
+                                className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                title="Previous"
+                              >
+                                <ChevronLeft size={14} />
+                              </button>
+                              <span className="px-2 py-0.5 rounded bg-white/5 text-white/70 font-mono text-[11px]">
+                                {modalIrregularitiesPage} / {Math.ceil(tripIrregularities.length / 3)}
+                              </span>
+                              <button
+                                onClick={() => setModalIrregularitiesPage(p => Math.min(p + 1, Math.ceil(tripIrregularities.length / 3)))}
+                                disabled={modalIrregularitiesPage === Math.ceil(tripIrregularities.length / 3)}
+                                className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                title="Next"
+                              >
+                                <ChevronRight size={14} />
+                              </button>
+                            </div>
                           </div>
-                        ))}
-                      </div>
+                        )}
+                      </>
                     ) : (
                       <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg flex items-center gap-2 text-emerald-400 text-xs">
                         <CheckCircle size={14} />
@@ -2928,26 +3069,58 @@ const Reports = () => {
                       Emergency Alerts ({tripEmergencyAlerts.length})
                     </h3>
                     {tripEmergencyAlerts.length > 0 ? (
-                      <div className="space-y-2 max-h-40 overflow-y-auto">
-                        {tripEmergencyAlerts.map((alert) => (
-                          <div key={alert.id} className="bg-red-500/10 border border-red-500/30 p-3 rounded-lg">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <p className="text-white font-medium text-sm">{alert.alert_type}</p>
-                                <p className="text-white/40 text-xs">{alert.description}</p>
+                      <>
+                        <div className="space-y-2 max-h-40 overflow-y-auto">
+                          {tripEmergencyAlerts.slice((modalAlertsPage - 1) * 3, modalAlertsPage * 3).map((alert) => (
+                            <div key={alert.id} className="bg-red-500/10 border border-red-500/30 p-3 rounded-lg">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <p className="text-white font-medium text-sm">{alert.alert_type}</p>
+                                  <p className="text-white/40 text-xs">{alert.description}</p>
+                                </div>
+                                <span className={`text-xs px-2 py-1 rounded ${
+                                  alert.status === 'resolved' ? 'bg-green-500/20 text-green-400' :
+                                  alert.status === 'acknowledged' ? 'bg-yellow-500/20 text-yellow-400' :
+                                  'bg-red-500/20 text-red-400'
+                                }`}>
+                                  {alert.status}
+                                </span>
                               </div>
-                              <span className={`text-xs px-2 py-1 rounded ${
-                                alert.status === 'resolved' ? 'bg-green-500/20 text-green-400' :
-                                alert.status === 'acknowledged' ? 'bg-yellow-500/20 text-yellow-400' :
-                                'bg-red-500/20 text-red-400'
-                              }`}>
-                                {alert.status}
-                              </span>
+                              <p className="text-white/40 text-xs mt-1">{new Date(alert.created_at).toLocaleString()}</p>
                             </div>
-                            <p className="text-white/40 text-xs mt-1">{new Date(alert.created_at).toLocaleString()}</p>
+                          ))}
+                        </div>
+
+                        {/* Emergency Alerts Pagination */}
+                        {Math.ceil(tripEmergencyAlerts.length / 3) > 1 && (
+                          <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-white/10 text-xs">
+                            <span className="text-white/40 text-[11px]">
+                              Showing {((modalAlertsPage - 1) * 3) + 1}–{Math.min(modalAlertsPage * 3, tripEmergencyAlerts.length)} of {tripEmergencyAlerts.length}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => setModalAlertsPage(p => Math.max(p - 1, 1))}
+                                disabled={modalAlertsPage === 1}
+                                className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                title="Previous"
+                              >
+                                <ChevronLeft size={14} />
+                              </button>
+                              <span className="px-2 py-0.5 rounded bg-white/5 text-white/70 font-mono text-[11px]">
+                                {modalAlertsPage} / {Math.ceil(tripEmergencyAlerts.length / 3)}
+                              </span>
+                              <button
+                                onClick={() => setModalAlertsPage(p => Math.min(p + 1, Math.ceil(tripEmergencyAlerts.length / 3)))}
+                                disabled={modalAlertsPage === Math.ceil(tripEmergencyAlerts.length / 3)}
+                                className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                title="Next"
+                              >
+                                <ChevronRight size={14} />
+                              </button>
+                            </div>
                           </div>
-                        ))}
-                      </div>
+                        )}
+                      </>
                     ) : (
                       <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg flex items-center gap-2 text-emerald-400 text-xs">
                         <CheckCircle size={14} />

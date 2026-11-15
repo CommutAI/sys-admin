@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft, Download, CheckCircle, Activity, AlertTriangle, Download as DownloadIcon, Play, FileText } from 'lucide-react';
+import { Search, Trash2, Filter, Calendar, Clock, User, StopCircle, Bus, MapPin, X, Plus, Edit, Wrench, BarChart3, TrendingUp, Users, ArrowLeft, Download, CheckCircle, Activity, AlertTriangle, Download as DownloadIcon, Play, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -25,6 +25,12 @@ const TripManagement = ({ userRole }) => {
   const [tripVideoUrl, setTripVideoUrl] = useState(null);
   const [tripVideoStatus, setTripVideoStatus] = useState(null);
   const [tripVideoRecordings, setTripVideoRecordings] = useState([]);
+
+  // Modal pagination states
+  const [modalVideoPage, setModalVideoPage] = useState(1);
+  const [modalTxPage, setModalTxPage] = useState(1);
+  const [modalAnomaliesPage, setModalAnomaliesPage] = useState(1);
+  const [modalIrregularitiesPage, setModalIrregularitiesPage] = useState(1);
 
   const handleDownloadVideo = async (recording) => {
     try {
@@ -464,6 +470,10 @@ const TripManagement = ({ userRole }) => {
     setTripVideoUrl(null);
     setTripVideoStatus(null);
     setTripVideoRecordings([]);
+    setModalVideoPage(1);
+    setModalTxPage(1);
+    setModalAnomaliesPage(1);
+    setModalIrregularitiesPage(1);
 
     try {
       // Fetch transactions for this trip
@@ -1729,6 +1739,10 @@ const TripManagement = ({ userRole }) => {
                     setTripAnomalies([]);
                     setTripVideoUrl(null);
                     setTripVideoStatus(null);
+                    setModalVideoPage(1);
+                    setModalTxPage(1);
+                    setModalAnomaliesPage(1);
+                    setModalIrregularitiesPage(1);
                   }}
                   className="text-white/60 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/10 ml-1"
                   title="Close"
@@ -1844,67 +1858,99 @@ const TripManagement = ({ userRole }) => {
                     </div>
 
                     {tripVideoRecordings.length > 0 ? (
-                      <div className="space-y-2.5 overflow-y-auto max-h-[300px] pr-1">
-                        {tripVideoRecordings.map((recording) => (
-                          <div key={recording.id} className="bg-white/5 hover:bg-white/[0.08] transition-colors p-3 rounded-lg border border-white/5">
-                            <div className="flex justify-between items-start mb-2">
-                              <div className="flex-1 pr-2">
-                                <p className="text-white font-medium text-xs truncate" title={recording.file_name}>{recording.file_name}</p>
-                                <p className="text-white/40 text-[11px] capitalize">{recording.storage_type} storage</p>
+                      <>
+                        <div className="space-y-2.5 overflow-y-auto max-h-[300px] pr-1">
+                          {tripVideoRecordings.slice((modalVideoPage - 1) * 3, modalVideoPage * 3).map((recording) => (
+                            <div key={recording.id} className="bg-white/5 hover:bg-white/[0.08] transition-colors p-3 rounded-lg border border-white/5">
+                              <div className="flex justify-between items-start mb-2">
+                                <div className="flex-1 pr-2">
+                                  <p className="text-white font-medium text-xs truncate" title={recording.file_name}>{recording.file_name}</p>
+                                  <p className="text-white/40 text-[11px] capitalize">{recording.storage_type} storage</p>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className={`text-[11px] px-2 py-0.5 rounded ${
+                                    recording.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                                    recording.status === 'recording' ? 'bg-yellow-500/20 text-yellow-400' :
+                                    'bg-red-500/20 text-red-400'
+                                  }`}>
+                                    {recording.status}
+                                  </span>
+                                  {recording.status === 'completed' && (
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        onClick={async () => {
+                                          const piBase = await resolvePiUrl();
+                                          const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
+                                          const url = (recording.metadata?.source === 'backend_processor')
+                                            ? `${backendUrl}/api/video-processing/download-video/${recording.file_name}`
+                                            : (piBase ? `${piBase}/download-video/${recording.file_name}` : `${backendUrl}/api/video-processing/download-video/${recording.file_name}`);
+                                          setTripVideoUrl(url);
+                                          setTripVideoStatus('available');
+                                        }}
+                                        className="p-1 rounded bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 transition-colors"
+                                        title="Play this segment"
+                                      >
+                                        <Play size={13} />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDownloadVideo(recording)}
+                                        className="p-1 rounded bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors"
+                                        title="Download segment"
+                                      >
+                                        <DownloadIcon size={13} />
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <span className={`text-[11px] px-2 py-0.5 rounded ${
-                                  recording.status === 'completed' ? 'bg-green-500/20 text-green-400' :
-                                  recording.status === 'recording' ? 'bg-yellow-500/20 text-yellow-400' :
-                                  'bg-red-500/20 text-red-400'
-                                }`}>
-                                  {recording.status}
-                                </span>
-                                {recording.status === 'completed' && (
-                                  <div className="flex items-center gap-1">
-                                    <button
-                                      onClick={async () => {
-                                        const piBase = await resolvePiUrl();
-                                        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
-                                        const url = (recording.metadata?.source === 'backend_processor')
-                                          ? `${backendUrl}/api/video-processing/download-video/${recording.file_name}`
-                                          : (piBase ? `${piBase}/download-video/${recording.file_name}` : `${backendUrl}/api/video-processing/download-video/${recording.file_name}`);
-                                        setTripVideoUrl(url);
-                                        setTripVideoStatus('available');
-                                      }}
-                                      className="p-1 rounded bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 transition-colors"
-                                      title="Play this segment"
-                                    >
-                                      <Play size={13} />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDownloadVideo(recording)}
-                                      className="p-1 rounded bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors"
-                                      title="Download segment"
-                                    >
-                                      <DownloadIcon size={13} />
-                                    </button>
-                                  </div>
-                                )}
+                              <div className="grid grid-cols-3 gap-2 text-[11px]">
+                                <div>
+                                  <p className="text-white/40">Duration</p>
+                                  <p className="text-white">{recording.duration ? `${Math.floor(recording.duration / 60)}m ${recording.duration % 60}s` : 'N/A'}</p>
+                                </div>
+                                <div>
+                                  <p className="text-white/40">Size</p>
+                                  <p className="text-white">{recording.file_size ? `${(recording.file_size / (1024 * 1024)).toFixed(2)} MB` : 'N/A'}</p>
+                                </div>
+                                <div>
+                                  <p className="text-white/40">Format</p>
+                                  <p className="text-white">{recording.format || 'mp4'}</p>
+                                </div>
                               </div>
                             </div>
-                            <div className="grid grid-cols-3 gap-2 text-[11px]">
-                              <div>
-                                <p className="text-white/40">Duration</p>
-                                <p className="text-white">{recording.duration ? `${Math.floor(recording.duration / 60)}m ${recording.duration % 60}s` : 'N/A'}</p>
-                              </div>
-                              <div>
-                                <p className="text-white/40">Size</p>
-                                <p className="text-white">{recording.file_size ? `${(recording.file_size / (1024 * 1024)).toFixed(2)} MB` : 'N/A'}</p>
-                              </div>
-                              <div>
-                                <p className="text-white/40">Format</p>
-                                <p className="text-white">{recording.format || 'mp4'}</p>
-                              </div>
+                          ))}
+                        </div>
+
+                        {/* Video Segments Pagination */}
+                        {Math.ceil(tripVideoRecordings.length / 3) > 1 && (
+                          <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-white/10 text-xs">
+                            <span className="text-white/40 text-[11px]">
+                              Showing {((modalVideoPage - 1) * 3) + 1}–{Math.min(modalVideoPage * 3, tripVideoRecordings.length)} of {tripVideoRecordings.length}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => setModalVideoPage(p => Math.max(p - 1, 1))}
+                                disabled={modalVideoPage === 1}
+                                className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                title="Previous"
+                              >
+                                <ChevronLeft size={14} />
+                              </button>
+                              <span className="px-2 py-0.5 rounded bg-white/5 text-white/70 font-mono text-[11px]">
+                                {modalVideoPage} / {Math.ceil(tripVideoRecordings.length / 3)}
+                              </span>
+                              <button
+                                onClick={() => setModalVideoPage(p => Math.min(p + 1, Math.ceil(tripVideoRecordings.length / 3)))}
+                                disabled={modalVideoPage === Math.ceil(tripVideoRecordings.length / 3)}
+                                className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                title="Next"
+                              >
+                                <ChevronRight size={14} />
+                              </button>
                             </div>
                           </div>
-                        ))}
-                      </div>
+                        )}
+                      </>
                     ) : (
                       <div className="flex-1 flex flex-col items-center justify-center py-8 text-center text-white/40">
                         <Activity size={28} className="text-white/20 mb-2" />
@@ -2007,24 +2053,56 @@ const TripManagement = ({ userRole }) => {
                         <BarChart3 className="text-orange-400" size={16} />
                         Transactions ({tripTransactions.length})
                       </h3>
-                      <div className="max-h-48 overflow-y-auto space-y-2">
-                        {tripTransactions.length === 0 ? (
-                          <p className="text-white/40 text-sm text-center py-4">No transactions recorded</p>
-                        ) : (
-                          tripTransactions.slice(0, 10).map((tx) => (
-                            <div key={tx.id} className="bg-white/5 p-3 rounded-lg flex justify-between items-center">
-                              <div>
-                                <p className="text-white text-sm font-medium">{tx.card_id || 'Cash'}</p>
-                                <p className="text-white/40 text-xs">{new Date(tx.created_at).toLocaleString()}</p>
+                      {tripTransactions.length > 0 ? (
+                        <>
+                          <div className="space-y-2 max-h-48 overflow-y-auto">
+                            {tripTransactions.slice((modalTxPage - 1) * 5, modalTxPage * 5).map((tx) => (
+                              <div key={tx.id} className="bg-white/5 p-3 rounded-lg flex justify-between items-center">
+                                <div>
+                                  <p className="text-white text-sm font-medium">{tx.card_id || 'Cash'}</p>
+                                  <p className="text-white/40 text-xs">{new Date(tx.created_at).toLocaleString()}</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-green-400 font-medium">₱{(tx.fare_amount || 0).toFixed(2)}</p>
+                                  {tx.baggage_fee > 0 && <p className="text-blue-400 text-xs">+₱{tx.baggage_fee.toFixed(2)} baggage</p>}
+                                </div>
                               </div>
-                              <div className="text-right">
-                                <p className="text-green-400 font-medium">₱{(tx.fare_amount || 0).toFixed(2)}</p>
-                                {tx.baggage_fee > 0 && <p className="text-blue-400 text-xs">+₱{tx.baggage_fee.toFixed(2)} baggage</p>}
+                            ))}
+                          </div>
+
+                          {/* Transactions Pagination */}
+                          {Math.ceil(tripTransactions.length / 5) > 1 && (
+                            <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-white/10 text-xs">
+                              <span className="text-white/40 text-[11px]">
+                                Showing {((modalTxPage - 1) * 5) + 1}–{Math.min(modalTxPage * 5, tripTransactions.length)} of {tripTransactions.length}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => setModalTxPage(p => Math.max(p - 1, 1))}
+                                  disabled={modalTxPage === 1}
+                                  className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                  title="Previous"
+                                >
+                                  <ChevronLeft size={14} />
+                                </button>
+                                <span className="px-2 py-0.5 rounded bg-white/5 text-white/70 font-mono text-[11px]">
+                                  {modalTxPage} / {Math.ceil(tripTransactions.length / 5)}
+                                </span>
+                                <button
+                                  onClick={() => setModalTxPage(p => Math.min(p + 1, Math.ceil(tripTransactions.length / 5)))}
+                                  disabled={modalTxPage === Math.ceil(tripTransactions.length / 5)}
+                                  className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                  title="Next"
+                                >
+                                  <ChevronRight size={14} />
+                                </button>
                               </div>
                             </div>
-                          ))
-                        )}
-                      </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-white/40 text-sm text-center py-4">No transactions recorded</p>
+                      )}
                     </div>
                   </div>
 
@@ -2041,28 +2119,60 @@ const TripManagement = ({ userRole }) => {
                         <Activity className="text-red-400" size={16} />
                         Anomalies ({tripAnomalies.length})
                       </h3>
-                      <div className="max-h-48 overflow-y-auto space-y-2">
-                        {tripAnomalies.length === 0 ? (
-                          <div className="bg-green-500/10 border border-green-500/20 p-4 rounded-lg text-center">
-                            <p className="text-green-400 text-sm font-medium">No Anomalies Detected</p>
-                            <p className="text-white/40 text-xs mt-1">AI passenger count synced normally</p>
-                          </div>
-                        ) : (
-                          tripAnomalies.map((anomaly) => (
-                            <div key={anomaly.id} className="bg-red-500/10 border border-red-500/20 p-3 rounded-lg">
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <p className="text-red-400 text-sm font-medium">{anomaly.anomaly_type || 'Unknown Anomaly'}</p>
-                                  <p className="text-white/40 text-xs">{new Date(anomaly.detected_at).toLocaleString()}</p>
+                      {tripAnomalies.length > 0 ? (
+                        <>
+                          <div className="space-y-2 max-h-48 overflow-y-auto">
+                            {tripAnomalies.slice((modalAnomaliesPage - 1) * 3, modalAnomaliesPage * 3).map((anomaly) => (
+                              <div key={anomaly.id} className="bg-red-500/10 border border-red-500/20 p-3 rounded-lg">
+                                <div className="flex justify-between items-start">
+                                  <div>
+                                    <p className="text-red-400 text-sm font-medium">{anomaly.anomaly_type || 'Unknown Anomaly'}</p>
+                                    <p className="text-white/40 text-xs">{new Date(anomaly.detected_at).toLocaleString()}</p>
+                                  </div>
+                                  <span className="px-2 py-0.5 bg-red-500/20 text-red-300 text-xs rounded">
+                                    AI Detected
+                                  </span>
                                 </div>
-                                <span className="px-2 py-0.5 bg-red-500/20 text-red-300 text-xs rounded">
-                                  AI Detected
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Anomalies Pagination */}
+                          {Math.ceil(tripAnomalies.length / 3) > 1 && (
+                            <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-white/10 text-xs">
+                              <span className="text-white/40 text-[11px]">
+                                Showing {((modalAnomaliesPage - 1) * 3) + 1}–{Math.min(modalAnomaliesPage * 3, tripAnomalies.length)} of {tripAnomalies.length}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => setModalAnomaliesPage(p => Math.max(p - 1, 1))}
+                                  disabled={modalAnomaliesPage === 1}
+                                  className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                  title="Previous"
+                                >
+                                  <ChevronLeft size={14} />
+                                </button>
+                                <span className="px-2 py-0.5 rounded bg-white/5 text-white/70 font-mono text-[11px]">
+                                  {modalAnomaliesPage} / {Math.ceil(tripAnomalies.length / 3)}
                                 </span>
+                                <button
+                                  onClick={() => setModalAnomaliesPage(p => Math.min(p + 1, Math.ceil(tripAnomalies.length / 3)))}
+                                  disabled={modalAnomaliesPage === Math.ceil(tripAnomalies.length / 3)}
+                                  className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                  title="Next"
+                                >
+                                  <ChevronRight size={14} />
+                                </button>
                               </div>
                             </div>
-                          ))
-                        )}
-                      </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="bg-green-500/10 border border-green-500/20 p-4 rounded-lg text-center">
+                          <p className="text-green-400 text-sm font-medium">No Anomalies Detected</p>
+                          <p className="text-white/40 text-xs mt-1">AI passenger count synced normally</p>
+                        </div>
+                      )}
                     </div>
 
                     {/* Irregularities */}
@@ -2071,27 +2181,59 @@ const TripManagement = ({ userRole }) => {
                         <AlertTriangle className="text-yellow-400" size={16} />
                         Fare Irregularities ({tripIrregularities.length})
                       </h3>
-                      <div className="max-h-48 overflow-y-auto space-y-2">
-                        {tripIrregularities.length === 0 ? (
-                          <p className="text-white/40 text-sm text-center py-4">No irregularities reported</p>
-                        ) : (
-                          tripIrregularities.map((irr) => (
-                            <div key={irr.id} className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-lg">
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <p className="text-yellow-400 text-sm font-medium">{irr.irregularity_type || 'Unknown'}</p>
-                                  <p className="text-white/40 text-xs">{new Date(irr.detected_at).toLocaleString()}</p>
+                      {tripIrregularities.length > 0 ? (
+                        <>
+                          <div className="space-y-2 max-h-48 overflow-y-auto">
+                            {tripIrregularities.slice((modalIrregularitiesPage - 1) * 3, modalIrregularitiesPage * 3).map((irr) => (
+                              <div key={irr.id} className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-lg">
+                                <div className="flex justify-between items-start">
+                                  <div>
+                                    <p className="text-yellow-400 text-sm font-medium">{irr.irregularity_type || 'Unknown'}</p>
+                                    <p className="text-white/40 text-xs">{new Date(irr.detected_at).toLocaleString()}</p>
+                                  </div>
+                                  <span className={`px-2 py-0.5 text-xs rounded ${
+                                    irr.resolved ? 'bg-green-500/20 text-green-300' : 'bg-orange-500/20 text-orange-300'
+                                  }`}>
+                                    {irr.resolved ? 'Resolved' : 'Pending'}
+                                  </span>
                                 </div>
-                                <span className={`px-2 py-0.5 text-xs rounded ${
-                                  irr.resolved ? 'bg-green-500/20 text-green-300' : 'bg-orange-500/20 text-orange-300'
-                                }`}>
-                                  {irr.resolved ? 'Resolved' : 'Pending'}
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Irregularities Pagination */}
+                          {Math.ceil(tripIrregularities.length / 3) > 1 && (
+                            <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-white/10 text-xs">
+                              <span className="text-white/40 text-[11px]">
+                                Showing {((modalIrregularitiesPage - 1) * 3) + 1}–{Math.min(modalIrregularitiesPage * 3, tripIrregularities.length)} of {tripIrregularities.length}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => setModalIrregularitiesPage(p => Math.max(p - 1, 1))}
+                                  disabled={modalIrregularitiesPage === 1}
+                                  className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                  title="Previous"
+                                >
+                                  <ChevronLeft size={14} />
+                                </button>
+                                <span className="px-2 py-0.5 rounded bg-white/5 text-white/70 font-mono text-[11px]">
+                                  {modalIrregularitiesPage} / {Math.ceil(tripIrregularities.length / 3)}
                                 </span>
+                                <button
+                                  onClick={() => setModalIrregularitiesPage(p => Math.min(p + 1, Math.ceil(tripIrregularities.length / 3)))}
+                                  disabled={modalIrregularitiesPage === Math.ceil(tripIrregularities.length / 3)}
+                                  className="p-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 transition-colors"
+                                  title="Next"
+                                >
+                                  <ChevronRight size={14} />
+                                </button>
                               </div>
                             </div>
-                          ))
-                        )}
-                      </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-white/40 text-sm text-center py-4">No irregularities reported</p>
+                      )}
                     </div>
                   </div>
                 </div>
