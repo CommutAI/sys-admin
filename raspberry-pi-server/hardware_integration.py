@@ -339,7 +339,7 @@ class NEO6M:
             import threading
             def log_to_db():
                 try:
-                    # Prefer local SQLite (zero network, sync_worker batches to Supabase)
+                    # Buffer locally to SQLite for offline resilience
                     if _LOCAL_STORE_AVAILABLE:
                         write_gps(
                             latitude=data['latitude'],
@@ -353,9 +353,10 @@ class NEO6M:
                             fix_quality=data.get('fix_quality'),
                         )
                         logger.debug(f"GPS location buffered to SQLite")
-                    elif db_client:
+                    # Also insert directly to Supabase if connected
+                    if db_client:
                         db_client.table('gps_locations').insert(data).execute()
-                        logger.debug(f"GPS location logged to Supabase (fallback)")
+                        logger.debug(f"GPS location logged to Supabase")
                 except Exception as e:
                     logger.error(f"Failed to log GPS location: {e}")
 
@@ -364,7 +365,11 @@ class NEO6M:
             logger.error(f"Failed to start GPS logging thread: {e}")
 
     def is_location_stable(self) -> bool:
-        """Check if GPS location is stable"""
+        """Check if GPS location is stable and valid (reject 0,0 fixes)"""
+        if not self.current_location or (self.current_location.latitude == 0.0 and self.current_location.longitude == 0.0):
+            return False
+        if abs(self.current_location.latitude) < 0.001 and abs(self.current_location.longitude) < 0.001:
+            return False
         if len(self.location_history) < 5:
             return False
         
@@ -800,14 +805,31 @@ class HardwareManager:
         return self.sim900a.send_sms(phone_number, message, 'trip', self.current_trip_id, None, self.db_client)
     
     def start_gps_tracking(self, callback: Optional[Callable[[GPSLocation], None]] = None):
-        """Start continuous GPS tracking"""
-        if self.neo6m and self.neo6m.connected:
-            self.neo6m.start_continuous_tracking(callback, self.current_trip_id, self.db_client)
+        """Start continuous GPS tracking with automatic geolocation fallback and dynamic trip ID tracking"""
+        self.gps_tracking_active = True
+        
+        def tracking_loop():
+            while getattr(self, 'gps_tracking_active', False):
+                try:
+                    # self.get_location() checks hardware GPS first; if unstable / no satellite fix,
+                    # it seamlessly falls back to OpenStreetMap / IP Geolocation, using self.current_trip_id!
+                    loc = self.get_location()
+                    if loc and callback:
+                        callback(loc)
+                except Exception as e:
+                    logger.error(f"Error in GPS tracking loop: {e}")
+                time.sleep(2)
+
+        thread = threading.Thread(target=tracking_loop, daemon=True)
+        thread.start()
+        logger.info("GPS / Geolocation continuous tracking started")
     
     def stop_gps_tracking(self):
         """Stop continuous GPS tracking"""
+        self.gps_tracking_active = False
         if self.neo6m:
             self.neo6m.stop_continuous_tracking()
+        logger.info("GPS tracking stopped")
     
     def set_current_trip(self, trip_id: int):
         """Set the current trip ID for database recording"""
@@ -881,7 +903,7 @@ class HardwareManager:
             import threading
             def log_to_db():
                 try:
-                    # Prefer local SQLite (zero network, sync_worker batches to Supabase)
+                    # Buffer locally to SQLite for offline resilience
                     if _LOCAL_STORE_AVAILABLE:
                         write_gps(
                             latitude=data['latitude'],
@@ -893,9 +915,10 @@ class HardwareManager:
                             source=data.get('source', 'geolocation'),
                         )
                         logger.debug(f"Geolocation buffered to SQLite")
-                    elif db_client:
+                    # Also insert directly to Supabase if connected
+                    if db_client:
                         db_client.table('gps_locations').insert(data).execute()
-                        logger.debug(f"Geolocation logged to Supabase (fallback)")
+                        logger.debug(f"Geolocation logged to Supabase")
                 except Exception as e:
                     logger.error(f"Failed to log geolocation: {e}")
             

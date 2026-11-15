@@ -491,20 +491,18 @@ const TripManagement = ({ userRole }) => {
       const completedRecording = (recordingsData || []).find(r => r.status === 'completed' && r.file_name);
 
       if (trip.video_recording_url && trip.video_recording_status === 'available') {
-        // If the URL is a local path, convert to appropriate URL based on source
-        if (trip.video_recording_url.startsWith('./') || trip.video_recording_url.startsWith('/')) {
+        // If it's a full remote URL (Cloudflare R2 / Supabase Storage), use directly
+        if (trip.video_recording_url.startsWith('http://') || trip.video_recording_url.startsWith('https://')) {
+          setTripVideoUrl(trip.video_recording_url);
+        } else {
+          // If the URL is a filename or local path, convert to appropriate endpoint URL
           const fileName = trip.video_recording_url.split('/').pop();
-          // Check if recording is from backend (in video_recordings table)
           const backendRecording = (recordingsData || []).find(r => r.metadata?.source === 'backend_processor');
           if (backendRecording) {
-            // Use backend download endpoint
             setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${fileName}`);
           } else {
-            // Use Pi download endpoint
             setTripVideoUrl(`${piBaseUrl}/download-video/${fileName}`);
           }
-        } else {
-          setTripVideoUrl(trip.video_recording_url);
         }
         setTripVideoStatus('available');
       } else if (completedRecording) {
