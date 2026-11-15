@@ -61,7 +61,7 @@ const VideoMonitoring = ({ autoConnect = true }) => {
         <div>
           <h1 className="text-3xl font-bold text-white">Bus Video Monitoring</h1>
           <p className="text-white/60 mt-1">
-            Live video feed with AI passenger detection (Backend YOLOv8n)
+            Live video feed with AI passenger detection (YOLOv8n ONNX Edge · Zero-Delay Motion Sync)
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -189,30 +189,30 @@ const VideoMonitoring = ({ autoConnect = true }) => {
             }`}>
               {isStreaming ? 'Active' : 'Inactive'}
             </p>
-            <p className="text-white/30 text-xs mt-1">Backend YOLOv8n</p>
+            <p className="text-white/30 text-xs mt-1">Zero-Delay ONNX Edge</p>
           </div>
         </div>
       </div>
 
       {/* Camera Info */}
       <div className="glass-card rounded-xl p-5">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-white/40 mb-3">Camera Info</h3>
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-white/40 mb-3">Camera & AI Pipeline</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
           <div>
             <p className="text-white/50">Detection Model</p>
-            <p className="text-white font-medium">YOLOv8n</p>
+            <p className="text-white font-medium">YOLOv8n ONNX</p>
           </div>
           <div>
             <p className="text-white/50">Resolution</p>
-            <p className="text-white font-medium">640x480</p>
+            <p className="text-white font-medium">640x480 (V4L2 Zero-Buffer)</p>
           </div>
           <div>
-            <p className="text-white/50">FPS</p>
-            <p className="text-white font-medium">30</p>
+            <p className="text-white/50">Stream FPS</p>
+            <p className="text-white font-medium">30 FPS Live</p>
           </div>
           <div>
-            <p className="text-white/50">Detection</p>
-            <p className="text-green-400 font-medium">YOLOv8n (Backend)</p>
+            <p className="text-white/50">Tracking Engine</p>
+            <p className="text-green-400 font-medium">Kinematic Zero-Lag</p>
           </div>
         </div>
       </div>

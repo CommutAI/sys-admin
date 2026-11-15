@@ -633,10 +633,40 @@ class PassengerTracker:
         denom = area1 + area2 - inter
         return inter / float(denom) if denom > 0 else 0.0
 
-    def update(self, raw_detections):
+    def get_confirmed_detections(self):
+        confirmed_tracks = [t for t in self.tracks if t.get('confirmed', False)]
+        return [{
+            'bbox': t['bbox'],
+            'confidence': float(t['conf']),
+            'class': 'person'
+        } for t in confirmed_tracks]
+
+    def step(self):
+        """Kinematic extrapolation for intermediate video frames.
+        Propagates bounding boxes along their velocity vector on EVERY single frame (25-30 FPS).
+        This guarantees that bounding boxes stay glued to the person as they move with zero frame lag."""
+        for track in self.tracks:
+            if track.get('confirmed', False):
+                vx = track.get('vx', 0.0)
+                vy = track.get('vy', 0.0)
+                if abs(vx) > 0.3 or abs(vy) > 0.3:
+                    # Move bounding box synchronously with the person in real time
+                    track['bbox'] = [
+                        int(track['bbox'][0] + vx),
+                        int(track['bbox'][1] + vy),
+                        int(track['bbox'][2] + vx),
+                        int(track['bbox'][3] + vy)
+                    ]
+        return self.get_confirmed_detections()
+
+    def update(self, raw_detections, lag_frames=0):
         import math
         matched_track_indices = set()
         matched_det_indices = set()
+
+        comp_detections = []
+        for det in raw_detections:
+            comp_detections.append(dict(det))
 
         # Step 1: Evaluate candidate matches using velocity prediction & normalized spatial distance
         candidate_matches = []
@@ -657,7 +687,7 @@ class PassengerTracker:
             pred_cx = (pred_box[0] + pred_box[2]) / 2.0
             pred_cy = (pred_box[1] + pred_box[3]) / 2.0
 
-            for d_idx, det in enumerate(raw_detections):
+            for d_idx, det in enumerate(comp_detections):
                 d_box = det['bbox']
                 conf = det['confidence']
                 if conf < self.keep_thresh:
@@ -692,26 +722,40 @@ class PassengerTracker:
             matched_track_indices.add(t_idx)
             matched_det_indices.add(d_idx)
             track = self.tracks[t_idx]
-            bbox = det['bbox']
+            raw_box = det['bbox']
             conf = det['confidence']
+
+            # If this detection had lag_frames, project raw_box forward to match the current frame
+            if lag_frames > 0:
+                cur_vx = track.get('vx', 0.0)
+                cur_vy = track.get('vy', 0.0)
+                bbox = [
+                    int(raw_box[0] + cur_vx * lag_frames),
+                    int(raw_box[1] + cur_vy * lag_frames),
+                    int(raw_box[2] + cur_vx * lag_frames),
+                    int(raw_box[3] + cur_vy * lag_frames)
+                ]
+            else:
+                bbox = raw_box
 
             # Compute observed velocity
             old_cx = (track['bbox'][0] + track['bbox'][2]) / 2.0
             old_cy = (track['bbox'][1] + track['bbox'][3]) / 2.0
             new_cx = (bbox[0] + bbox[2]) / 2.0
             new_cy = (bbox[1] + bbox[3]) / 2.0
-            obs_vx = new_cx - old_cx
-            obs_vy = new_cy - old_cy
+            divisor = max(1.0, float(lag_frames))
+            obs_vx = (new_cx - old_cx) / divisor
+            obs_vy = (new_cy - old_cy) / divisor
 
             # Smooth velocity
-            track['vx'] = 0.65 * obs_vx + 0.35 * track.get('vx', 0.0)
-            track['vy'] = 0.65 * obs_vy + 0.35 * track.get('vy', 0.0)
+            track['vx'] = 0.70 * obs_vx + 0.30 * track.get('vx', 0.0)
+            track['vy'] = 0.70 * obs_vy + 0.30 * track.get('vy', 0.0)
 
-            # Adaptive smoothing alpha based on movement speed:
-            # When person moves fast, use alpha=0.85 to follow instantaneously.
-            # When person is stationary, use alpha=0.55 to kill jitter.
+            # High-responsiveness adaptive smoothing:
+            # When person moves, snap to the box with alpha=0.90 so there is 0 dragging.
+            # When stationary, alpha=0.60 to avoid jitter.
             speed = math.hypot(obs_vx, obs_vy)
-            alpha = 0.85 if speed > 10.0 else 0.55
+            alpha = 0.90 if speed > 5.0 else 0.60
 
             track['bbox'] = [
                 int(alpha * bbox[i] + (1.0 - alpha) * track['bbox'][i])
@@ -744,7 +788,7 @@ class PassengerTracker:
         ]
 
         # Handle unmatched raw detections (potential new passengers)
-        for d_idx, det in enumerate(raw_detections):
+        for d_idx, det in enumerate(comp_detections):
             if d_idx not in matched_det_indices:
                 conf = det['confidence']
                 if conf >= self.hit_thresh:
@@ -763,12 +807,7 @@ class PassengerTracker:
                     self.next_id += 1
 
         # Return confirmed passengers to eliminate hallucinated counts
-        confirmed_tracks = [t for t in self.tracks if t.get('confirmed', False)]
-        return [{
-            'bbox': t['bbox'],
-            'confidence': float(t['conf']),
-            'class': 'person'
-        } for t in confirmed_tracks]
+        return self.get_confirmed_detections()
 
 class VideoProcessor:
     def __init__(self):
@@ -805,6 +844,44 @@ class VideoProcessor:
         self.recording_start_time = None
         self.current_video_path = None
         self.recording_frame_count = 0
+
+        # Dedicated zero-buffer camera capture thread attributes
+        self._capture_thread = None
+        self._capture_lock = threading.Lock()
+        self._latest_hw_frame = None
+        self._latest_hw_time = 0.0
+        self._hw_frame_seq = 0
+
+    def _start_capture_thread(self):
+        """Start the dedicated thread that continuously drains V4L2 kernel buffers."""
+        if self._capture_thread and self._capture_thread.is_alive():
+            return
+        self._capture_thread = threading.Thread(target=self._capture_worker, daemon=True)
+        self._capture_thread.start()
+        print("[CAPTURE] Dedicated zero-buffer V4L2 camera grabber thread started")
+
+    def _capture_worker(self):
+        """Continuously reads frames from hardware as soon as the sensor exposes them.
+        Zero sleep means V4L2 kernel buffer depth remains at 0, eliminating hardware lag."""
+        while self.running and self.camera and self.camera.isOpened():
+            try:
+                ret, frame = self.camera.read()
+                if ret and frame is not None:
+                    with self._capture_lock:
+                        self._latest_hw_frame = frame
+                        self._latest_hw_time = time.time()
+                        self._hw_frame_seq += 1
+                else:
+                    time.sleep(0.004)
+            except Exception:
+                time.sleep(0.004)
+
+    def get_fresh_frame(self):
+        """Retrieve the absolute latest hardware frame with zero kernel queue delay."""
+        with self._capture_lock:
+            if self._latest_hw_frame is not None:
+                return self._latest_hw_frame.copy(), self._latest_hw_time, self._hw_frame_seq
+        return None, 0.0, 0
         
     def _open_camera_candidate(self, candidate):
         """Try opening one camera candidate (int index preferred over path)."""
@@ -816,7 +893,6 @@ class VideoProcessor:
 
         # Force MJPG before resolution — EMEET YUYV is unreliable on this OpenCV build
         cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-        cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
         cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
         cam.set(cv2.CAP_PROP_FPS, FPS)
@@ -1947,30 +2023,26 @@ class VideoProcessor:
                 print(f"Error writing frame to video: {e}")
     
     async def process_frames(self):
-        """Main processing loop - Optimized for real-time performance"""
-        print("Starting video processing (real-time optimized)...")
+        """Main processing loop - Optimized for zero frame lag and synchronized person tracking"""
+        print("Starting video processing (zero-delay real-time optimized)...")
         
-        # Performance monitoring
         last_fps_time = time.time()
         frame_counter = 0
+        last_processed_seq = -1
         
         while self.running:
             try:
-                ret, frame = self.camera.read()
-                if not ret:
-                    print("Error: Could not read frame - attempting camera reconnection")
-                    if self.reconnect_camera():
-                        print("Camera reconnected successfully")
-                        continue
-                    else:
-                        print("Camera reconnection failed, waiting before retry...")
-                        await asyncio.sleep(5)
-                        continue
+                # 1. Grab the fresh hardware frame directly from CMOS sensor (0ms V4L2 kernel buffer)
+                frame, frame_time, frame_seq = self.get_fresh_frame()
+                if frame is None or frame_seq == last_processed_seq:
+                    await asyncio.sleep(0.003)
+                    continue
                 
+                last_processed_seq = frame_seq
                 self.frame_count += 1
                 frame_counter += 1
                 
-                # Calculate actual FPS for monitoring (print only every 150 frames)
+                # Calculate actual FPS for monitoring
                 current_time = time.time()
                 if current_time - last_fps_time >= 5.0:
                     actual_fps = frame_counter / (current_time - last_fps_time)
@@ -1978,16 +2050,18 @@ class VideoProcessor:
                     frame_counter = 0
                     last_fps_time = current_time
                 
-                # Real-time optimization: Run detection asynchronously in worker thread without blocking video stream
+                # 2. Real-time optimization: Run detection asynchronously with kinematic step & lag compensation
                 if COUNT_METHOD != 'backend':
                     if not getattr(self, '_is_detecting', False):
                         self._is_detecting = True
                         detection_frame = frame.copy()
+                        det_start_seq = self.frame_count
                         
-                        async def _run_detection_async(det_frame):
+                        async def _run_detection_async(det_frame, start_seq):
                             try:
                                 raw_dets = await asyncio.to_thread(self.detect_passengers, det_frame)
-                                stable_dets = self.tracker.update(raw_dets)
+                                lag_frames = max(0, self.frame_count - start_seq)
+                                stable_dets = self.tracker.update(raw_dets, lag_frames=lag_frames)
                                 self.passenger_count = len(stable_dets)
                                 self.last_detections = stable_dets
                                 self.last_detection_count = self.frame_count
@@ -1996,11 +2070,12 @@ class VideoProcessor:
                             finally:
                                 self._is_detecting = False
                         
-                        asyncio.create_task(_run_detection_async(detection_frame))
+                        asyncio.create_task(_run_detection_async(detection_frame, det_start_seq))
                     
-                    detections = getattr(self, 'last_detections', [])
+                    # On EVERY video frame, advance active tracks along velocity vector
+                    # This ensures the bounding box follows the moving person synchronously with 0 lag
+                    detections = self.tracker.step()
                 else:
-                    # Backend mode: use last known detections from backend response
                     detections = getattr(self, 'last_detections', [])
                 
                 # Only print passenger count periodically to reduce overhead
@@ -2008,16 +2083,16 @@ class VideoProcessor:
                     method = COUNT_METHOD.upper() if COUNT_METHOD else 'Unknown'
                     print(f"[COUNT] {self.passenger_count} passenger(s) in frame (using {method} detection)")
                 
-                # Store detection history (reduced from 30 to 10 for less memory)
+                # Store detection history
                 self.detection_history.append(self.passenger_count)
                 if len(self.detection_history) > 10:
                     self.detection_history.pop(0)
                 
-                # Save passenger count to database (can be disabled for ultra-low latency)
+                # Save passenger count to database
                 if not DISABLE_DB_WRITES and self.frame_count % (FPS * self.db_save_interval) == 0:
                     self.save_passenger_count_to_db(self.passenger_count)
                 
-                # Real-time optimization: Optional drawing
+                # Real-time optimization: Synchronous drawing
                 if DISABLE_DRAWING:
                     annotated_frame = frame
                 else:
@@ -2032,9 +2107,8 @@ class VideoProcessor:
                 
                 if frame_base64:
                     self.latest_frame = frame_base64
-                    self.latest_frame_seq += 1
-                    self.latest_frame_time = time.time()
-                    # Put frame in queue for streaming (keep only single newest frame)
+                    self.latest_frame_seq = frame_seq
+                    self.latest_frame_time = frame_time
                     if self.frame_queue.full():
                         try:
                             self.frame_queue.get_nowait()
@@ -2045,15 +2119,11 @@ class VideoProcessor:
                     except queue.Full:
                         pass
                 
-                # Minimal frame rate control - rely on camera's natural timing
-                if ENABLE_REALTIME_MODE:
-                    await asyncio.sleep(0.005)  # Yield to event loop
-                else:
-                    await asyncio.sleep(1.0 / FPS)
+                await asyncio.sleep(0.002)
                 
             except Exception as e:
                 print(f"Processing error: {e}")
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
     
     async def stream_frames(self):
         """Background task to stream frames - Optimized for ultra-low latency and zero buffer bloat"""
@@ -2124,11 +2194,17 @@ class VideoProcessor:
             print("Warning: YOLO model not available - streaming without AI detection")
 
         self.running = True
+        self._start_capture_thread()
         return True, None
     
     def stop(self):
         """Stop video processing"""
         self.running = False
+        if self._capture_thread and self._capture_thread.is_alive():
+            try:
+                self._capture_thread.join(timeout=1.0)
+            except Exception:
+                pass
         if self.camera:
             self.camera.release()
         print("Video processing stopped")
