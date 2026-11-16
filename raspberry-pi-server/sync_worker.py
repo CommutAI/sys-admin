@@ -1,34 +1,25 @@
 """
 sync_worker.py — Background thread that aggregates SQLite rows and pushes
-                  minute-level summaries to Supabase via the scoped gateway.
-
-Modeled on tunnel_sync.py's retry-with-backoff TunnelPublisher and
-cloud_gateway.py's scoped-token gateway call.
+                  minute-level summaries directly to Supabase REST API.
 
 Data flow
 ─────────
   SQLite (raw, every write)
       └─► SyncWorker.run()  [wakes every SYNC_INTERVAL_SECONDS]
-              ├─► _aggregate_passenger_counts()  → 1 row  → gateway push
-              └─► _aggregate_gps()               → N rows → gateway push
+              ├─► _aggregate_passenger_counts()  → skipped (backend handles)
+              └─► _aggregate_gps()               → N rows → Supabase REST push
 
 Aggregation rules
 ─────────────────
-  passenger_counts:
-    - Group unsynced rows by (trip_id, minute-bucket)
-    - Emit { trip_id, bus_id, minute, avg_count, max_count, sample_count }
-    - One Supabase row per trip per minute  (vs. 1 row every 5 s before)
-
   gps_locations:
     - Keep the most recent fix per 60-s window per trip
     - Emit { trip_id, latitude, longitude, altitude, speed, … }
     - Saves ~12× fewer GPS rows (was every 2 s, now every 60 s)
 
-Security
-────────
-  Pi never holds the Supabase service-role key.
-  All writes go through the scoped Supabase Edge Function (pi-gateway)
-  which validates PI_TOKEN before touching any table.
+Auth
+────
+  Uses SUPABASE_KEY (anon or service-role) directly from environment.
+  Falls back through: SUPABASE_SERVICE_ROLE_KEY → SUPABASE_KEY → LPMAS_PI_TOKEN → PI_GATEWAY_TOKEN
 """
 
 import os
@@ -37,6 +28,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+# Load .env early so os.getenv() picks up SUPABASE_KEY etc. when this module
+# is imported by commutai-pi-service (which has no EnvironmentFile= in its unit).
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv()
+except ImportError:
+    pass  # dotenv not installed — rely on environment already set
 
 from local_store import (
     fetch_unsynced_passenger_counts,
@@ -60,8 +59,19 @@ except ImportError:
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 SUPABASE_URL   = os.getenv("SUPABASE_URL", "").rstrip("/")
-PI_TOKEN       = os.getenv("LPMAS_PI_TOKEN", os.getenv("PI_GATEWAY_TOKEN", ""))
+
+# Auth: prefer service-role key → anon key → legacy gateway tokens
+SUPABASE_KEY   = (
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY") or
+    os.getenv("SUPABASE_KEY") or
+    os.getenv("LPMAS_PI_TOKEN") or
+    os.getenv("PI_GATEWAY_TOKEN") or
+    ""
+)
+# Keep for status() reporting — gateway URL is no longer used but left for compat
 GATEWAY_URL    = f"{SUPABASE_URL}/functions/v1/pi-gateway" if SUPABASE_URL else ""
+# Alias so _push() code is unchanged
+PI_TOKEN = SUPABASE_KEY
 
 SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS", "60"))   # run every 60 s
 RETRY_BASE_SECONDS    = int(os.getenv("SYNC_RETRY_BASE", "10"))          # first retry after 10 s
@@ -174,11 +184,11 @@ def _aggregate_gps(rows: list) -> tuple[list, list]:
 # ── Direct Supabase push ──────────────────────────────────────────────────────
 
 def _push(action: str, rows: list, table_name: str) -> bool:
-    """Push aggregated rows directly to Supabase — no gateway needed."""
+    """Push aggregated rows directly to Supabase REST API."""
     if not rows:
         return True
 
-    if not SUPABASE_URL or not PI_TOKEN:
+    if not SUPABASE_URL or not SUPABASE_KEY:
         print(f"[SyncWorker] Supabase not configured — {len(rows)} {table_name} rows buffered locally")
         return False
 
@@ -190,13 +200,13 @@ def _push(action: str, rows: list, table_name: str) -> bool:
             url, data=data, method='POST',
             headers={
                 'Content-Type': 'application/json',
-                'apikey': PI_TOKEN,
-                'Authorization': f'Bearer {PI_TOKEN}',
+                'apikey': SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}',
                 'Prefer': 'resolution=merge-duplicates',
             }
         )
         with urllib.request.urlopen(req, timeout=20) as resp:
-            print(f"[SyncWorker] ✓ Pushed {len(rows)} {table_name} rows (HTTP {resp.status})")
+            print(f"[SyncWorker] ✓ Pushed {len(rows)} {table_name} rows to Supabase (HTTP {resp.status})")
             return True
     except Exception as exc:
         print(f"[SyncWorker] ✗ Push failed for {table_name}: {exc}")
@@ -273,7 +283,7 @@ class SyncWorker:
             target=self._run, name="sqlite-sync-worker", daemon=True
         )
         self._thread.start()
-        print(f"[SyncWorker] Started — interval={self.interval}s, gateway={GATEWAY_URL or 'NOT CONFIGURED'}")
+        print(f"[SyncWorker] Started — interval={self.interval}s, supabase={'configured' if SUPABASE_URL and SUPABASE_KEY else 'NOT CONFIGURED'}")
 
     def stop(self):
         with self._condition:
@@ -287,7 +297,7 @@ class SyncWorker:
         stats = db_stats()
         stats["sync_interval_seconds"] = self.interval
         stats["consecutive_failures"]  = self._attempts
-        stats["gateway_configured"]    = bool(GATEWAY_URL and PI_TOKEN)
+        stats["gateway_configured"]    = bool(SUPABASE_URL and SUPABASE_KEY)
         return stats
 
     # ── internal loop ─────────────────────────────────────────────────────────
