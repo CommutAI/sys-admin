@@ -620,12 +620,12 @@ DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
 _count_method_default = 'onnx' if ONNX_AVAILABLE else 'backend'
 COUNT_METHOD = os.getenv('COUNT_METHOD', _count_method_default)
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.onnx')
-CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))  # 0.25 standard threshold to eliminate false positives
+CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.20'))  # 0.20: fast zero-delay response, rejects 0.18 false positives
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.35'))  # 0.35 NMS IoU to eliminate duplicate bounding boxes on same person
 JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '50'))
 
 # YOLO-specific confidence threshold for person detection
-YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.25'))
+YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.20'))
 MAX_DET = int(os.getenv('MAX_DET', '50'))
 
 # Video Recording configuration
@@ -651,7 +651,7 @@ class PassengerTracker:
     to follow moving persons seamlessly, eliminate box oscillation/jitter,
     and prevent hallucinated passenger counts."""
     
-    def __init__(self, hit_thresh=0.25, keep_thresh=0.18, max_missed=5, min_hits=2):
+    def __init__(self, hit_thresh=0.20, keep_thresh=0.15, max_missed=6, min_hits=1):
         self.hit_thresh = hit_thresh
         self.keep_thresh = keep_thresh
         self.max_missed = max_missed
@@ -745,8 +745,8 @@ class PassengerTracker:
                 # Negligible movement — freeze position to kill sensor jitter
                 pass
             else:
-                # Responsive EMA smoothing: alpha=0.70 follows moving person smoothly without lagging or overshooting
-                alpha = 0.70
+                # Responsive EMA smoothing: alpha=0.85 follows moving person instantly without lag
+                alpha = 0.85
                 track['bbox'] = [
                     int(round(alpha * new_box[i] + (1.0 - alpha) * old_box[i]))
                     for i in range(4)
@@ -755,8 +755,7 @@ class PassengerTracker:
             track['conf'] = conf
             track['missed'] = 0
             track['hits'] = track.get('hits', 1) + 1
-            if track['hits'] >= self.min_hits or conf >= 0.50:
-                track['confirmed'] = True
+            track['confirmed'] = True
 
         # Step 2: Unmatched tracks: increment missed counter without moving position
         for t_idx, track in enumerate(self.tracks):
@@ -770,19 +769,18 @@ class PassengerTracker:
                (t['missed'] < 1 and not t.get('confirmed', False))
         ]
 
-        # Step 4: Add new detections
+        # Step 4: Add new detections - Immediate 1-hit confirmation on frame 1
         for d_idx, det in enumerate(comp_detections):
             if d_idx not in matched_det_indices:
                 conf = det['confidence']
                 if conf >= self.hit_thresh:
-                    is_conf = conf >= 0.50
                     self.tracks.append({
                         'id': self.next_id,
                         'bbox': list(det['bbox']),
                         'conf': conf,
-                        'hits': 2 if is_conf else 1,
+                        'hits': 1,
                         'missed': 0,
-                        'confirmed': is_conf
+                        'confirmed': True
                     })
                     self.next_id += 1
 
@@ -792,7 +790,7 @@ class VideoProcessor:
     def __init__(self):
         self.camera = None
         self.model = None
-        self.tracker = PassengerTracker(hit_thresh=YOLO_CONFIDENCE_THRESHOLD, keep_thresh=min(0.20, YOLO_CONFIDENCE_THRESHOLD * 0.8), max_missed=5)
+        self.tracker = PassengerTracker(hit_thresh=YOLO_CONFIDENCE_THRESHOLD, keep_thresh=min(0.16, YOLO_CONFIDENCE_THRESHOLD * 0.8), max_missed=6, min_hits=1)
         self.frame_queue = queue.Queue(maxsize=1)  # Strictly latest-frame only (maxsize=1)
         self.latest_frame = None
         self.latest_frame_seq = 0
@@ -1138,7 +1136,7 @@ class VideoProcessor:
                 max_class_ids = np.argmax(class_scores, axis=1)
                 person_scores = predictions[:, 4]
                 
-                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if (YOLO_CONFIDENCE_THRESHOLD and YOLO_CONFIDENCE_THRESHOLD > 0.01) else 0.25
+                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if (YOLO_CONFIDENCE_THRESHOLD and YOLO_CONFIDENCE_THRESHOLD > 0.01) else 0.20
                 
                 # Strict check: object's TOP predicted class must be person (class 0)
                 # This prevents chairs, helmets, and hanging clothes from false-triggering
@@ -1455,10 +1453,21 @@ class VideoProcessor:
             return False
 
         # 5. Reject static border/doorway pillar artifacts:
-        # A box spanning from the ceiling edge (y1 == 0) to bottom (y2 >= frame_h * 0.88)
-        # while hugging the frame border (x1 <= 2 or x2 >= frame_w - 2) with tall column ratio (h/w >= 2.5)
-        # is a vertical door jamb, beam, or wall border artifact rather than an actual passenger
-        if y1 == 0 and y2 >= int(frame_h * 0.88) and (x1 <= 2 or x2 >= frame_w - 2) and (h / float(max(1, w))) >= 2.5:
+        # Covers door jambs, wall pillars, and vertical structural elements near frame edges.
+        # Relaxed from strict y1==0 to allow boxes starting a bit below the top.
+        aspect = h / float(max(1, w))
+        near_right_edge = x2 >= int(frame_w * 0.80)   # box ends in rightmost 20% of frame
+        near_left_edge  = x1 <= int(frame_w * 0.20)   # box starts in leftmost 20% of frame
+        tall_column     = aspect >= 2.5                # very tall thin column
+        spans_majority  = h >= int(frame_h * 0.55)    # spans more than 55% of frame height
+        starts_high     = y1 <= int(frame_h * 0.20)   # starts within top 20% of frame
+
+        if tall_column and spans_majority and starts_high and (near_right_edge or near_left_edge):
+            return False
+
+        # 6. Reject extremely narrow slivers that are unlikely to be a person
+        # (e.g. w < 5% of frame width when h > 50% frame height)
+        if w < int(frame_w * 0.05) and h > int(frame_h * 0.50):
             return False
 
         return True
@@ -2037,9 +2046,11 @@ class VideoProcessor:
                     last_fps_time = current_time
                 
                 # 2. Real-time optimization: Run detection asynchronously with kinematic step & lag compensation
+                now = time.time()
                 if COUNT_METHOD != 'backend':
-                    if not getattr(self, '_is_detecting', False):
+                    if not getattr(self, '_is_detecting', False) and (now - getattr(self, '_last_det_start', 0.0) >= 0.06):
                         self._is_detecting = True
+                        self._last_det_start = now
                         detection_frame = frame.copy()
                         det_start_seq = self.frame_count
                         
@@ -2940,12 +2951,29 @@ async def restart_endpoint():
 if __name__ == '__main__':
     import fcntl
     import sys
+    import os
+    import getpass
+    import socket
     import uvicorn
 
-    # Prevent double-start races (systemd restart vs leftover process on :8080)
-    import getpass
-    lock_user = getpass.getuser()
-    lock_path = os.path.join('/tmp', f'commutai-pi-server-{lock_user}.lock')
+    # 1. Disable legacy root service if accidentally started as root
+    if getpass.getuser() == 'root':
+        print("[INIT] Detected root launch - disabling legacy commutai-backend.service to prevent double-process CPU contention...")
+        os.system("systemctl disable --now commutai-backend.service 2>/dev/null")
+        sys.exit(0)
+
+    # 2. Prevent port conflicts by checking if port is already bound
+    _test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    _test_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+    try:
+        _test_sock.bind(('0.0.0.0', SERVER_PORT))
+        _test_sock.close()
+    except OSError:
+        print(f"[PORT CHECK] Port {SERVER_PORT} is already in use by another running instance. Exiting immediately.")
+        sys.exit(0)
+
+    # 3. Prevent double-start races with single global lock
+    lock_path = '/tmp/commutai-pi-server-single.lock'
     try:
         lock_fd = open(lock_path, 'w')
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

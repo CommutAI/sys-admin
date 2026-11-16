@@ -571,7 +571,7 @@ const PassengerAnalytics = () => {
               60 FPS Live
             </span>
             <span className="text-xs text-purple-300 font-medium bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full">
-              0.25 Conf
+              0.20 Conf
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -745,7 +745,7 @@ const PassengerAnalytics = () => {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-white/60">Confidence Thresh</span>
-                  <span className="text-purple-300 font-mono">0.25</span>
+                  <span className="text-purple-300 font-mono">0.20</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-white/60">Detection Method</span>
