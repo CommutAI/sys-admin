@@ -620,12 +620,12 @@ DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
 _count_method_default = 'onnx' if ONNX_AVAILABLE else 'backend'
 COUNT_METHOD = os.getenv('COUNT_METHOD', _count_method_default)
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.onnx')
-CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.15'))  # 0.15 to detect farther passengers
+CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.25'))  # 0.25 standard threshold to eliminate false positives
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.35'))  # 0.35 NMS IoU to eliminate duplicate bounding boxes on same person
 JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '50'))
 
 # YOLO-specific confidence threshold for person detection
-YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.15'))
+YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.25'))
 MAX_DET = int(os.getenv('MAX_DET', '50'))
 
 # Video Recording configuration
@@ -651,7 +651,7 @@ class PassengerTracker:
     to follow moving persons seamlessly, eliminate box oscillation/jitter,
     and prevent hallucinated passenger counts."""
     
-    def __init__(self, hit_thresh=0.15, keep_thresh=0.10, max_missed=5, min_hits=2):
+    def __init__(self, hit_thresh=0.25, keep_thresh=0.18, max_missed=5, min_hits=2):
         self.hit_thresh = hit_thresh
         self.keep_thresh = keep_thresh
         self.max_missed = max_missed
@@ -792,7 +792,7 @@ class VideoProcessor:
     def __init__(self):
         self.camera = None
         self.model = None
-        self.tracker = PassengerTracker(hit_thresh=YOLO_CONFIDENCE_THRESHOLD, keep_thresh=min(0.12, YOLO_CONFIDENCE_THRESHOLD * 0.8), max_missed=5)
+        self.tracker = PassengerTracker(hit_thresh=YOLO_CONFIDENCE_THRESHOLD, keep_thresh=min(0.20, YOLO_CONFIDENCE_THRESHOLD * 0.8), max_missed=5)
         self.frame_queue = queue.Queue(maxsize=1)  # Strictly latest-frame only (maxsize=1)
         self.latest_frame = None
         self.latest_frame_seq = 0
@@ -1138,7 +1138,7 @@ class VideoProcessor:
                 max_class_ids = np.argmax(class_scores, axis=1)
                 person_scores = predictions[:, 4]
                 
-                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if (YOLO_CONFIDENCE_THRESHOLD and YOLO_CONFIDENCE_THRESHOLD > 0.01) else 0.15
+                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if (YOLO_CONFIDENCE_THRESHOLD and YOLO_CONFIDENCE_THRESHOLD > 0.01) else 0.25
                 
                 # Strict check: object's TOP predicted class must be person (class 0)
                 # This prevents chairs, helmets, and hanging clothes from false-triggering
@@ -1452,6 +1452,13 @@ class VideoProcessor:
 
         # 4. Aspect ratio: human passengers can be standing, seated, or reclining (h/w >= 0.40)
         if (h / float(max(1, w))) < 0.40:
+            return False
+
+        # 5. Reject static border/doorway pillar artifacts:
+        # A box spanning from the ceiling edge (y1 == 0) to bottom (y2 >= frame_h * 0.88)
+        # while hugging the frame border (x1 <= 2 or x2 >= frame_w - 2) with tall column ratio (h/w >= 2.5)
+        # is a vertical door jamb, beam, or wall border artifact rather than an actual passenger
+        if y1 == 0 and y2 >= int(frame_h * 0.88) and (x1 <= 2 or x2 >= frame_w - 2) and (h / float(max(1, w))) >= 2.5:
             return False
 
         return True
