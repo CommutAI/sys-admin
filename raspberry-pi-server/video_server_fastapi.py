@@ -359,6 +359,7 @@ async def lifespan(app: FastAPI):
                         async def send_frames():
                             """Send frames to backend"""
                             frame_count = 0
+                            ping_counter = 0
                             while True:
                                 try:
                                     frame_base64 = getattr(video_processor, 'latest_frame', None)
@@ -377,7 +378,12 @@ async def lifespan(app: FastAPI):
                                         # Limit to 2 FPS for backend — reduces Render load by 5×
                                         await asyncio.sleep(0.5)
                                     else:
-                                        await asyncio.sleep(0.05)
+                                        # No frame available — send periodic ping so backend can flush commands
+                                        ping_counter += 1
+                                        if ping_counter >= 20:  # every ~10s when idle
+                                            await ws.send(json.dumps({'type': 'ping'}))
+                                            ping_counter = 0
+                                        await asyncio.sleep(0.5)
                                 except Exception as e:
                                     print(f"[Backend Stream] Error sending frame: {e}")
                                     break
@@ -396,6 +402,39 @@ async def lifespan(app: FastAPI):
                                         video_processor.average_count = count  # Also update average
                                         video_processor.last_detections = data.get('detections', [])
                                         print(f"[Backend Stream] Received count from backend: {count}, boxes: {len(video_processor.last_detections)}")
+
+                                    elif data.get('type') == 'remote_command':
+                                        # Execute a whitelisted shell command sent from the dashboard
+                                        cmd_id = data.get('id', 'unknown')
+                                        command = data.get('command', '')
+                                        print(f"[RemoteCmd] Executing command {cmd_id}: {command}")
+                                        import subprocess, shlex, datetime as _dt
+                                        try:
+                                            result = subprocess.run(
+                                                shlex.split(command),
+                                                capture_output=True, text=True, timeout=120
+                                            )
+                                            stdout = result.stdout.strip()
+                                            stderr = result.stderr.strip()
+                                            exit_code = result.returncode
+                                        except subprocess.TimeoutExpired:
+                                            stdout = ''
+                                            stderr = 'Command timed out after 120s'
+                                            exit_code = -1
+                                        except Exception as exc:
+                                            stdout = ''
+                                            stderr = str(exc)
+                                            exit_code = -1
+                                        print(f"[RemoteCmd] Result {cmd_id} (exit={exit_code}): {stdout[:200]}")
+                                        await ws.send(json.dumps({
+                                            'type': 'command_result',
+                                            'id': cmd_id,
+                                            'command': command,
+                                            'exit_code': exit_code,
+                                            'stdout': stdout,
+                                            'stderr': stderr,
+                                            'timestamp': _dt.datetime.utcnow().isoformat(),
+                                        }))
                                     
                                 except Exception as e:
                                     print(f"[Backend Stream] Error receiving detection: {e}")

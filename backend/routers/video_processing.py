@@ -96,6 +96,100 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# ── Remote command queue ──────────────────────────────────────────────────────
+# Commands posted via POST /api/pi/command are queued here and flushed to the
+# Pi on its next WebSocket message (ping or frame).  Results come back as
+# type='command_result' and are stored so the HTTP caller can poll for them.
+
+import asyncio
+from collections import deque
+
+_command_queue: deque = deque()          # pending {id, command} dicts
+_command_results: dict = {}              # id → result dict (last 50 kept)
+_MAX_RESULTS = 50
+
+
+def _enqueue_command(cmd_id: str, command: str):
+    _command_queue.append({"id": cmd_id, "command": command})
+
+
+async def _flush_commands_to_pi(websocket: WebSocket):
+    """Send any queued commands down the Pi WebSocket connection."""
+    while _command_queue:
+        cmd = _command_queue.popleft()
+        try:
+            await websocket.send_json({"type": "remote_command", **cmd})
+            print(f"[RemoteCmd] Sent command {cmd['id']} to Pi: {cmd['command']}")
+        except Exception as e:
+            print(f"[RemoteCmd] Failed to send command {cmd['id']}: {e}")
+            _command_queue.appendleft(cmd)   # put it back
+            break
+
+
+@router.post("/api/pi/command")
+async def send_pi_command(payload: dict):
+    """
+    Queue a whitelisted shell command to be executed on the Pi.
+    The Pi will run it on its next WebSocket heartbeat and return the result.
+
+    Body: { "command": "pip install --upgrade supabase postgrest-py" }
+    Returns: { "id": "<uuid>", "status": "queued" }
+    """
+    import uuid
+    command = (payload.get("command") or "").strip()
+    if not command:
+        raise HTTPException(status_code=400, detail="command is required")
+
+    # Whitelist — only allow safe upgrade/status commands
+    ALLOWED_PREFIXES = (
+        "pip install",
+        "pip show",
+        "python --version",
+        "python3 --version",
+        "sudo systemctl restart",
+        "sudo systemctl status",
+        "sudo systemctl stop",
+        "sudo systemctl start",
+        "sudo reboot",
+        "echo ",
+        "ls ",
+        "cat /proc/version",
+    )
+    if not any(command.startswith(p) for p in ALLOWED_PREFIXES):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Command not in whitelist. Allowed prefixes: {list(ALLOWED_PREFIXES)}"
+        )
+
+    cmd_id = str(uuid.uuid4())[:8]
+    _enqueue_command(cmd_id, command)
+    if not manager.pi_connections:
+        return {"id": cmd_id, "status": "queued_no_pi", "note": "Pi is not connected — command will execute when Pi reconnects"}
+    return {"id": cmd_id, "status": "queued"}
+
+
+@router.get("/api/pi/command/{cmd_id}")
+async def get_pi_command_result(cmd_id: str):
+    """Poll for the result of a previously queued command."""
+    if cmd_id in _command_results:
+        return _command_results[cmd_id]
+    # Check if still pending
+    pending = [c for c in _command_queue if c["id"] == cmd_id]
+    if pending:
+        return {"id": cmd_id, "status": "pending"}
+    return {"id": cmd_id, "status": "unknown"}
+
+
+@router.get("/api/pi/status")
+async def get_pi_connection_status():
+    """Check whether the Pi is currently connected via WebSocket."""
+    return {
+        "pi_connected": len(manager.pi_connections) > 0,
+        "pi_count": len(manager.pi_connections),
+        "frontend_count": len(manager.frontend_connections),
+        "pending_commands": len(_command_queue),
+    }
+
 
 @router.websocket("/ws/video-stream/{client_id}")
 async def video_stream_endpoint(websocket: WebSocket, client_id: str):
@@ -115,6 +209,10 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
                 
                 # Handle different message types
                 if message.get('type') == 'frame':
+                    # Flush any queued remote commands opportunistically
+                    if _command_queue:
+                        await _flush_commands_to_pi(websocket)
+
                     # Process video frame
                     frame_data = message.get('frame')
                     if not frame_data:
@@ -251,8 +349,28 @@ async def video_stream_endpoint(websocket: WebSocket, client_id: str):
                     await websocket.send_json(response)
                 
                 elif message.get('type') == 'ping':
-                    # Keep-alive ping
+                    # Keep-alive ping — also flush any pending remote commands
+                    await _flush_commands_to_pi(websocket)
                     await websocket.send_json({'type': 'pong'})
+
+                elif message.get('type') == 'command_result':
+                    # Pi finished executing a remote command — store the result
+                    cmd_id = message.get('id', 'unknown')
+                    result = {
+                        'id': cmd_id,
+                        'status': 'done',
+                        'exit_code': message.get('exit_code'),
+                        'stdout': message.get('stdout', ''),
+                        'stderr': message.get('stderr', ''),
+                        'command': message.get('command', ''),
+                        'completed_at': message.get('timestamp'),
+                    }
+                    _command_results[cmd_id] = result
+                    # Trim old results
+                    if len(_command_results) > _MAX_RESULTS:
+                        oldest = next(iter(_command_results))
+                        del _command_results[oldest]
+                    print(f"[RemoteCmd] Result for {cmd_id} (exit={result['exit_code']}): {result['stdout'][:200]}")
                     
             except json.JSONDecodeError:
                 print("[Video Router] Invalid JSON received")
