@@ -44,6 +44,7 @@ const PassengerAnalytics = () => {
     assignedBus,
     activeTripId,
     cameraActive,
+    piReachable,
   } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true, videoRef: sharedVideoRef });
 
   // Backend video connection for YOLOv8 processing
@@ -652,7 +653,7 @@ const PassengerAnalytics = () => {
               {!videoConnected && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/60">
                   <div className="text-center px-6">
-                    {cameraActive === false && online ? (
+                    {cameraActive === false && online && piReachable === true ? (
                       <>
                         <Camera className="w-16 h-16 text-red-400 mx-auto mb-4" />
                         <p className="text-red-400 font-medium mb-1">Camera not connected</p>

@@ -839,8 +839,23 @@ class VideoProcessor:
 
     def _capture_worker(self):
         """Continuously reads frames from hardware as soon as the sensor exposes them.
-        Zero sleep means V4L2 kernel buffer depth remains at 0, eliminating hardware lag."""
-        while self.running and self.camera and self.camera.isOpened():
+        Zero sleep means V4L2 kernel buffer depth remains at 0, eliminating hardware lag.
+        On consecutive read failures, triggers reconnect_camera() so the second trip always
+        gets a live feed without needing a full process restart."""
+        consecutive_failures = 0
+        MAX_FAILURES = 30  # ~30ms of blanks before treating as a real disconnect
+
+        while self.running:
+            if not self.camera or not self.camera.isOpened():
+                # Camera lost — try to reconnect; stops if running=False
+                if self.running:
+                    ok = self.reconnect_camera()
+                    if not ok:
+                        # reconnect_camera already sleeps/resets; loop again
+                        continue
+                    consecutive_failures = 0
+                continue
+
             try:
                 ret, frame = self.camera.read()
                 if ret and frame is not None:
@@ -848,10 +863,27 @@ class VideoProcessor:
                         self._latest_hw_frame = frame
                         self._latest_hw_time = time.time()
                         self._hw_frame_seq += 1
+                    consecutive_failures = 0
                 else:
-                    time.sleep(0.001)
-            except Exception:
+                    consecutive_failures += 1
+                    if consecutive_failures >= MAX_FAILURES:
+                        print(f"[Camera] {consecutive_failures} consecutive blank reads — triggering reconnect")
+                        consecutive_failures = 0
+                        self.camera.release()
+                        self.camera = None
+                    else:
+                        time.sleep(0.001)
+            except Exception as exc:
+                consecutive_failures += 1
                 time.sleep(0.001)
+                if consecutive_failures >= MAX_FAILURES:
+                    print(f"[Camera] Capture exception: {exc} — triggering reconnect")
+                    consecutive_failures = 0
+                    try:
+                        self.camera.release()
+                    except Exception:
+                        pass
+                    self.camera = None
 
     def get_fresh_frame(self):
         """Retrieve the absolute latest hardware frame with zero kernel queue delay."""
@@ -947,15 +979,21 @@ class VideoProcessor:
                 print(f"Error checking {path}: {e}")
     
     def reconnect_camera(self):
-        """Attempt to reconnect the camera"""
-        if self.camera_reconnect_attempts >= self.max_reconnect_attempts:
-            print(f"Max reconnection attempts ({self.max_reconnect_attempts}) reached. Giving up.")
-            return False
-            
+        """Attempt to reconnect the camera — retries indefinitely with backoff.
+        Never gives up permanently: after max_reconnect_attempts consecutive failures
+        it pauses for 30s then resets the counter so the next trip always has a fresh
+        chance to open the camera without requiring a process restart."""
         self.camera_reconnect_attempts += 1
-        print(f"Attempting camera reconnection {self.camera_reconnect_attempts}/{self.max_reconnect_attempts}...")
-        
-        time.sleep(self.reconnect_delay)
+        backoff = min(self.reconnect_delay * self.camera_reconnect_attempts, 10)
+
+        if self.camera_reconnect_attempts > self.max_reconnect_attempts:
+            # Backoff plateau: wait 30s then reset counter so we keep trying
+            print(f"[Camera] {self.camera_reconnect_attempts} failed attempts — pausing 30s before retry cycle reset")
+            time.sleep(30)
+            self.camera_reconnect_attempts = 0
+
+        print(f"[Camera] Reconnect attempt {self.camera_reconnect_attempts} (backoff {backoff:.1f}s)...")
+        time.sleep(backoff)
         return self.initialize_camera()
     
     def initialize_model(self):

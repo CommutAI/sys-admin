@@ -356,6 +356,7 @@ const CompactVideoFeed = ({
   videoRef,
   refresh,
   cameraActive,
+  piReachable,
   usingBackend,
   currentTripId,
   assignedBus,
@@ -499,7 +500,8 @@ const CompactVideoFeed = ({
         {/* Offline / Connecting placeholder */}
         {!showLive && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-950/90 backdrop-blur-sm p-6 text-center">
-            {cameraActive === false && online ? (
+            {/* Camera explicitly off — only shown when Pi is confirmed reachable */}
+            {cameraActive === false && online && piReachable === true ? (
               <>
                 <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
                   <Camera size={26} />
@@ -659,6 +661,7 @@ const Dashboard = () => {
     assignedBus: piAssignedBus,
     activeTripId: piActiveTripId,
     usingWebSocket: piUsingWebSocket,
+    piReachable,
   } = useRaspberryPi({ autoConnect: true, enableHealthCheck: true, videoRef: sharedVideoRef });
 
   // Backend video connection — Render processes frames with YOLO and streams to dashboard
@@ -1370,6 +1373,7 @@ const Dashboard = () => {
               videoRef={sharedVideoRef}
               refresh={backendStreaming ? backendRefresh : piRefresh}
               cameraActive={piCameraActive}
+              piReachable={piReachable}
               usingBackend={backendStreaming}
               currentTripId={piCurrentTripId}
               assignedBus={piAssignedBus}
