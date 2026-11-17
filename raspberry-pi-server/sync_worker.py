@@ -6,11 +6,15 @@ Data flow
 ─────────
   SQLite (raw, every write)
       └─► SyncWorker.run()  [wakes every SYNC_INTERVAL_SECONDS]
-              ├─► _aggregate_passenger_counts()  → skipped (backend handles)
+              ├─► _aggregate_passenger_counts()  → N rows → Supabase REST push
               └─► _aggregate_gps()               → N rows → Supabase REST push
 
 Aggregation rules
 ─────────────────
+  passenger_counts:
+    - Group raw counts into per-(trip_id, minute) buckets
+    - Emit { trip_id, bus_id, count (avg), ai_count (max), recorded_at }
+    - Cuts API calls by ~12× (raw writes every few seconds → 1 row/min)
   gps_locations:
     - Keep the most recent fix per 60-s window per trip
     - Emit { trip_id, latitude, longitude, altitude, speed, … }
@@ -220,14 +224,25 @@ def _run_sync_cycle() -> bool:
     Pull unsynced rows, aggregate, push, mark synced.
     Returns True if both pushes succeeded (or had nothing to push).
 
-    NOTE: Passenger counts are handled by backend (yolo_backend), not Pi.
-    Only GPS locations are synced from Pi.
+    Passenger counts: synced from Pi SQLite → Supabase (COUNT_METHOD=onnx local detection).
+    GPS locations:    synced from Pi SQLite → Supabase.
     """
     all_ok = True
 
     # ── Passenger counts ──────────────────────────────────────────────────────
-    # SKIP: Backend handles passenger count detection and storage
-    print("[SyncWorker] passenger_counts: handled by backend, skipping Pi sync")
+    pc_rows = fetch_unsynced_passenger_counts(limit=1000)
+    if pc_rows:
+        aggregates, ids = _aggregate_passenger_counts(pc_rows)
+        ok = _push("insert-batch", aggregates, "passenger_counts")
+        if ok:
+            mark_passenger_counts_synced(ids)
+            write_sync_log("passenger_counts", len(aggregates))
+            print(f"[SyncWorker] passenger_counts: {len(pc_rows)} raw → {len(aggregates)} aggregates pushed")
+        else:
+            write_sync_log("passenger_counts", 0, status="error", error="supabase push failed")
+            all_ok = False
+    else:
+        print("[SyncWorker] passenger_counts: nothing pending")
 
     # ── GPS ───────────────────────────────────────────────────────────────────
     gps_rows = fetch_unsynced_gps(limit=1000)
