@@ -304,32 +304,90 @@ const AuditLogs = () => {
       styles: { cellPadding: 1.8 }
     });
 
-    // Main Log Table
-    autoTable(doc, {
-      startY: doc.lastAutoTable.finalY + 4,
-      head: [['#', 'Timestamp', 'User', 'Action', 'Module', 'Operation Details', 'IP Address']],
-      body: targetLogs.map((log, idx) => [
-        idx + 1,
-        log.created_at ? new Date(log.created_at).toLocaleString('en-US', { timeZone: 'Asia/Manila' }) : 'N/A',
-        log.username || 'System',
-        log.action || 'GENERAL',
-        log.module || 'System',
-        log.details || '',
-        log.ip_address || 'Internal'
-      ]),
-      theme: 'striped',
-      headStyles: { fillColor: [234, 88, 12], textColor: 255, fontStyle: 'bold', fontSize: 7 },
-      bodyStyles: { fontSize: 6.8, cellPadding: 1.4 },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
-      columnStyles: {
-        0: { cellWidth: 10, halign: 'center' },
-        1: { cellWidth: 32 },
-        2: { cellWidth: 42 },
-        3: { cellWidth: 20, halign: 'center' },
-        4: { cellWidth: 26 },
-        5: { cellWidth: 110 },
-        6: { cellWidth: 28, halign: 'center' }
+    // Main Log List
+    const listStartY = doc.lastAutoTable.finalY + 8;
+    const pageWidth = 297;
+    const margin = 14;
+    const usableWidth = pageWidth - margin * 2;
+    let curY = listStartY;
+
+    // Section header
+    doc.setFillColor(234, 88, 12);
+    doc.rect(margin, curY - 4, usableWidth, 7, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.text('AUDIT LOG ENTRIES', margin + 2, curY + 0.5);
+    curY += 7;
+
+    targetLogs.forEach((log, idx) => {
+      // Check if we need a new page (each entry ~18mm)
+      if (curY + 20 > 200) {
+        doc.addPage();
+        curY = 14;
       }
+
+      const ts = log.created_at
+        ? new Date(log.created_at).toLocaleString('en-US', { timeZone: 'Asia/Manila' })
+        : 'N/A';
+      const user    = log.username    || 'System';
+      const action  = log.action      || 'GENERAL';
+      const module  = log.module      || 'System';
+      const details = log.details     || '—';
+      const ip      = log.ip_address  || 'Internal';
+
+      // Entry background (alternating)
+      if (idx % 2 === 0) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(margin, curY, usableWidth, 17, 'F');
+      }
+
+      // Entry number badge
+      doc.setFillColor(234, 88, 12);
+      doc.roundedRect(margin + 1, curY + 2, 9, 5, 1, 1, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6);
+      doc.text(`${idx + 1}`, margin + 5.5, curY + 5.8, { align: 'center' });
+
+      // Line 1: Action badge + Module + Timestamp
+      doc.setFillColor(35, 39, 47);
+      doc.roundedRect(margin + 12, curY + 2, 18, 5, 1, 1, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6);
+      doc.text(action.toUpperCase(), margin + 21, curY + 5.8, { align: 'center' });
+
+      doc.setTextColor(70, 70, 70);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.5);
+      doc.text(`${module}`, margin + 33, curY + 5.8);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(120, 120, 120);
+      doc.setFontSize(6);
+      doc.text(ts, pageWidth - margin - 2, curY + 5.8, { align: 'right' });
+
+      // Line 2: User + IP
+      doc.setTextColor(60, 60, 60);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.2);
+      doc.text(`User: ${user}`, margin + 12, curY + 11);
+      doc.setTextColor(120, 120, 120);
+      doc.text(`IP: ${ip}`, pageWidth - margin - 2, curY + 11, { align: 'right' });
+
+      // Line 3: Details
+      doc.setTextColor(50, 50, 50);
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(6);
+      const truncatedDetails = details.length > 160 ? details.slice(0, 157) + '...' : details;
+      doc.text(truncatedDetails, margin + 12, curY + 15.5, { maxWidth: usableWidth - 14 });
+
+      // Separator line
+      doc.setDrawColor(220, 220, 220);
+      doc.line(margin, curY + 17, margin + usableWidth, curY + 17);
+
+      curY += 18;
     });
 
     // Footer on all pages
