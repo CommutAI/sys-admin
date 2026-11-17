@@ -614,6 +614,10 @@ DISABLE_DRAWING = os.getenv('DISABLE_DRAWING', 'false').lower() == 'true'
 DISABLE_DB_WRITES = os.getenv('DISABLE_DB_WRITES', 'false').lower() == 'true'
 SKIP_WEBSOCKET_THROTTLE = os.getenv('SKIP_WEBSOCKET_THROTTLE', 'false').lower() == 'true'
 DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '320'))  # 320 = best accuracy/speed tradeoff on Pi for bus interiors
+# Tiled detection: run separate passes on left/right seat zones at native resolution.
+# For a rear-mounted camera, seat-zone crops give ~2x effective resolution per side
+# with no extra model overhead. Set to 'false' to disable.
+ENABLE_TILED_DETECTION = os.getenv('ENABLE_TILED_DETECTION', 'true').lower() == 'true'
 
 # AI Model configuration — strictly YOLO/ONNX person detection
 DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
@@ -1134,9 +1138,12 @@ class VideoProcessor:
             # Backend detection mode - don't process locally, wait for backend results
             return []
         if hasattr(self, 'onnx_session') and self.onnx_session is not None:
+            if ENABLE_TILED_DETECTION:
+                return self._detect_onnx_tiled(frame)
             return self._detect_onnx(frame)
         if hasattr(self, 'model') and self.model is not None:
             return self._detect_yolo(frame)
+        return []
         return []
 
     def _detect_onnx(self, frame):
@@ -1211,6 +1218,94 @@ class VideoProcessor:
         except Exception as e:
             print(f"ONNX detection error: {e}")
             return []
+
+    def _detect_onnx_crop(self, frame, x1, y1, x2, y2):
+        """
+        Run ONNX detection on a specific crop of the frame.
+        Returns detections with bbox coordinates mapped back to full-frame space.
+        Used by tiled detection to boost effective resolution on seat zones.
+        """
+        try:
+            import numpy as np
+            crop = frame[y1:y2, x1:x2]
+            if crop.size == 0:
+                return []
+            crop_h, crop_w = crop.shape[:2]
+            det_sz = DETECTION_SIZE
+            rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            rgb = cv2.resize(rgb, (det_sz, det_sz))
+            img = rgb.astype(np.float32) / 255.0
+            img = np.transpose(img, (2, 0, 1))
+            img = np.expand_dims(img, axis=0)
+
+            outputs = self.onnx_session.run(None, {self.onnx_session.get_inputs()[0].name: img})
+            detections = []
+            if len(outputs) > 0:
+                predictions = outputs[0][0].T
+                class_scores = predictions[:, 4:]
+                max_class_ids = np.argmax(class_scores, axis=1)
+                person_scores = predictions[:, 4]
+                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if YOLO_CONFIDENCE_THRESHOLD > 0.01 else 0.20
+                mask = (max_class_ids == 0) & (person_scores >= conf_thresh)
+                if mask.any():
+                    filtered = predictions[mask]
+                    confidences = person_scores[mask]
+                    cx, cy, bw, bh = filtered[:, 0], filtered[:, 1], filtered[:, 2], filtered[:, 3]
+                    # Scale from det_sz space → crop space → full frame space
+                    sx, sy = crop_w / float(det_sz), crop_h / float(det_sz)
+                    orig_h, orig_w = frame.shape[:2]
+                    for k in range(len(filtered)):
+                        bx1 = int((cx[k] - bw[k] / 2) * sx) + x1
+                        by1 = int((cy[k] - bh[k] / 2) * sy) + y1
+                        bx2 = int((cx[k] + bw[k] / 2) * sx) + x1
+                        by2 = int((cy[k] + bh[k] / 2) * sy) + y1
+                        bx1 = max(0, min(orig_w, bx1))
+                        by1 = max(0, min(orig_h, by1))
+                        bx2 = max(0, min(orig_w, bx2))
+                        by2 = max(0, min(orig_h, by2))
+                        bbox = [bx1, by1, bx2, by2]
+                        if self._is_valid_person_box(bbox, orig_w, orig_h):
+                            detections.append({'bbox': bbox, 'confidence': float(confidences[k]), 'class': 'person'})
+            return detections
+        except Exception as e:
+            print(f"ONNX crop detection error: {e}")
+            return []
+
+    def _detect_onnx_tiled(self, frame):
+        """
+        Tiled detection for rear-mounted bus cameras where passengers are
+        small and hidden behind seat backs.
+
+        Runs 3 inference passes and merges with NMS:
+          Pass 1 — Full frame at DETECTION_SIZE  (aisle + standing passengers)
+          Pass 2 — Left seat zone crop at DETECTION_SIZE (native resolution for left rows)
+          Pass 3 — Right seat zone crop at DETECTION_SIZE (native resolution for right rows)
+
+        For a 640×480 frame cropped to 320×(seat height):
+          - Full frame pass: 640px → 320px (0.5× scale, far seats at ~8–14px)
+          - Seat zone pass: 320px → 320px (1.0× scale, NO downscaling — far seats at 15–28px)
+
+        This gives ~2× effective resolution for seated zones at no extra model cost.
+        """
+        h, w = frame.shape[:2]
+        # Seat zone: trim ceiling (top 12%) and floor (bottom 15%), split left/right
+        y_top    = int(h * 0.12)
+        y_bottom = int(h * 0.85)
+        x_mid    = w // 2
+
+        # Pass 1: full frame
+        all_dets = self._detect_onnx(frame)
+
+        # Pass 2: left seat zone
+        left_dets  = self._detect_onnx_crop(frame, 0,     y_top, x_mid, y_bottom)
+        # Pass 3: right seat zone
+        right_dets = self._detect_onnx_crop(frame, x_mid, y_top, w,     y_bottom)
+
+        combined = all_dets + left_dets + right_dets
+        merged   = self._apply_nms(combined, iou_threshold=IOU_THRESHOLD)[:MAX_DET]
+        if len(merged) > len(all_dets):
+            print(f"[TILED] full={len(all_dets)} left={len(left_dets)} right={len(right_dets)} → merged={len(merged)}")
+        return merged
 
     def _detect_tflite(self, frame):
         """TensorFlow Lite-based YOLO detection for 90%+ accuracy on ARM64."""
