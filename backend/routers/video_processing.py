@@ -7,8 +7,9 @@ Processes frames with YOLOv8 and streams results back
 import asyncio
 import json
 import base64
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import FileResponse
+import httpx
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
 from typing import Dict, Set
 import cv2
 import numpy as np
@@ -358,25 +359,124 @@ async def video_feed_endpoint(websocket: WebSocket):
 
 
 @router.get("/api/video-processing/download-video/{filename}")
-async def download_video(filename: str):
+async def download_video(filename: str, request: Request):
     """
-    Download a video file from the backend's recordings directory
+    Serve a recorded trip video with full HTTP Range support.
+
+    Priority:
+    1. Local backend ./recordings directory (fastest)
+    2. Pi proxy — fetch from the Pi tunnel stored in Supabase pi_devices
+       and stream it straight through to the browser (handles Cloudflare
+       interstitial that blocks browser <video> direct access).
     """
+    # ── 1. Try local file first ───────────────────────────────────────────────
     VIDEO_OUTPUT_DIR = os.getenv('VIDEO_OUTPUT_DIR', './recordings')
     file_path = os.path.join(VIDEO_OUTPUT_DIR, filename)
 
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail='File not found')
+    if os.path.exists(file_path) and os.path.getsize(file_path) >= 10_000:
+        file_size = os.path.getsize(file_path)
+        return _range_response(file_path, file_size, request.headers.get('range'))
+
+    # ── 2. Proxy from Pi tunnel ───────────────────────────────────────────────
+    pi_url = await _get_pi_tunnel_url()
+    if not pi_url:
+        raise HTTPException(status_code=404, detail='Video not found locally and Pi tunnel URL unavailable')
+
+    upstream_url = f"{pi_url.rstrip('/')}/download-video/{filename}"
+    range_header = request.headers.get('range')
+
+    headers = {'Range': range_header} if range_header else {}
 
     try:
-        return FileResponse(
-            file_path,
-            media_type='video/mp4',
-            filename=filename
-        )
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            async with client.stream('GET', upstream_url, headers=headers) as upstream:
+                if upstream.status_code == 404:
+                    raise HTTPException(status_code=404, detail='Video not found on Pi')
+                if upstream.status_code not in (200, 206):
+                    raise HTTPException(status_code=502, detail=f'Pi returned {upstream.status_code}')
+
+                resp_headers = {
+                    'Content-Type': 'video/mp4',
+                    'Accept-Ranges': 'bytes',
+                    'Cache-Control': 'no-cache',
+                }
+                for h in ('content-range', 'content-length'):
+                    if h in upstream.headers:
+                        resp_headers[h.title()] = upstream.headers[h]
+
+                async def _stream():
+                    async for chunk in upstream.aiter_bytes(chunk_size=1024 * 512):
+                        yield chunk
+
+                return StreamingResponse(
+                    _stream(),
+                    status_code=upstream.status_code,
+                    headers=resp_headers,
+                )
+    except httpx.RequestError as exc:
+        print(f"[VideoProxy] Request error proxying {filename}: {exc}")
+        raise HTTPException(status_code=502, detail='Could not reach Pi to fetch video')
+
+
+def _range_response(file_path: str, file_size: int, range_header: str | None):
+    """Return a 206 or 200 StreamingResponse for a local file."""
+    chunk_size = 1024 * 1024  # 1 MB
+
+    if range_header:
+        range_val = range_header.replace('bytes=', '')
+        parts = range_val.split('-')
+        start = int(parts[0]) if parts[0] else 0
+        end = int(parts[1]) if len(parts) > 1 and parts[1] else min(start + chunk_size - 1, file_size - 1)
+        end = min(end, file_size - 1)
+        content_length = end - start + 1
+
+        async def _ranged():
+            with open(file_path, 'rb') as f:
+                f.seek(start)
+                remaining = content_length
+                while remaining > 0:
+                    data = f.read(min(chunk_size, remaining))
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        return StreamingResponse(_ranged(), status_code=206, headers={
+            'Content-Range': f'bytes {start}-{end}/{file_size}',
+            'Content-Length': str(content_length),
+            'Accept-Ranges': 'bytes',
+            'Content-Type': 'video/mp4',
+        })
+
+    async def _full():
+        with open(file_path, 'rb') as f:
+            while True:
+                data = f.read(chunk_size)
+                if not data:
+                    break
+                yield data
+
+    return StreamingResponse(_full(), status_code=200, headers={
+        'Content-Length': str(file_size),
+        'Accept-Ranges': 'bytes',
+        'Content-Type': 'video/mp4',
+    })
+
+
+async def _get_pi_tunnel_url() -> str:
+    """Fetch the latest Pi tunnel URL from Supabase pi_devices."""
+    try:
+        result = supabase.table('pi_devices') \
+            .select('backend_url') \
+            .eq('bus_number', 1) \
+            .order('last_seen', desc=True) \
+            .limit(1) \
+            .execute()
+        if result.data:
+            return result.data[0].get('backend_url', '')
     except Exception as e:
-        print(f"[Video Router] Error serving video file: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[VideoProxy] Could not fetch Pi URL from Supabase: {e}")
+    return ''
 
 
 @router.get("/api/video-processing/recordings")

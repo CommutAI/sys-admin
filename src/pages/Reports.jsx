@@ -583,35 +583,28 @@ const Reports = () => {
       setTripVideoRecordings(recordingsData || []);
 
       // Build video URL - check source to use correct endpoint
-      const resolvedPi = await resolvePiUrl();
-      const piBaseUrl = resolvedPi || import.meta.env.VITE_RASPBERRY_PI_URL || '';
       const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
       const completedRecording = (recordingsData || []).find(r => r.status === 'completed' && r.file_name);
 
-      // Helper: build the best URL for a filename.
-      // Pi URL is preferred (direct, low-latency); backend is the fallback.
-      // The <video> onError handler will auto-switch if the Pi URL fails.
-      const buildVideoUrl = (fileName, recording) => {
+      // Helper: always route through the backend proxy.
+      // The backend serves local files first, then transparently proxies from the Pi
+      // tunnel — avoiding Cloudflare browser interstitials that break direct <video> access.
+      const buildVideoUrl = (fileName) => {
         if (!fileName) return null;
-        // Cloudflare R2 / Supabase Storage — already a full remote URL
+        // Already a full remote URL (Cloudflare R2 / Supabase Storage) — use directly
         if (fileName.startsWith('http://') || fileName.startsWith('https://')) return fileName;
-        const isBackendProcessed = recording?.metadata?.source === 'backend_processor';
-        if (isBackendProcessed) return `${backendUrl}/api/video-processing/download-video/${fileName}`;
-        // Pi-local recording: prefer Pi, video player will fallback to backend on error
-        return piBaseUrl
-          ? `${piBaseUrl}/download-video/${fileName}`
-          : `${backendUrl}/api/video-processing/download-video/${fileName}`;
+        // Everything else goes through the backend proxy
+        return `${backendUrl}/api/video-processing/download-video/${fileName}`;
       };
 
       if (trip.video_recording_url && trip.video_recording_status === 'available') {
         const fileName = trip.video_recording_url.startsWith('http')
           ? trip.video_recording_url
           : trip.video_recording_url.split('/').pop();
-        const backendRecording = (recordingsData || []).find(r => r.metadata?.source === 'backend_processor');
-        setTripVideoUrl(buildVideoUrl(fileName, backendRecording));
+        setTripVideoUrl(buildVideoUrl(fileName));
         setTripVideoStatus('available');
       } else if (completedRecording) {
-        setTripVideoUrl(buildVideoUrl(completedRecording.file_name, completedRecording));
+        setTripVideoUrl(buildVideoUrl(completedRecording.file_name));
         setTripVideoStatus('available');
       } else if ((recordingsData || []).length > 0) {
         setTripVideoStatus('processing');
@@ -2625,17 +2618,17 @@ const Reports = () => {
                         className="w-full h-full object-contain"
                         src={tripVideoUrl}
                         onError={(e) => {
-                          // Auto-fallback: if Pi URL failed, try backend proxy URL
                           const src = e.currentTarget.src;
                           const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
                           const fileName = src.split('/').pop().split('?')[0];
-                          const backendFallback = `${backendUrl}/api/video-processing/download-video/${fileName}`;
-                          if (src !== backendFallback) {
-                            console.warn('[Video] Primary URL failed, falling back to backend proxy:', backendFallback);
-                            e.currentTarget.src = backendFallback;
+                          // Backend proxy is the canonical fallback — it fetches from Pi internally
+                          const backendProxy = `${backendUrl}/api/video-processing/download-video/${fileName}`;
+                          if (!src.includes(backendUrl)) {
+                            console.warn('[Video] Primary URL failed, switching to backend proxy:', backendProxy);
+                            e.currentTarget.src = backendProxy;
                             e.currentTarget.load();
                           } else {
-                            console.error('[Video] Both Pi and backend URLs failed for:', fileName);
+                            console.error('[Video] Backend proxy also failed for:', fileName);
                             setTripVideoStatus('error');
                             setTripVideoUrl(null);
                           }
@@ -2714,12 +2707,9 @@ const Reports = () => {
                                   <div className="flex items-center gap-1">
                                     <button
                                       onClick={async () => {
-                                        const piBase = await resolvePiUrl();
                                         const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
-                                        // Pi URL first; <video> onError will auto-fall back to backend
-                                        const url = (recording.metadata?.source === 'backend_processor')
-                                          ? `${backendUrl}/api/video-processing/download-video/${recording.file_name}`
-                                          : (piBase ? `${piBase}/download-video/${recording.file_name}` : `${backendUrl}/api/video-processing/download-video/${recording.file_name}`);
+                                        // Always use backend proxy — it handles Pi fetching internally
+                                        const url = `${backendUrl}/api/video-processing/download-video/${recording.file_name}`;
                                         setTripVideoUrl(url);
                                         setTripVideoStatus('available');
                                       }}
