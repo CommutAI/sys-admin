@@ -588,31 +588,30 @@ const Reports = () => {
       const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
       const completedRecording = (recordingsData || []).find(r => r.status === 'completed' && r.file_name);
 
+      // Helper: build the best URL for a filename.
+      // Pi URL is preferred (direct, low-latency); backend is the fallback.
+      // The <video> onError handler will auto-switch if the Pi URL fails.
+      const buildVideoUrl = (fileName, recording) => {
+        if (!fileName) return null;
+        // Cloudflare R2 / Supabase Storage — already a full remote URL
+        if (fileName.startsWith('http://') || fileName.startsWith('https://')) return fileName;
+        const isBackendProcessed = recording?.metadata?.source === 'backend_processor';
+        if (isBackendProcessed) return `${backendUrl}/api/video-processing/download-video/${fileName}`;
+        // Pi-local recording: prefer Pi, video player will fallback to backend on error
+        return piBaseUrl
+          ? `${piBaseUrl}/download-video/${fileName}`
+          : `${backendUrl}/api/video-processing/download-video/${fileName}`;
+      };
+
       if (trip.video_recording_url && trip.video_recording_status === 'available') {
-        // If it's a full remote URL (Cloudflare R2 / Supabase Storage), use directly
-        if (trip.video_recording_url.startsWith('http://') || trip.video_recording_url.startsWith('https://')) {
-          setTripVideoUrl(trip.video_recording_url);
-        } else {
-          // If the URL is a filename or local path, convert to appropriate endpoint URL
-          const fileName = trip.video_recording_url.split('/').pop();
-          const backendRecording = (recordingsData || []).find(r => r.metadata?.source === 'backend_processor');
-          if (backendRecording) {
-            setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${fileName}`);
-          } else if (piBaseUrl) {
-            setTripVideoUrl(`${piBaseUrl}/download-video/${fileName}`);
-          } else {
-            setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${fileName}`);
-          }
-        }
+        const fileName = trip.video_recording_url.startsWith('http')
+          ? trip.video_recording_url
+          : trip.video_recording_url.split('/').pop();
+        const backendRecording = (recordingsData || []).find(r => r.metadata?.source === 'backend_processor');
+        setTripVideoUrl(buildVideoUrl(fileName, backendRecording));
         setTripVideoStatus('available');
       } else if (completedRecording) {
-        if (completedRecording.metadata?.source === 'backend_processor') {
-          setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${completedRecording.file_name}`);
-        } else if (piBaseUrl) {
-          setTripVideoUrl(`${piBaseUrl}/download-video/${completedRecording.file_name}`);
-        } else {
-          setTripVideoUrl(`${backendUrl}/api/video-processing/download-video/${completedRecording.file_name}`);
-        }
+        setTripVideoUrl(buildVideoUrl(completedRecording.file_name, completedRecording));
         setTripVideoStatus('available');
       } else if ((recordingsData || []).length > 0) {
         setTripVideoStatus('processing');
@@ -2621,9 +2620,26 @@ const Reports = () => {
                   <div className="bg-black/40 rounded-xl overflow-hidden aspect-video relative border border-white/10 shadow-lg">
                     {tripVideoUrl ? (
                       <video
+                        key={tripVideoUrl}
                         controls
                         className="w-full h-full object-contain"
                         src={tripVideoUrl}
+                        onError={(e) => {
+                          // Auto-fallback: if Pi URL failed, try backend proxy URL
+                          const src = e.currentTarget.src;
+                          const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
+                          const fileName = src.split('/').pop().split('?')[0];
+                          const backendFallback = `${backendUrl}/api/video-processing/download-video/${fileName}`;
+                          if (src !== backendFallback) {
+                            console.warn('[Video] Primary URL failed, falling back to backend proxy:', backendFallback);
+                            e.currentTarget.src = backendFallback;
+                            e.currentTarget.load();
+                          } else {
+                            console.error('[Video] Both Pi and backend URLs failed for:', fileName);
+                            setTripVideoStatus('error');
+                            setTripVideoUrl(null);
+                          }
+                        }}
                       >
                         Your browser does not support the video tag.
                       </video>
@@ -2700,6 +2716,7 @@ const Reports = () => {
                                       onClick={async () => {
                                         const piBase = await resolvePiUrl();
                                         const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
+                                        // Pi URL first; <video> onError will auto-fall back to backend
                                         const url = (recording.metadata?.source === 'backend_processor')
                                           ? `${backendUrl}/api/video-processing/download-video/${recording.file_name}`
                                           : (piBase ? `${piBase}/download-video/${recording.file_name}` : `${backendUrl}/api/video-processing/download-video/${recording.file_name}`);

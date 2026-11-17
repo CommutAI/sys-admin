@@ -2067,6 +2067,14 @@ class VideoProcessor:
             print("Database not available - skipping metadata save")
             return None
 
+        # Guard: never register a stub/corrupt file (< 10 KB or 0 frames)
+        if file_size < 10_000:
+            print(f"[DB] Skipping metadata save — file too small ({file_size} bytes), likely corrupt: {video_path}")
+            return None
+        if frame_count is not None and frame_count < 10:
+            print(f"[DB] Skipping metadata save — too few frames ({frame_count}), likely corrupt: {video_path}")
+            return None
+
         try:
             # Try to upload to Cloudflare Stream first
             cloudflare_url = self._upload_to_cloudflare_stream(video_path, trip_id)
@@ -2491,8 +2499,8 @@ async def get_recording(recording_id: str):
         return JSONResponse({'status': 'error', 'message': str(e)}, status_code=500)
 
 @app.get("/download-video/{filename}")
-async def download_video(filename: str):
-    """Stream a video file - supports range requests for browser playback"""
+async def download_video(filename: str, request: Request):
+    """Stream a video file with HTTP Range support for browser seek/playback."""
     file_path = os.path.join(VIDEO_STORAGE_PATH, filename)
 
     if not os.path.exists(file_path):
@@ -2500,14 +2508,58 @@ async def download_video(filename: str):
 
     try:
         file_size = os.path.getsize(file_path)
-        if file_size < 1000:  # Less than 1KB means file is corrupted/empty
-            return JSONResponse({'status': 'error', 'message': 'Video file is corrupted or empty'}, status_code=500)
+        if file_size < 1000:
+            return JSONResponse({'status': 'error', 'message': 'Video file is corrupted or empty'}, status_code=422)
 
-        return FileResponse(
-            file_path,
-            media_type='video/mp4',
-            filename=filename
-        )
+        range_header = request.headers.get('range')
+        chunk_size = 1024 * 1024  # 1 MB chunks
+
+        if range_header:
+            # Parse "bytes=start-end"
+            range_val = range_header.strip().replace('bytes=', '')
+            parts = range_val.split('-')
+            start = int(parts[0]) if parts[0] else 0
+            end = int(parts[1]) if parts[1] else min(start + chunk_size - 1, file_size - 1)
+            end = min(end, file_size - 1)
+            content_length = end - start + 1
+
+            async def ranged_file_sender():
+                with open(file_path, 'rb') as f:
+                    f.seek(start)
+                    remaining = content_length
+                    while remaining > 0:
+                        data = f.read(min(chunk_size, remaining))
+                        if not data:
+                            break
+                        remaining -= len(data)
+                        yield data
+
+            headers = {
+                'Content-Range': f'bytes {start}-{end}/{file_size}',
+                'Accept-Ranges': 'bytes',
+                'Content-Length': str(content_length),
+                'Content-Type': 'video/mp4',
+                'Cache-Control': 'no-cache',
+            }
+            return StreamingResponse(ranged_file_sender(), status_code=206, headers=headers)
+
+        # No Range header — stream the full file
+        async def full_file_sender():
+            with open(file_path, 'rb') as f:
+                while True:
+                    data = f.read(chunk_size)
+                    if not data:
+                        break
+                    yield data
+
+        headers = {
+            'Content-Length': str(file_size),
+            'Accept-Ranges': 'bytes',
+            'Content-Type': 'video/mp4',
+            'Cache-Control': 'no-cache',
+        }
+        return StreamingResponse(full_file_sender(), status_code=200, headers=headers)
+
     except Exception as e:
         return JSONResponse({'status': 'error', 'message': str(e)}, status_code=500)
 
