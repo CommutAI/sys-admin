@@ -1,11 +1,73 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FileText, Download, Calendar, TrendingUp, Users, DollarSign, Bus, Activity, ArrowUp, ArrowDown, ArrowLeftRight, Search, Filter, MoreHorizontal, ChevronLeft, ChevronRight, Eye, EyeOff, X, Settings, ChevronDown, SortAsc, SortDesc, BarChart3, Clock, MapPin, CheckCircle, AlertCircle, Download as DownloadIcon, AlertTriangle, Users as UsersIcon, Play, Copy } from 'lucide-react';
+import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import AuditService from '../services/auditService';
 import { resolvePiUrl } from '../services/raspberryPiApi';
+
+// Fix Leaflet default marker icons (webpack/vite strips them)
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+});
+
+// Orange bus marker for the moving position
+const busIcon = L.divIcon({
+  className: '',
+  html: `<div style="
+    width:28px;height:28px;border-radius:50%;
+    background:#f97316;border:3px solid white;
+    box-shadow:0 2px 8px rgba(0,0,0,0.5);
+    display:flex;align-items:center;justify-content:center;
+    font-size:13px;
+  ">🚌</div>`,
+  iconSize: [28, 28],
+  iconAnchor: [14, 14],
+});
+
+// Green start marker
+const startIcon = L.divIcon({
+  className: '',
+  html: `<div style="
+    width:22px;height:22px;border-radius:50%;
+    background:#22c55e;border:3px solid white;
+    box-shadow:0 2px 6px rgba(0,0,0,0.4);
+  "></div>`,
+  iconSize: [22, 22],
+  iconAnchor: [11, 11],
+});
+
+// Red end marker
+const endIcon = L.divIcon({
+  className: '',
+  html: `<div style="
+    width:22px;height:22px;border-radius:50%;
+    background:#ef4444;border:3px solid white;
+    box-shadow:0 2px 6px rgba(0,0,0,0.4);
+  "></div>`,
+  iconSize: [22, 22],
+  iconAnchor: [11, 11],
+});
+
+/** Imperatively pan/zoom the map to fit the route */
+function MapFitter({ positions }) {
+  const map = useMap();
+  useEffect(() => {
+    if (positions.length > 1) {
+      map.fitBounds(L.latLngBounds(positions), { padding: [24, 24] });
+    } else if (positions.length === 1) {
+      map.setView(positions[0], 15);
+    }
+  }, [positions, map]);
+  return null;
+}
 
 const Reports = () => {
   const [loading, setLoading] = useState(false);
@@ -43,6 +105,13 @@ const Reports = () => {
   const [tripVideoUrl, setTripVideoUrl] = useState(null);
   const [tripVideoStatus, setTripVideoStatus] = useState(null);
   const [tripVideoRecordings, setTripVideoRecordings] = useState([]);
+
+  // GPS track + video-map sync
+  const videoRef = useRef(null);
+  const [tripGpsTrack, setTripGpsTrack] = useState([]);   // [{lat, lng, ts}] sorted by time
+  const [videoStartTs, setVideoStartTs] = useState(null); // Date of video recording start
+  const [mapMarkerPos, setMapMarkerPos] = useState(null); // {lat, lng} of moving bus marker
+  const [gpsLoading, setGpsLoading] = useState(false);
 
   // Modal pagination states
   const [modalVideoPage, setModalVideoPage] = useState(1);
@@ -543,6 +612,10 @@ const Reports = () => {
     setModalAnomaliesPage(1);
     setModalIrregularitiesPage(1);
     setModalAlertsPage(1);
+    // Reset GPS map state
+    setTripGpsTrack([]);
+    setVideoStartTs(null);
+    setMapMarkerPos(null);
     // M1 — Pre-warm the backend so its cold-start (Render free tier) doesn't
     // block the video proxy when the user clicks play. Fire-and-forget.
     const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
@@ -586,6 +659,24 @@ const Reports = () => {
       setTripEmergencyAlerts(emergencyAlertsData || []);
       setTripVideoRecordings(recordingsData || []);
 
+      // Fetch GPS track for this trip (sorted ascending for polyline)
+      setGpsLoading(true);
+      const { data: gpsData } = await supabase
+        .from('gps_locations')
+        .select('latitude, longitude, recorded_at')
+        .eq('trip_id', trip.id)
+        .order('recorded_at', { ascending: true });
+      setGpsLoading(false);
+
+      if (gpsData && gpsData.length > 0) {
+        const track = gpsData
+          .filter(p => p.latitude && p.longitude)
+          .map(p => ({ lat: parseFloat(p.latitude), lng: parseFloat(p.longitude), ts: new Date(p.recorded_at).getTime() }));
+        setTripGpsTrack(track);
+        // Set initial marker to trip start position
+        if (track.length > 0) setMapMarkerPos({ lat: track[0].lat, lng: track[0].lng });
+      }
+
       // Build video URL - check source to use correct endpoint
       const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
       const completedRecording = (recordingsData || []).find(r => r.status === 'completed' && r.file_name);
@@ -607,9 +698,14 @@ const Reports = () => {
           : trip.video_recording_url.split('/').pop();
         setTripVideoUrl(buildVideoUrl(fileName));
         setTripVideoStatus('available');
+        // Use trip started_at as video start reference timestamp
+        setVideoStartTs(trip.started_at ? new Date(trip.started_at).getTime() : null);
       } else if (completedRecording) {
         setTripVideoUrl(buildVideoUrl(completedRecording.file_name));
         setTripVideoStatus('available');
+        // Use recording metadata.recorded_at or trip start
+        const recStart = completedRecording.metadata?.recorded_at || trip.started_at;
+        setVideoStartTs(recStart ? new Date(recStart).getTime() : null);
       } else if ((recordingsData || []).length > 0) {
         setTripVideoStatus('processing');
       } else if (trip.video_recording_status === 'not_recorded') {
@@ -2618,9 +2714,22 @@ const Reports = () => {
                     {tripVideoUrl ? (
                       <video
                         key={tripVideoUrl}
+                        ref={videoRef}
                         controls
                         className="w-full h-full object-contain"
                         src={tripVideoUrl}
+                        onTimeUpdate={(e) => {
+                          if (!videoStartTs || tripGpsTrack.length === 0) return;
+                          const currentMs = videoStartTs + e.currentTarget.currentTime * 1000;
+                          // Find nearest GPS point by timestamp
+                          let best = tripGpsTrack[0];
+                          let bestDiff = Math.abs(tripGpsTrack[0].ts - currentMs);
+                          for (const pt of tripGpsTrack) {
+                            const diff = Math.abs(pt.ts - currentMs);
+                            if (diff < bestDiff) { bestDiff = diff; best = pt; }
+                          }
+                          setMapMarkerPos({ lat: best.lat, lng: best.lng });
+                        }}
                         onError={(e) => {
                           const src = e.currentTarget.src;
                           const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
@@ -2789,6 +2898,111 @@ const Reports = () => {
                   )}
                 </div>
               </div>
+
+              {/* GPS Route Map — synced to video playback */}
+              {(tripGpsTrack.length > 0 || gpsLoading) && (
+                <div className="pt-4 border-t border-white/10 space-y-2">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-white/80 text-sm font-semibold flex items-center gap-2">
+                      <MapPin size={16} className="text-orange-400" />
+                      GPS Route Playback
+                    </span>
+                    <div className="flex items-center gap-3">
+                      {mapMarkerPos && (
+                        <span className="text-xs text-white/40 font-mono">
+                          {mapMarkerPos.lat.toFixed(5)}, {mapMarkerPos.lng.toFixed(5)}
+                        </span>
+                      )}
+                      <span className="text-xs text-white/30">{tripGpsTrack.length} GPS points</span>
+                    </div>
+                  </div>
+
+                  {gpsLoading ? (
+                    <div className="h-64 rounded-xl bg-white/5 flex items-center justify-center border border-white/10">
+                      <span className="text-white/40 text-sm">Loading GPS track…</span>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl overflow-hidden border border-white/10 shadow-lg" style={{ height: '320px' }}>
+                      <MapContainer
+                        center={tripGpsTrack.length > 0 ? [tripGpsTrack[0].lat, tripGpsTrack[0].lng] : [8.0, 125.1]}
+                        zoom={14}
+                        style={{ height: '100%', width: '100%' }}
+                        scrollWheelZoom={true}
+                      >
+                        <TileLayer
+                          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                        />
+                        <MapFitter positions={tripGpsTrack.map(p => [p.lat, p.lng])} />
+
+                        {/* Route polyline */}
+                        {tripGpsTrack.length > 1 && (
+                          <Polyline
+                            positions={tripGpsTrack.map(p => [p.lat, p.lng])}
+                            pathOptions={{ color: '#f97316', weight: 4, opacity: 0.85 }}
+                          />
+                        )}
+
+                        {/* Start marker */}
+                        {tripGpsTrack.length > 0 && (
+                          <Marker position={[tripGpsTrack[0].lat, tripGpsTrack[0].lng]} icon={startIcon}>
+                            <Popup>
+                              <div className="text-xs">
+                                <strong>Trip Start</strong><br />
+                                {new Date(tripGpsTrack[0].ts).toLocaleTimeString()}
+                              </div>
+                            </Popup>
+                          </Marker>
+                        )}
+
+                        {/* End marker */}
+                        {tripGpsTrack.length > 1 && (
+                          <Marker
+                            position={[tripGpsTrack[tripGpsTrack.length - 1].lat, tripGpsTrack[tripGpsTrack.length - 1].lng]}
+                            icon={endIcon}
+                          >
+                            <Popup>
+                              <div className="text-xs">
+                                <strong>Trip End</strong><br />
+                                {new Date(tripGpsTrack[tripGpsTrack.length - 1].ts).toLocaleTimeString()}
+                              </div>
+                            </Popup>
+                          </Marker>
+                        )}
+
+                        {/* Moving bus marker — synced to video currentTime */}
+                        {mapMarkerPos && (
+                          <Marker position={[mapMarkerPos.lat, mapMarkerPos.lng]} icon={busIcon}>
+                            <Popup>
+                              <div className="text-xs">
+                                <strong>Bus position</strong><br />
+                                {mapMarkerPos.lat.toFixed(5)}, {mapMarkerPos.lng.toFixed(5)}
+                              </div>
+                            </Popup>
+                          </Marker>
+                        )}
+                      </MapContainer>
+                    </div>
+                  )}
+
+                  {/* Map legend */}
+                  <div className="flex items-center gap-4 px-1 text-xs text-white/40">
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block w-3 h-3 rounded-full bg-green-500"></span> Start
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block w-3 h-3 rounded-full bg-red-500"></span> End
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block w-3 h-3 rounded-full bg-orange-500"></span> Bus (synced to video)
+                    </span>
+                    {videoStartTs
+                      ? <span className="ml-auto text-white/30">▶ Play the video above to move the bus marker</span>
+                      : <span className="ml-auto text-white/30">No video — marker shows last known position</span>
+                    }
+                  </div>
+                </div>
+              )}
 
               {/* Bottom Row: Operations & Revenue (Left) & Safety & Audits (Right) */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 pt-4 border-t border-white/10">
