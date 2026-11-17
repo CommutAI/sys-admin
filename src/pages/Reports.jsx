@@ -543,6 +543,10 @@ const Reports = () => {
     setModalAnomaliesPage(1);
     setModalIrregularitiesPage(1);
     setModalAlertsPage(1);
+    // M1 — Pre-warm the backend so its cold-start (Render free tier) doesn't
+    // block the video proxy when the user clicks play. Fire-and-forget.
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
+    fetch(`${backendUrl}/health`).catch(() => {});
 
     try {
       // Fetch transactions for this trip
