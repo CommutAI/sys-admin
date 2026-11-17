@@ -613,7 +613,7 @@ FRAME_QUEUE_SIZE = int(os.getenv('FRAME_QUEUE_SIZE', '1'))
 DISABLE_DRAWING = os.getenv('DISABLE_DRAWING', 'false').lower() == 'true'
 DISABLE_DB_WRITES = os.getenv('DISABLE_DB_WRITES', 'false').lower() == 'true'
 SKIP_WEBSOCKET_THROTTLE = os.getenv('SKIP_WEBSOCKET_THROTTLE', 'false').lower() == 'true'
-DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '160'))  # Match ONNX export imgsz (160 = fastest on Pi)
+DETECTION_SIZE = int(os.getenv('DETECTION_SIZE', '320'))  # 320 = best accuracy/speed tradeoff on Pi for bus interiors
 
 # AI Model configuration — strictly YOLO/ONNX person detection
 DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
@@ -1473,8 +1473,11 @@ class VideoProcessor:
         w = x2 - x1
         h = y2 - y1
 
-        # 1. Minimum person dimensions: allow farther passengers (down to 20px height, 10px width)
-        if h < 20 or w < 10:
+        # 1. Minimum person dimensions:
+        # At DETECTION_SIZE=320, a passenger 40px tall at 480p → 26px scaled.
+        # Allow down to 12px height so back-row seated passengers aren't cut off.
+        # Width minimum kept at 8px.
+        if h < 12 or w < 8:
             return False
 
         # 2. Ceiling / wall-hung object rejection:
@@ -1486,13 +1489,14 @@ class VideoProcessor:
         if w > int(frame_w * 0.85) and h > int(frame_h * 0.85):
             return False
 
-        # 4. Aspect ratio: human passengers can be standing, seated, or reclining (h/w >= 0.40)
-        if (h / float(max(1, w))) < 0.40:
+        # 4. Aspect ratio: human passengers can be standing, seated, or only head visible.
+        # Seated passengers from an overhead/angled camera often appear wider than tall.
+        # Only reject if extremely wide and flat (panoramic artifact, h/w < 0.25).
+        if (h / float(max(1, w))) < 0.25:
             return False
 
         # 5. Reject static border/doorway pillar artifacts:
         # Covers door jambs, wall pillars, and vertical structural elements near frame edges.
-        # Relaxed from strict y1==0 to allow boxes starting a bit below the top.
         aspect = h / float(max(1, w))
         near_right_edge = x2 >= int(frame_w * 0.80)   # box ends in rightmost 20% of frame
         near_left_edge  = x1 <= int(frame_w * 0.20)   # box starts in leftmost 20% of frame
