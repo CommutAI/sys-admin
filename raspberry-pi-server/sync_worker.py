@@ -136,8 +136,6 @@ def _aggregate_passenger_counts(rows: list) -> tuple[list, list]:
             "recorded_at":  b["minute"],          # Supabase recorded_at = minute bucket
             "count":        round(sum(counts) / len(counts)),   # average → integer
             "ai_count":     max(counts),          # max as the "peak" ai_count
-            "source":       "yolo_pi_aggregate",
-            "sample_count": len(counts),          # extra context for dashboard
         })
 
     return aggregates, ids
