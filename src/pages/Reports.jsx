@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { FileText, Download, Calendar, TrendingUp, Users, DollarSign, Bus, Activity, ArrowUp, ArrowDown, ArrowLeftRight, Search, Filter, MoreHorizontal, ChevronLeft, ChevronRight, Eye, EyeOff, X, Settings, ChevronDown, SortAsc, SortDesc, BarChart3, Clock, MapPin, CheckCircle, AlertCircle, Download as DownloadIcon, AlertTriangle, Users as UsersIcon, Play } from 'lucide-react';
+import { FileText, Download, Calendar, TrendingUp, Users, DollarSign, Bus, Activity, ArrowUp, ArrowDown, ArrowLeftRight, Search, Filter, MoreHorizontal, ChevronLeft, ChevronRight, Eye, EyeOff, X, Settings, ChevronDown, SortAsc, SortDesc, BarChart3, Clock, MapPin, CheckCircle, AlertCircle, Download as DownloadIcon, AlertTriangle, Users as UsersIcon, Play, Copy } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -2795,6 +2795,19 @@ const Reports = () => {
                       Trip Summary
                     </h3>
                     <div className="grid grid-cols-2 gap-2.5">
+                      <div className="bg-white/5 p-2.5 rounded-lg col-span-2">
+                        <p className="text-white/60 text-xs mb-1">Trip ID</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-white font-mono text-xs truncate flex-1">{selectedTrip.id}</p>
+                          <button
+                            onClick={() => navigator.clipboard.writeText(selectedTrip.id)}
+                            className="text-white/40 hover:text-white/80 transition-colors flex-shrink-0"
+                            title="Copy Trip ID"
+                          >
+                            <Copy size={12} />
+                          </button>
+                        </div>
+                      </div>
                       <div className="bg-white/5 p-2.5 rounded-lg">
                         <p className="text-white/60 text-xs">Bus</p>
                         <p className="text-white font-medium text-sm">{selectedTrip.bus_id?.plate_number || 'N/A'}</p>
