@@ -88,10 +88,16 @@ def _now_iso() -> str:
     return datetime.now(TIMEZONE).isoformat(timespec="seconds")
 
 
-def _minute_bucket(unix_ts: float) -> str:
-    """Floor a Unix timestamp to the minute, return ISO string."""
-    dt = datetime.fromtimestamp(unix_ts, tz=TIMEZONE)
-    return dt.replace(second=0, microsecond=0).isoformat(timespec="seconds")
+def _minute_bucket(unix_ts) -> str:
+    """Floor a Unix timestamp to the minute, return ISO string.
+    Returns a fixed fallback string if unix_ts is None or invalid."""
+    if unix_ts is None:
+        return "1970-01-01T00:00:00+00:00"  # safe sentinel — won't crash
+    try:
+        dt = datetime.fromtimestamp(float(unix_ts), tz=TIMEZONE)
+        return dt.replace(second=0, microsecond=0).isoformat(timespec="seconds")
+    except (ValueError, OSError, OverflowError):
+        return "1970-01-01T00:00:00+00:00"
 
 
 # ── Aggregation helpers ───────────────────────────────────────────────────────
@@ -204,7 +210,7 @@ def _push(action: str, rows: list, table_name: str) -> bool:
                 'Content-Type': 'application/json',
                 'apikey': SUPABASE_KEY,
                 'Authorization': f'Bearer {SUPABASE_KEY}',
-                'Prefer': 'resolution=merge-duplicates',
+                'Prefer': 'resolution=merge-duplicates,return=minimal',
             }
         )
         with urllib.request.urlopen(req, timeout=20) as resp:

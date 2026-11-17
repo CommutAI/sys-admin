@@ -369,9 +369,16 @@ async def download_video(filename: str, request: Request):
        and stream it straight through to the browser (handles Cloudflare
        interstitial that blocks browser <video> direct access).
     """
+    # H3 — Path traversal protection: only allow plain filenames, no directory components
+    safe_filename = os.path.basename(filename)
+    if safe_filename != filename or '..' in filename or '/' in filename or '\\' in filename:
+        raise HTTPException(status_code=400, detail='Invalid filename')
+    if not safe_filename.endswith('.mp4'):
+        raise HTTPException(status_code=400, detail='Only .mp4 files are served here')
+
     # ── 1. Try local file first ───────────────────────────────────────────────
     VIDEO_OUTPUT_DIR = os.getenv('VIDEO_OUTPUT_DIR', './recordings')
-    file_path = os.path.join(VIDEO_OUTPUT_DIR, filename)
+    file_path = os.path.join(VIDEO_OUTPUT_DIR, safe_filename)
 
     if os.path.exists(file_path) and os.path.getsize(file_path) >= 10_000:
         file_size = os.path.getsize(file_path)
@@ -382,40 +389,63 @@ async def download_video(filename: str, request: Request):
     if not pi_url:
         raise HTTPException(status_code=404, detail='Video not found locally and Pi tunnel URL unavailable')
 
-    upstream_url = f"{pi_url.rstrip('/')}/download-video/{filename}"
+    upstream_url = f"{pi_url.rstrip('/')}/download-video/{safe_filename}"
     range_header = request.headers.get('range')
+    req_headers = {'Range': range_header} if range_header else {}
 
-    headers = {'Range': range_header} if range_header else {}
-
+    # C1 FIX: manually manage the httpx client + stream lifecycle so that the
+    # connection stays open while StreamingResponse consumes the generator.
+    # H1 FIX: unlimited read timeout — only the initial connect times out at 15s.
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=15.0, read=None, write=15.0, pool=15.0),
+        follow_redirects=True,
+    )
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            async with client.stream('GET', upstream_url, headers=headers) as upstream:
-                if upstream.status_code == 404:
-                    raise HTTPException(status_code=404, detail='Video not found on Pi')
-                if upstream.status_code not in (200, 206):
-                    raise HTTPException(status_code=502, detail=f'Pi returned {upstream.status_code}')
+        ctx = client.stream('GET', upstream_url, headers=req_headers)
+        upstream = await ctx.__aenter__()
 
-                resp_headers = {
-                    'Content-Type': 'video/mp4',
-                    'Accept-Ranges': 'bytes',
-                    'Cache-Control': 'no-cache',
-                }
-                for h in ('content-range', 'content-length'):
-                    if h in upstream.headers:
-                        resp_headers[h.title()] = upstream.headers[h]
+        if upstream.status_code == 404:
+            await ctx.__aexit__(None, None, None)
+            await client.aclose()
+            raise HTTPException(status_code=404, detail='Video not found on Pi')
+        if upstream.status_code not in (200, 206):
+            await ctx.__aexit__(None, None, None)
+            await client.aclose()
+            raise HTTPException(status_code=502, detail=f'Pi returned {upstream.status_code}')
 
-                async def _stream():
-                    async for chunk in upstream.aiter_bytes(chunk_size=1024 * 512):
-                        yield chunk
+        resp_headers = {
+            'Content-Type': 'video/mp4',
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': 'no-cache',
+        }
+        for h in ('content-range', 'content-length'):
+            if h in upstream.headers:
+                resp_headers[h.title()] = upstream.headers[h]
 
-                return StreamingResponse(
-                    _stream(),
-                    status_code=upstream.status_code,
-                    headers=resp_headers,
-                )
+        async def _stream():
+            """Generator that closes client/connection when exhausted or on error."""
+            try:
+                async for chunk in upstream.aiter_bytes(chunk_size=1024 * 512):
+                    yield chunk
+            finally:
+                await ctx.__aexit__(None, None, None)
+                await client.aclose()
+
+        return StreamingResponse(
+            _stream(),
+            status_code=upstream.status_code,
+            headers=resp_headers,
+        )
+
+    except HTTPException:
+        raise
     except httpx.RequestError as exc:
-        print(f"[VideoProxy] Request error proxying {filename}: {exc}")
+        await client.aclose()
+        print(f"[VideoProxy] Request error proxying {safe_filename}: {exc}")
         raise HTTPException(status_code=502, detail='Could not reach Pi to fetch video')
+    except Exception as exc:
+        await client.aclose()
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 def _range_response(file_path: str, file_size: int, range_header: str | None):

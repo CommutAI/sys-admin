@@ -127,7 +127,9 @@ allowed_origins = [
     "http://localhost:3000",
     "http://localhost:8080",
     frontend_url,
-    "https://sys-admin-nine.vercel.app",  # Production Vercel deployment
+    "https://sys-admin-nine.vercel.app",        # legacy Vercel deployment
+    "https://sys-admin-62ro.onrender.com",       # current Render frontend
+    "https://sys-admin-my13.onrender.com",       # alt Render frontend
 ]
 
 # If in development mode, allow all origins

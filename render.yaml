@@ -7,7 +7,7 @@ services:
     envVars:
       - key: VITE_BACKEND_URL
         sync: false
-        defaultValue: "https://sys-admin-my13.onrender.com"
+        defaultValue: "https://sys-admin-62ro.onrender.com"
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY

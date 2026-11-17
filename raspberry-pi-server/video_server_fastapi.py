@@ -2501,7 +2501,12 @@ async def get_recording(recording_id: str):
 @app.get("/download-video/{filename}")
 async def download_video(filename: str, request: Request):
     """Stream a video file with HTTP Range support for browser seek/playback."""
-    file_path = os.path.join(VIDEO_STORAGE_PATH, filename)
+    # H3 — Path traversal protection
+    safe_filename = os.path.basename(filename)
+    if safe_filename != filename or '..' in filename or not safe_filename.endswith('.mp4'):
+        return JSONResponse({'status': 'error', 'message': 'Invalid filename'}, status_code=400)
+
+    file_path = os.path.join(VIDEO_STORAGE_PATH, safe_filename)
 
     if not os.path.exists(file_path):
         return JSONResponse({'status': 'error', 'message': 'File not found'}, status_code=404)
