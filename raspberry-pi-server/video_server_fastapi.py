@@ -1943,12 +1943,13 @@ class VideoProcessor:
             self.recording_start_time = None
             self.recording_frame_count = 0
 
-            # Save metadata to database
+            # Save metadata to database (with local path initially)
             recording_id = self._save_video_metadata_internal(video_path, trip_id, start_time, frame_count, duration, file_size)
 
-            # Auto-transcode recording to native H.264 (avc1) + faststart for browser playback
+            # Auto-transcode to H.264 + upload to Supabase Storage in background thread
+            # (passes recording_id so the thread can update DB with final permanent URL)
             if video_path and os.path.exists(video_path):
-                self._transcode_to_h264_async(video_path)
+                self._transcode_to_h264_async(video_path, trip_id=trip_id, recording_id=recording_id)
 
             # Check and maintain SD card disk storage
             self._check_storage_and_cleanup()
@@ -1965,8 +1966,14 @@ class VideoProcessor:
             print(f"Error stopping recording: {e}")
             return None
 
-    def _transcode_to_h264_async(self, video_path):
-        """Transcode video to web-compatible H.264 (avc1) with +faststart for browser playback in background thread"""
+    def _transcode_to_h264_async(self, video_path, trip_id=None, recording_id=None):
+        """
+        Transcode video to web-compatible H.264 (avc1) with +faststart for browser playback.
+        Runs in a background thread so it doesn't block the event loop.
+
+        After transcoding succeeds, automatically uploads to Supabase Storage and
+        updates video_recordings + trips with the permanent public URL.
+        """
         def _runner():
             if not video_path or not os.path.exists(video_path):
                 return
@@ -1987,6 +1994,26 @@ class VideoProcessor:
                         os.remove(h264_temp)
             except Exception as e:
                 print(f"[VideoProcessor] Error transcoding video {video_path}: {e}")
+
+            # ── Upload to Supabase Storage after transcoding ──────────────────
+            if trip_id and os.path.exists(video_path):
+                storage_url = self._upload_to_supabase_storage(video_path, trip_id)
+                if storage_url and supabase:
+                    try:
+                        # Update video_recordings row
+                        if recording_id:
+                            supabase.table('video_recordings').update({
+                                'file_path': storage_url,
+                                'storage_type': 'supabase_storage',
+                            }).eq('id', recording_id).execute()
+                        # Update trips row with final permanent URL
+                        supabase.table('trips').update({
+                            'video_recording_url': storage_url,
+                            'video_recording_status': 'available',
+                        }).eq('id', trip_id).execute()
+                        print(f"[Storage] DB updated with permanent URL for trip {trip_id}")
+                    except Exception as db_exc:
+                        print(f"[Storage] DB update error after upload: {db_exc}")
 
         threading.Thread(target=_runner, daemon=True).start()
 
@@ -2044,6 +2071,54 @@ class VideoProcessor:
 
         except Exception as e:
             print(f"[StorageGuard] Error checking storage: {e}")
+
+    def _upload_to_supabase_storage(self, video_path: str, trip_id: str) -> str | None:
+        """
+        Upload a finished trip video to Supabase Storage bucket 'trip-videos'.
+
+        Path inside bucket: trip-videos/{trip_id}/{filename}
+        Returns the permanent public URL on success, None on failure.
+
+        Uses raw HTTP (urllib / requests) so no extra pip package is needed.
+        Falls back gracefully — the local file is kept regardless.
+        """
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            print("[Storage] Supabase not configured — skipping upload")
+            return None
+        if not video_path or not os.path.exists(video_path):
+            print(f"[Storage] Video file not found: {video_path}")
+            return None
+
+        filename   = os.path.basename(video_path)
+        object_path = f"{trip_id}/{filename}"   # path inside the bucket
+        upload_url  = f"{SUPABASE_URL}/storage/v1/object/trip-videos/{object_path}"
+        public_url  = f"{SUPABASE_URL}/storage/v1/object/public/trip-videos/{object_path}"
+        file_size   = os.path.getsize(video_path)
+
+        print(f"[Storage] Uploading {filename} ({file_size/1024/1024:.1f} MB) → Supabase Storage …")
+
+        try:
+            with open(video_path, 'rb') as f:
+                resp = requests.post(
+                    upload_url,
+                    headers={
+                        'Authorization': f'Bearer {SUPABASE_KEY}',
+                        'apikey': SUPABASE_KEY,
+                        'Content-Type': 'video/mp4',
+                        'x-upsert': 'true',          # overwrite if re-uploaded
+                    },
+                    data=f,
+                    timeout=600,                     # 10 min — large files on slow Pi uplink
+                )
+            if resp.status_code in (200, 201):
+                print(f"[Storage] ✓ Upload OK → {public_url}")
+                return public_url
+            else:
+                print(f"[Storage] ✗ Upload failed HTTP {resp.status_code}: {resp.text[:300]}")
+                return None
+        except Exception as exc:
+            print(f"[Storage] ✗ Upload error: {exc}")
+            return None
 
     def _upload_to_cloudflare_stream(self, video_path, trip_id):
         """Upload video to Cloudflare Stream and return playback URL"""
@@ -2115,47 +2190,52 @@ class VideoProcessor:
             return None
 
         try:
-            # Try to upload to Cloudflare Stream first
+            # Register with local path first — the transcode+upload thread will
+            # update this row with the final Supabase Storage URL after uploading.
+            storage_url = None
             cloudflare_url = self._upload_to_cloudflare_stream(video_path, trip_id)
-            
+            final_url = cloudflare_url   # Supabase Storage URL arrives later via background thread
+            storage_type = 'cloudflare' if cloudflare_url else 'local'
+
             actual_w = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)) if self.camera else CAMERA_WIDTH
             actual_h = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)) if self.camera else CAMERA_HEIGHT
-            
+
             data = {
                 'trip_id': trip_id,
                 'file_name': os.path.basename(video_path) if video_path else 'unknown',
-                'file_path': cloudflare_url if cloudflare_url else video_path,
+                'file_path': final_url if final_url else video_path,
                 'file_size': file_size,
                 'duration': duration,
                 'format': 'mp4',
-                'storage_type': 'cloudflare' if cloudflare_url else 'local',
+                'storage_type': storage_type,
                 'status': 'completed',
                 'metadata': {
                     'resolution': f"{actual_w}x{actual_h}",
                     'fps': FPS,
                     'frame_count': frame_count,
                     'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(start_time)) if start_time else None,
-                    'cloudflare_url': cloudflare_url
+                    'cloudflare_url': cloudflare_url,
+                    'storage_url': storage_url,
                 }
             }
 
             result = supabase.table('video_recordings').insert(data).execute()
             if result and result.data:
                 recording_id = result.data[0].get('id')
-                print(f"[DB] Video metadata saved: id={recording_id}, trip={trip_id}, size={file_size}b, storage={data['storage_type']}")
-                
+                print(f"[DB] Video metadata saved: id={recording_id}, trip={trip_id}, size={file_size}b, storage={storage_type}")
+
                 # Also update trips table so the video is marked available for this trip
                 if trip_id:
                     trips_update = {
-                        'video_recording_url': cloudflare_url if cloudflare_url else os.path.basename(video_path),
+                        'video_recording_url': final_url if final_url else os.path.basename(video_path),
                         'video_recording_duration': duration,
                         'video_recording_status': 'available',
                         'video_recording_file_size': file_size,
                         'video_recording_uploaded_at': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())
                     }
                     supabase.table('trips').update(trips_update).eq('id', trip_id).execute()
-                    print(f"[DB] Updated trips table video status to available for trip {trip_id}")
-                
+                    print(f"[DB] Updated trips table video_recording_url={final_url or 'local'} for trip {trip_id}")
+
                 return str(recording_id) if recording_id else None
             else:
                 print("[DB] Video metadata save returned no data")
