@@ -546,12 +546,13 @@ export function useRaspberryPi(options = {}) {
       }
     }, 10000); // Check every 10 seconds
 
-    // Subscribe to pi_devices changes for auto-reconnect on IP change
+    // Subscribe to pi_devices changes for auto-reconnect on IP/tunnel change.
+    // subscribePiDeviceChanges now also polls every 30 s as a fallback.
     const unsubscribe = subscribePiDeviceChanges((newUrl) => {
       if (deadRef.current) return;
-      console.log('[Pi] Network changed, auto-reconnecting to:', newUrl);
+      console.log('[Pi] Reachable URL found, exiting database mode → reconnecting to:', newUrl);
 
-      // Exit fallback mode and try WebSocket with new IP
+      // Exit fallback mode and try WebSocket with new URL
       fallbackModeRef.current = false;
       invalidatePiUrl();
       attemptsRef.current = 0;
@@ -559,9 +560,26 @@ export function useRaspberryPi(options = {}) {
       closeSocket(wsRef.current);
       wsRef.current = null;
 
-      // Small delay to ensure Pi is ready at new IP
-      setTimeout(openSocket, 2000);
+      // Small delay to ensure Pi is ready
+      setTimeout(openSocket, 1500);
     });
+
+    // ── Periodic self-heal in database fallback mode ───────────────────────────
+    // Every 45 s, if we're stuck in DB mode, force-clear fallback and retry the
+    // full URL resolution (env → Supabase tunnel → LAN hint). This catches cases
+    // where the tunnel came back but the realtime/poll subscription missed it.
+    const selfHealInterval = setInterval(() => {
+      if (deadRef.current) return;
+      if (!fallbackModeRef.current) return; // already connected — nothing to heal
+      console.log('[Pi] Self-heal: retrying connection from database fallback mode');
+      fallbackModeRef.current = false;
+      invalidatePiUrl();
+      attemptsRef.current = 0;
+      clearAllTimers();
+      closeSocket(wsRef.current);
+      wsRef.current = null;
+      openSocket();
+    }, 45_000);
 
     // Database realtime subscriptions (for fallback mode)
     const subscriptions = [];
@@ -631,6 +649,7 @@ export function useRaspberryPi(options = {}) {
     return () => {
       deadRef.current = true;
       clearAllTimers();
+      clearInterval(selfHealInterval);
       closeSocket(wsRef.current);
       wsRef.current = null;
       unsubscribe();

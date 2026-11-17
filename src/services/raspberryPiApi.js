@@ -144,37 +144,100 @@ export function invalidatePiUrl() {
 
 /**
  * Subscribe to pi_devices realtime changes for bus 1.
- * Calls onIpChange(newUrl) whenever the Pi registers a new IP.
+ * Calls onIpChange(newUrl) whenever the Pi registers a new IP or tunnel URL.
+ * Also polls every 30 s as a fallback for HTTPS origins where mixed-content
+ * blocks local IP updates and Cloudflare tunnels rotate frequently.
  * Returns an unsubscribe function.
  */
 export function subscribePiDeviceChanges(onIpChange) {
-  // On HTTPS, ignore local IP updates from pi_devices — always use the tunnel URL
-  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-    return () => {};
-  }
+  const isHttpsPage = typeof window !== 'undefined' && window.location.protocol === 'https:';
 
+  // ── Realtime subscription (works on HTTP; on HTTPS the Pi writes backend_url) ──
   const channel = supabase
     .channel('pi-device-watch')
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'pi_devices', filter: `bus_number=eq.${BUS_NUMBER}` },
-      (payload) => {
+      async (payload) => {
         const row = payload.new;
-        if (row?.ip_address) {
+        if (!row) return;
+
+        // On HTTPS: check the tunnel URL (backend_url)
+        if (isHttpsPage) {
+          const tunnelUrl = row.backend_url;
+          if (tunnelUrl && tunnelUrl.startsWith('https://') && tunnelUrl !== _resolvedUrl) {
+            const reachable = await probePiUrl(tunnelUrl);
+            if (reachable) {
+              console.log('[Pi] New tunnel URL detected via realtime:', tunnelUrl);
+              _resolvedUrl  = tunnelUrl;
+              _lastResolved = Date.now();
+              onIpChange(tunnelUrl);
+            }
+          }
+          return;
+        }
+
+        // On HTTP: check LAN IP first, then tunnel
+        if (row.ip_address) {
           const url = `http://${row.ip_address}:${row.port || 8080}`;
-          // Only trigger if URL actually changed to avoid reconnecting on routine heartbeat updates
-          if (_resolvedUrl && url !== _resolvedUrl) {
-            console.log('[Pi] Network changed, auto-reconnecting to:', url);
+          if (url !== _resolvedUrl && await probePiUrl(url)) {
+            console.log('[Pi] Network changed, reconnecting to LAN:', url);
             _resolvedUrl  = url;
             _lastResolved = Date.now();
             onIpChange(url);
+            return;
           }
+        }
+        const tunnelUrl = row.backend_url;
+        if (tunnelUrl && tunnelUrl !== _resolvedUrl && await probePiUrl(tunnelUrl)) {
+          console.log('[Pi] Tunnel URL changed, reconnecting:', tunnelUrl);
+          _resolvedUrl  = tunnelUrl;
+          _lastResolved = Date.now();
+          onIpChange(tunnelUrl);
         }
       }
     )
     .subscribe();
 
-  return () => supabase.removeChannel(channel);
+  // ── Polling fallback: re-check pi_devices every 30 s ─────────────────────────
+  // Catches cases where the realtime subscription missed an update (e.g. brief
+  // Supabase WS drop) or the tunnel URL rotated without a DB change event.
+  const pollInterval = setInterval(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('pi_devices')
+        .select('ip_address, port, backend_url')
+        .eq('bus_number', BUS_NUMBER)
+        .maybeSingle();
+
+      if (error || !data) return;
+
+      const candidates = [];
+      if (isHttpsPage) {
+        if (data.backend_url?.startsWith('https://')) candidates.push(data.backend_url);
+      } else {
+        if (data.ip_address) candidates.push(`http://${data.ip_address}:${data.port || 8080}`);
+        if (data.backend_url) candidates.push(data.backend_url);
+      }
+
+      for (const url of candidates) {
+        if (url === _resolvedUrl) break; // already using this — no change needed
+        const reachable = await probePiUrl(url);
+        if (reachable) {
+          console.log('[Pi] Poll found new reachable URL:', url);
+          _resolvedUrl  = url;
+          _lastResolved = Date.now();
+          onIpChange(url);
+          break;
+        }
+      }
+    } catch { /* ignore transient errors */ }
+  }, 30_000);
+
+  return () => {
+    supabase.removeChannel(channel);
+    clearInterval(pollInterval);
+  };
 }
 
 // ── HTTP helper ───────────────────────────────────────────────────────────────
