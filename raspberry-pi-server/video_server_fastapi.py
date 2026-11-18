@@ -687,12 +687,12 @@ DISABLE_AI = os.getenv('DISABLE_AI', 'false').lower() == 'true'
 _count_method_default = 'onnx' if ONNX_AVAILABLE else 'backend'
 COUNT_METHOD = os.getenv('COUNT_METHOD', _count_method_default)
 MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.onnx')
-CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.20'))  # 0.20: fast zero-delay response, rejects 0.18 false positives
-IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.35'))  # 0.35 NMS IoU to eliminate duplicate bounding boxes on same person
+CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.45'))  # 0.45: strong enough to reject seats/bags/clothing
+IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.40'))  # 0.40 NMS IoU — tighter to eliminate duplicate boxes
 JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '50'))
 
 # YOLO-specific confidence threshold for person detection
-YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.20'))
+YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.45'))
 MAX_DET = int(os.getenv('MAX_DET', '50'))
 
 # Video Recording configuration
@@ -716,9 +716,18 @@ print(f"Performance optimizations: DISABLE_DRAWING={DISABLE_DRAWING}, DISABLE_DB
 class PassengerTracker:
     """Stable temporal tracking with exponential smoothing and centroid matching
     to follow moving persons seamlessly, eliminate box oscillation/jitter,
-    and prevent hallucinated passenger counts."""
+    and prevent hallucinated passenger counts.
+
+    Anti-hallucination tuning:
+      hit_thresh  — confidence needed to CREATE a new track (high = fewer ghosts)
+      keep_thresh — confidence needed to KEEP updating a track (can be a little lower)
+      min_hits    — a track must be confirmed this many consecutive detections before
+                    it counts (3 = ghost boxes that flash once or twice never count)
+      max_missed  — frames a track stays alive when not detected (3 = drops fast,
+                    so a person leaving the frame doesn't inflate the count)
+    """
     
-    def __init__(self, hit_thresh=0.20, keep_thresh=0.15, max_missed=6, min_hits=1):
+    def __init__(self, hit_thresh=0.45, keep_thresh=0.35, max_missed=3, min_hits=3):
         self.hit_thresh = hit_thresh
         self.keep_thresh = keep_thresh
         self.max_missed = max_missed
@@ -741,7 +750,12 @@ class PassengerTracker:
         return inter / float(denom) if denom > 0 else 0.0
 
     def get_confirmed_detections(self):
-        confirmed_tracks = [t for t in self.tracks if t.get('confirmed', False)]
+        # A track is only counted when it has been seen min_hits consecutive times
+        # This prevents single-frame ghost detections from ever reaching the count
+        confirmed_tracks = [
+            t for t in self.tracks
+            if t.get('confirmed', False) and t.get('hits', 0) >= self.min_hits
+        ]
         return [{
             'bbox': t['bbox'],
             'confidence': float(t['conf']),
@@ -836,7 +850,7 @@ class PassengerTracker:
                (t['missed'] < 1 and not t.get('confirmed', False))
         ]
 
-        # Step 4: Add new detections - Immediate 1-hit confirmation on frame 1
+        # Step 4: Add new detections - require min_hits before confirming
         for d_idx, det in enumerate(comp_detections):
             if d_idx not in matched_det_indices:
                 conf = det['confidence']
@@ -847,7 +861,9 @@ class PassengerTracker:
                         'conf': conf,
                         'hits': 1,
                         'missed': 0,
-                        'confirmed': True
+                        # New tracks start unconfirmed — they must be seen min_hits times
+                        # before they appear in the count. This kills single-frame ghosts.
+                        'confirmed': self.min_hits <= 1
                     })
                     self.next_id += 1
 
@@ -857,7 +873,12 @@ class VideoProcessor:
     def __init__(self):
         self.camera = None
         self.model = None
-        self.tracker = PassengerTracker(hit_thresh=YOLO_CONFIDENCE_THRESHOLD, keep_thresh=min(0.16, YOLO_CONFIDENCE_THRESHOLD * 0.8), max_missed=6, min_hits=1)
+        self.tracker = PassengerTracker(
+            hit_thresh=YOLO_CONFIDENCE_THRESHOLD,          # must beat threshold to spawn track
+            keep_thresh=max(0.30, YOLO_CONFIDENCE_THRESHOLD * 0.75),  # keep alive at 75% of threshold
+            max_missed=3,   # drop track after 3 missed frames (fast exit = no inflated count)
+            min_hits=3      # must be detected 3 times before it counts (kills ghost flashes)
+        )
         self.frame_queue = queue.Queue(maxsize=1)  # Strictly latest-frame only (maxsize=1)
         self.latest_frame = None
         self.latest_frame_seq = 0
@@ -1244,7 +1265,7 @@ class VideoProcessor:
                 max_class_ids = np.argmax(class_scores, axis=1)
                 person_scores = predictions[:, 4]
                 
-                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if (YOLO_CONFIDENCE_THRESHOLD and YOLO_CONFIDENCE_THRESHOLD > 0.01) else 0.20
+                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if (YOLO_CONFIDENCE_THRESHOLD and YOLO_CONFIDENCE_THRESHOLD > 0.01) else 0.45
                 
                 # Strict check: object's TOP predicted class must be person (class 0)
                 # This prevents chairs, helmets, and hanging clothes from false-triggering
@@ -1308,7 +1329,7 @@ class VideoProcessor:
                 class_scores = predictions[:, 4:]
                 max_class_ids = np.argmax(class_scores, axis=1)
                 person_scores = predictions[:, 4]
-                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if YOLO_CONFIDENCE_THRESHOLD > 0.01 else 0.20
+                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if YOLO_CONFIDENCE_THRESHOLD > 0.01 else 0.45
                 mask = (max_class_ids == 0) & (person_scores >= conf_thresh)
                 if mask.any():
                     filtered = predictions[mask]
@@ -2419,7 +2440,18 @@ class VideoProcessor:
                             try:
                                 raw_dets = await asyncio.to_thread(self.detect_passengers, det_frame)
                                 stable_dets = self.tracker.update(raw_dets)
-                                self.passenger_count = len(stable_dets)
+                                instant_count = len(stable_dets)
+
+                                # Temporal median over last 5 detection results.
+                                # Median ignores single-frame spikes (hallucinations)
+                                # completely — far more robust than mean smoothing.
+                                self.detection_history.append(instant_count)
+                                if len(self.detection_history) > 5:
+                                    self.detection_history.pop(0)
+                                sorted_hist = sorted(self.detection_history)
+                                smoothed = sorted_hist[len(sorted_hist) // 2]
+
+                                self.passenger_count = smoothed
                                 self.last_detections = stable_dets
                                 self.last_detection_count = self.frame_count
                             except Exception as det_err:
@@ -2439,10 +2471,7 @@ class VideoProcessor:
                     method = COUNT_METHOD.upper() if COUNT_METHOD else 'Unknown'
                     print(f"[COUNT] {self.passenger_count} passenger(s) in frame (using {method} detection)")
                 
-                # Store detection history
-                self.detection_history.append(self.passenger_count)
-                if len(self.detection_history) > 10:
-                    self.detection_history.pop(0)
+                # (detection_history is maintained inside _run_detection_async above)
                 
                 # Save passenger count to database
                 if not DISABLE_DB_WRITES and self.frame_count % (FPS * self.db_save_interval) == 0:
