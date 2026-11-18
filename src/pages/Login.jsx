@@ -77,18 +77,94 @@ const Login = () => {
     }
   };
 
+  const Logo = () => (
+    <div className="flex flex-col items-center mb-6 sm:mb-8">
+      <img src="/logo.png" alt="CommutAI Logo" className="w-20 h-20 sm:w-24 sm:h-24 mb-4" />
+      <h1 className="text-white text-xl sm:text-2xl font-bold">CommutAI</h1>
+      <p className="text-white/60 text-sm">System Admin Portal</p>
+    </div>
+  );
+
+  // ── Forgot password / reset screen ──────────────────────────────────────────
+  if (resetMode) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-orange-950 to-slate-900 flex items-center justify-center p-4">
+        <div className="glass-card p-6 sm:p-8 rounded-2xl w-full max-w-md">
+          <Logo />
+          <h2 className="text-white text-lg font-semibold text-center mb-1">Reset Password</h2>
+          <p className="text-white/60 text-sm text-center mb-6">Enter your email to receive a reset link</p>
+
+          {resetSuccess ? (
+            <div className="text-center">
+              <div className="bg-green-500/20 border border-green-500/50 text-green-400 px-4 py-3 rounded-xl mb-4 text-sm">
+                Password reset email sent! Check your inbox.
+              </div>
+              <button
+                onClick={() => { setResetMode(false); setResetSuccess(false); }}
+                className="text-orange-400 hover:text-orange-300 text-sm"
+              >
+                Back to login
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handlePasswordReset} className="space-y-6">
+              {error && (
+                <div className="bg-red-500/20 border border-red-500/50 text-red-400 px-4 py-3 rounded-xl text-sm">
+                  {error}
+                </div>
+              )}
+
+              <div>
+                <label className="text-white/60 text-sm mb-2 block">Email</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
+                  <input
+                    type="email"
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    required
+                    className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-3 text-white placeholder-white/40 focus:outline-none focus:border-orange-500 text-sm"
+                    placeholder="Enter your email"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2 text-sm"
+              >
+                {loading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  'Send Reset Link'
+                )}
+              </button>
+
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={() => { setResetMode(false); setError(''); }}
+                  className="text-white/60 hover:text-orange-400 text-sm transition-colors"
+                >
+                  Back to login
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main login screen ────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-orange-950 to-slate-900 flex items-center justify-center p-4">
       <div className="glass-card p-6 sm:p-8 rounded-2xl w-full max-w-md">
-        <div className="flex flex-col items-center mb-6 sm:mb-8">
-          <img
-            src="/logo.png"
-            alt="CommutAI Logo"
-            className="w-20 h-20 sm:w-24 sm:h-24 mb-4"
-          />
-          <h1 className="text-white text-xl sm:text-2xl font-bold">CommutAI</h1>
-          <p className="text-white/60 text-sm">System Admin Portal</p>
-        </div>
+        <Logo />
 
         <form onSubmit={handleLogin} className="space-y-6">
           {error && (
@@ -155,7 +231,7 @@ const Login = () => {
           <div className="mt-4 text-center">
             <button
               type="button"
-              onClick={() => setResetMode(true)}
+              onClick={() => { setResetMode(true); setError(''); }}
               className="text-white/60 hover:text-orange-400 text-sm transition-colors"
             >
               Forgot password?
@@ -171,86 +247,6 @@ const Login = () => {
       </div>
     </div>
   );
-
-  if (resetMode) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-orange-950 to-slate-900 flex items-center justify-center p-4">
-        <div className="glass-card p-6 sm:p-8 rounded-2xl w-full max-w-md">
-          <div className="flex flex-col items-center mb-6 sm:mb-8">
-            <img
-              src="/logo.png"
-              alt="CommutAI Logo"
-              className="w-20 h-20 sm:w-24 sm:h-24 mb-4"
-            />
-            <h1 className="text-white text-xl sm:text-2xl font-bold">Reset Password</h1>
-            <p className="text-white/60 text-sm">Enter your email to receive a reset link</p>
-          </div>
-
-          {resetSuccess ? (
-            <div className="text-center">
-              <div className="bg-green-500/20 border border-green-500/50 text-green-400 px-4 py-3 rounded-xl mb-4 text-sm">
-                Password reset email sent! Check your inbox.
-              </div>
-              <button
-                onClick={() => setResetMode(false)}
-                className="text-orange-400 hover:text-orange-300 text-sm"
-              >
-                Back to login
-              </button>
-            </div>
-          ) : (
-            <form onSubmit={handlePasswordReset} className="space-y-6">
-              {error && (
-                <div className="bg-red-500/20 border border-red-500/50 text-red-400 px-4 py-3 rounded-xl text-sm">
-                  {error}
-                </div>
-              )}
-
-              <div>
-                <label className="text-white/60 text-sm mb-2 block">Email</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" size={20} />
-                  <input
-                    type="email"
-                    value={resetEmail}
-                    onChange={(e) => setResetEmail(e.target.value)}
-                    required
-                    className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-3 text-white placeholder-white/40 focus:outline-none focus:border-orange-500 text-sm"
-                    placeholder="Enter your email"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2 text-sm"
-              >
-                {loading ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Sending...
-                  </>
-                ) : (
-                  'Send Reset Link'
-                )}
-              </button>
-
-              <div className="text-center">
-                <button
-                  type="button"
-                  onClick={() => setResetMode(false)}
-                  className="text-white/60 hover:text-orange-400 text-sm transition-colors"
-                >
-                  Back to login
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
-      </div>
-    );
-  }
 };
 
 export default Login;

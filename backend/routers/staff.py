@@ -161,7 +161,7 @@ async def login(request: LoginRequest):
     try:
         # Check if user exists in staff_users table
         result = supabase.table('staff_users').select('*').eq('email', request.email).single().execute()
-        user = result[1] if result[1] else None
+        user = result.data if result.data else None
 
         if not user:
             raise HTTPException(status_code=401, detail="Invalid email or password")
