@@ -1,6 +1,11 @@
 # CommutAI System Admin Dashboard
 
-A comprehensive system administration dashboard for the CommutAI public transportation management system, built with React, Vite, and Supabase. This system includes hardware integration for Raspberry Pi-based bus monitoring with camera, GPS, SMS, and emergency button capabilities.
+A comprehensive system administration dashboard for the **CommutAI** public transportation management system, built with React, Vite, and Supabase. The system integrates with Raspberry Pi hardware installed on each bus for real-time video monitoring, AI passenger counting, GPS tracking, SMS alerts, and emergency notifications.
+
+**Live backend:** [https://sys-admin-62ro.onrender.com](https://sys-admin-62ro.onrender.com)
+**Supabase project:** `iyacktzzktwrpeibcena.supabase.co`
+
+---
 
 ## Table of Contents
 
@@ -9,661 +14,568 @@ A comprehensive system administration dashboard for the CommutAI public transpor
 - [Tech Stack](#tech-stack)
 - [Hardware Setup](#hardware-setup)
 - [Software Setup](#software-setup)
+- [Video Recording & Playback](#video-recording--playback)
+- [Remote Pi Management](#remote-pi-management)
+- [QR Card System](#qr-card-system)
+- [Database Migrations](#database-migrations)
 - [User Manual](#user-manual)
 - [Troubleshooting](#troubleshooting)
 - [Maintenance](#maintenance)
 
+---
+
 ## Features
 
-### Admin Dashboard
-- **Authentication**: Secure login system with Supabase Auth
-- **Dashboard**: Real-time overview of passengers, revenue, trips, and active buses
-- **Live Map**: Real-time GPS tracking of all buses with passenger counts
-- **User Management**: Manage admin, conductor, driver, and customer service accounts
-- **Bus Management**: Manage bus fleet, routes, and maintenance status
-- **Trip Management**: Monitor and manage active trips
-- **Passenger Analytics**: View passenger count trends and statistics with AI-powered anomaly detection
-- **Emergency Alerts**: Real-time emergency alert monitoring
-- **Fare Irregularities**: Track and resolve fare-related issues with automatic detection
-- **Customer Service**: Manage customer service logs and actions
-- **GCash Transactions**: View GCash payment transaction history and statistics
-- **Reports**: Generate and export various reports with charts and analytics
-- **Audit Logs**: Track all system activities and security events
-- **Notifications**: Real-time notification system with database integration
+### Admin Dashboard (React Frontend)
+- **Authentication** — Secure login via Supabase Auth
+- **Dashboard** — Real-time overview: passengers, revenue, trips, active buses, emergencies
+- **Live Map** — Real-time GPS tracking of all buses with passenger counts (react-leaflet)
+- **User Management** — Manage admin, conductor, driver, and CS desk accounts
+- **Bus Management** — Fleet management, route/schedule assignment, maintenance status
+- **Trip Management** — Monitor and manage active trips; view trip history
+- **Card Management** — Issue, reload, and manage QR smart cards (regular, student, senior, PWD, temporary)
+- **Fare Matrix** — Configure point-to-point fares with regular and discounted rates
+- **Passenger Analytics** — Trends, AI-powered anomaly detection for fare irregularities
+- **Emergency Alerts** — Real-time emergency alert monitoring and resolution
+- **Fare Irregularities** — Auto-detected and manually reportable fare issues
+- **Customer Service** — Manage CS logs and actions
+- **GCash Top-Up** — QR card top-up via GCash with webhook integration
+- **Reports** — Trip detail modals with:
+  - GPS route map panel synced to video playback
+  - Recorded video feed (Supabase Storage URL or Pi proxy)
+  - Passenger boarding manifest (FIFO From→To estimation)
+  - Transactions, irregularities, emergency alerts
+  - Excel and PDF export (PDF uses list format)
+- **Audit Logs** — Full system activity trail; export as PDF (list format) or Excel
+- **Notifications** — Real-time notification system with database integration
+- **Video Monitoring** — Live camera feed from connected Pi bus
 
 ### Raspberry Pi Hardware Integration
-- **Video Monitoring**: Real-time camera feed with AI passenger counting (YOLO, HOG, MOG2)
-- **GPS Tracking**: NEO-6M GPS module for accurate location tracking
-- **SMS Notifications**: SIM900A GSM module for emergency alerts and notifications
-- **Emergency Button**: Hardware emergency button for instant alert triggering
-- **Auto-Discovery**: Dynamic IP registration via Supabase for seamless connectivity
-- **Automatic Startup**: Systemd service for auto-start on boot
-- **Network Handler**: Automatic reconnection on network changes
+- **Video Recording** — Records trip footage locally during the trip, then auto-uploads to Supabase Storage after the trip ends (or when internet becomes available)
+- **GPS Tracking** — NEO-6M GPS module; track position in real-time and store GPS points per trip
+- **SMS Notifications** — SIM900A GSM module for emergency alerts
+- **Emergency Button** — Hardware button triggers instant database alert + SMS
+- **AI Passenger Counting** — YOLOv8n / HOG / MOG2 detection models
+- **Auto-Discovery** — Pi registers its IP/port to `pi_devices` table on boot and every 5 minutes
+- **Automatic Startup** — Systemd service (`commutai-pi-service`) auto-starts on boot
+- **Offline Recording** — Videos recorded without internet are stored locally (SD card) and auto-uploaded on reconnect
+- **Remote Command Relay** — Admin can send whitelisted shell commands to the Pi via Render WebSocket (even without direct network access)
+
+### Backend (FastAPI on Render)
+- **Video Proxy** — Streams Pi video to dashboard when Pi is on a different network
+- **Remote Command Queue** — `POST /api/pi/command` queues commands; Pi executes and returns results
+- **Pi Status** — `GET /api/pi/status` checks if Pi WebSocket is connected
+- **Analytics** — Passenger count aggregation, anomaly detection
+- **Webhooks** — GCash payment processing
+- **Trip/Transaction APIs** — CRUD for trips, transactions, cards, staff, buses
+
+---
 
 ## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Admin Dashboard                          │
-│                    (React + Vite)                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │  Live Map    │  │  Analytics   │  │  Reports     │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-                    ┌───────▼────────┐
-                    │   Supabase     │
-                    │  (PostgreSQL)  │
-                    │  + Realtime    │
-                    └───────┬────────┘
-                            │
-        ┌───────────────────┼───────────────────┐
-        │                   │                   │
-┌───────▼────────┐  ┌──────▼────────┐  ┌──────▼────────┐
-│  FastAPI       │  │  Raspberry Pi │  │  Mobile Apps │
-│  Backend       │  │  Video Server │  │  (Conductor) │
-│  (Analytics)   │  │  + Hardware   │  │               │
-└────────────────┘  └──────┬────────┘  └────────────────┘
-                           │
-              ┌────────────┼────────────┐
-              │            │            │
-        ┌─────▼───┐  ┌────▼────┐  ┌────▼────┐
-        │ Camera  │  │   GPS   │  │   SMS   │
-        │ (AI)    │  │ (NEO-6M)│  │(SIM900A)│
-        └─────────┘  └─────────┘  └─────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                   Admin Dashboard (React + Vite)               │
+│  Live Map │ Reports │ Trips │ Cards │ Analytics │ Video Mon.   │
+└───────────────────────┬────────────────────────────────────────┘
+                        │ Supabase Realtime + REST
+              ┌─────────▼──────────┐
+              │     Supabase       │
+              │  PostgreSQL + Auth │
+              │  + Realtime + RLS  │
+              │  + Storage (videos)│
+              └────┬──────────┬────┘
+                   │          │
+      ┌────────────▼──┐   ┌──▼─────────────────┐
+      │  FastAPI       │   │  Raspberry Pi       │
+      │  Backend       │◄──┤  (on bus)           │
+      │  (Render.com)  │   │  video_server_      │
+      │                │   │  fastapi.py         │
+      │  - Video proxy │   │  Port :8080         │
+      │  - Pi command  │   │                     │
+      │    relay       │   │  Camera (OpenCV)    │
+      │  - Analytics   │   │  GPS (NEO-6M)       │
+      │  - Webhooks    │   │  SMS (SIM900A)      │
+      └────────────────┘   │  Emergency Button   │
+                           └─────────────────────┘
 ```
+
+**Video storage flow:**
+```
+Trip starts → Pi records locally (SD card)
+Trip ends   → Pi transcodes to H.264 (ffmpeg)
+            → Pi uploads to Supabase Storage bucket "trip-videos"
+            → DB updated: file_path = https://...supabase.co/...
+            → Video playable from anywhere, no Pi needed
+
+If Pi had no internet during trip:
+            → retry_pending_uploads() fires on boot + reconnect
+            → Uploads all missed recordings automatically
+```
+
+---
 
 ## Tech Stack
 
 ### Frontend
-- **Framework**: React 19, Vite 8
-- **Styling**: Tailwind CSS v4
-- **Maps**: React Leaflet
-- **Charts**: Recharts
-- **Icons**: Lucide React
-- **Authentication**: Supabase Auth
-- **Real-time**: Supabase Realtime subscriptions
+| Package | Version | Purpose |
+|---|---|---|
+| React | 19 | UI framework |
+| Vite | 8 | Build tool |
+| Tailwind CSS | v4 | Styling |
+| react-leaflet | 5 | GPS maps |
+| Recharts | 3 | Charts |
+| Lucide React | 1 | Icons |
+| jsPDF + autotable | 4/5 | PDF export |
+| xlsx | 0.18 | Excel export |
+| socket.io-client | 4 | Real-time (backend) |
+| @supabase/supabase-js | 2 | Database + Auth + Storage |
 
-### Backend
-- **Database**: Supabase (PostgreSQL)
-- **API**: FastAPI (Python)
-- **Caching**: Redis (optional)
-- **Webhooks**: GCash, Stripe integration
+### Backend (FastAPI — `backend/`)
+| Package | Purpose |
+|---|---|
+| FastAPI + uvicorn | API server |
+| websockets | Pi WebSocket relay |
+| httpx | HTTP client for Pi proxy |
+| supabase | Supabase client |
+| Deployed on | Render.com (`render.yaml`) |
 
-### Raspberry Pi Server
-- **Video Server**: FastAPI with WebSocket streaming
-- **AI Detection**: Ultralytics YOLOv8, OpenCV
-- **Hardware**: SIM900A (SMS), NEO-6M (GPS), Emergency Button
-- **Service**: Systemd for auto-start
-- **Network**: Dynamic IP discovery via Supabase
+### Raspberry Pi Server (`raspberry-pi-server/`)
+| Component | Details |
+|---|---|
+| Main server | `video_server_fastapi.py` (FastAPI, port 8080) |
+| AI detection | YOLOv8n (`yolov8n.pt`) via Ultralytics |
+| Camera | OpenCV (`cv2`) |
+| GPS | NEO-6M via UART |
+| SMS | SIM900A via UART |
+| Supabase upload | `requests` (direct HTTP, no extra lib) |
+| Service | `commutai-pi-service.service` (systemd) |
+| Python packages | `supabase>=2.3.0,<3.0.0`, `postgrest-py>=0.16.0,<1.0.0` |
+
+---
 
 ## Hardware Setup
 
-### Required Hardware Components
+### Required Hardware
 
-#### Raspberry Pi
-- **Model**: Raspberry Pi 4 (recommended) or Pi 3B+
-- **RAM**: 4GB minimum (8GB recommended for AI processing)
-- **Storage**: 32GB+ microSD card (Class 10)
-- **Power Supply**: 5V 3A USB-C power supply
-- **Cooling**: Active cooling fan recommended
+| Component | Spec |
+|---|---|
+| Raspberry Pi | Pi 4 Model B, 4GB+ RAM (8GB recommended) |
+| Storage | 64GB+ microSD (Class 10) |
+| Camera | USB Webcam or Pi Camera Module (640×480 min) |
+| GPS | NEO-6M GPS Module |
+| GSM | SIM900A GSM/GPRS Module + active SIM |
+| Emergency Button | Momentary push button |
+| Power | 5V/3A USB-C for Pi; 5V/2A external for SIM900A |
 
-#### Camera Module
-- **Type**: USB Webcam or Raspberry Pi Camera Module
-- **Resolution**: 640x480 minimum (1280x720 recommended)
-- **Frame Rate**: 30fps minimum
-- **Connection**: USB or CSI interface
+### Pin Connections
 
-#### GPS Module (NEO-6M)
-- **Module**: NEO-6M GPS Module
-- **Connection**: UART (GPIO14/GPIO15) or Software Serial (GPIO4/GPIO5)
-- **Antenna**: External antenna for better reception
-- **Baud Rate**: 9600
+#### GPS (NEO-6M) — Software Serial GPIO4/GPIO5
+| NEO-6M | Raspberry Pi | Wire |
+|---|---|---|
+| VCC | 3.3V or 5V | Red |
+| GND | GND | Black |
+| TX | GPIO5 (Pin 29, TXD3) | Blue |
+| RX | GPIO4 (Pin 7, RXD3) | Yellow |
 
-#### GSM Module (SIM900A)
-- **Module**: SIM900A GSM/GPRS Module
-- **Connection**: UART (GPIO14/GPIO15) or Software Serial (GPIO4/GPIO5)
-- **Power**: 5V 2A external power supply required
-- **SIM Card**: Active SIM card with SMS enabled
+#### GSM (SIM900A) — Software Serial GPIO4/GPIO5
+| SIM900A | Raspberry Pi | Wire |
+|---|---|---|
+| VCC | DC-DC 5V/2A external | Red |
+| GND | Common GND | Black |
+| TX | GPIO4 (Pin 7, RXD3) | Blue |
+| RX | GPIO5 (Pin 29, TXD3) | Yellow |
 
 #### Emergency Button
-- **Type**: Momentary push button
-- **Connection**: GPIO 18 (configurable)
-- **Wiring**: Pull-up resistor required
+| Button | Raspberry Pi |
+|---|---|
+| Signal | GPIO 18 |
+| Other | GND |
+| Pull-up resistor | 10kΩ to 3.3V |
 
-### Hardware Connection Diagram
-
-#### Camera Connection
-```
-USB Webcam → Raspberry Pi USB Port
-OR
-Pi Camera Module → Camera CSI Port (ribbon cable)
-```
-
-#### GPS Module (NEO-6M) - UART Connection
-| NEO-6M Pin | Raspberry Pi GPIO | Description |
-|------------|------------------|-------------|
-| VCC        | 3.3V or 5V      | Power supply |
-| GND        | GND             | Ground |
-| TX         | GPIO 15 (RX)    | GPS transmit to Pi receive |
-| RX         | GPIO 14 (TX)    | GPS receive from Pi transmit |
-
-#### GPS Module (NEO-6M) - Software Serial (GPIO4/GPIO5)
-| NEO-6M Pin | Raspberry Pi GPIO | Description |
-|------------|------------------|-------------|
-| VCC        | 3.3V or 5V      | Power supply |
-| GND        | GND             | Ground |
-| TX         | GPIO 5 (TXD3)   | GPS transmit to Pi receive |
-| RX         | GPIO 4 (RXD3)   | GPS receive from Pi transmit |
-
-#### GSM Module (SIM900A) - UART Connection
-| SIM900A Pin | Raspberry Pi GPIO | Description |
-|-------------|------------------|-------------|
-| VCC         | 5V               | Power supply (2A recommended) |
-| GND         | GND              | Ground |
-| TXD         | GPIO 15 (RX)     | SIM900A transmit to Pi receive |
-| RXD         | GPIO 14 (TX)     | SIM900A receive from Pi transmit |
-
-#### GSM Module (SIM900A) - Software Serial (GPIO4/GPIO5)
-| SIM900A Pin | Raspberry Pi GPIO | Description |
-|-------------|------------------|-------------|
-| VCC         | DC-DC Converter (5V/2A) | Red |
-| GND         | Common GND       | Black |
-| TX          | Pin 7 (GPIO4, RXD3) | Blue |
-| RX          | Pin 29 (GPIO5, TXD3) | Yellow |
-
-#### Emergency Button Connection
-| Button Pin | Raspberry Pi GPIO | Description |
-|------------|------------------|-------------|
-| One Side   | GPIO 18          | Signal pin |
-| Other Side | GND              | Ground |
-| Resistor   | 10kΩ to 3.3V    | Pull-up resistor |
-
-### Hardware Configuration
-
-#### Enable Serial Port on Raspberry Pi
+### Hardware Setup Commands
 ```bash
 # Enable serial port
 sudo raspi-config
+# Interface Options → Serial Port
+# - Enable hardware: YES   - Enable console: NO
 
-# Navigate to:
-# Interface Options -> Serial Port
-# - Enable serial port hardware: YES
-# - Enable serial console: NO (to free up the port for GPS/SIM900A)
-
-# Reboot after changes
-sudo reboot
-```
-
-#### Install pigpio for Software Serial (GPIO4/GPIO5)
-```bash
-sudo apt-get update
+# Install pigpio for software serial
 sudo apt-get install pigpio python3-pigpio
+sudo systemctl enable pigpiod && sudo systemctl start pigpiod
 
-# Start pigpio daemon
-sudo pigpiod
-
-# Enable pigpio on boot
-sudo systemctl enable pigpiod
-```
-
-#### Verify Hardware Connections
-```bash
 # Check camera
 ls -la /dev/video*
 v4l2-ctl --device=/dev/video0 --info
 
 # Check serial ports
-ls -la /dev/ttyS0
-ls -la /dev/serial0
-
-# Check GPIO
-gpio readall  # Requires wiringPi
+ls -la /dev/ttyS0 /dev/serial0
 ```
 
-### Hardware Testing
-
-#### Test Camera
-```bash
-# Test with v4l2
-sudo apt-get install v4l-utils
-v4l2-ctl --device=/dev/video0 --info
-
-# Test with Python
-python3 -c "import cv2; cap = cv2.VideoCapture(0); print('Camera OK' if cap.isOpened() else 'Camera Failed'); cap.release()"
-```
-
-#### Test GPS Module
-```python
-import serial
-ser = serial.Serial('/dev/ttyS0', 9600, timeout=1)
-ser.write(b'AT\r')
-response = ser.read(100).decode()
-print(f"GPS Response: {response}")
-ser.close()
-```
-
-#### Test SIM900A Module
-```python
-import serial
-ser = serial.Serial('/dev/ttyS0', 9600, timeout=1)
-ser.write(b'AT\r')
-response = ser.read(100).decode()
-print(f"SIM900A Response: {response}")
-ser.close()
-```
-
-#### Test Emergency Button
-```python
-import RPi.GPIO as GPIO
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(18, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-print("Press the button...")
-while True:
-    if GPIO.input(18) == GPIO.LOW:
-        print("Button pressed!")
-        break
-GPIO.cleanup()
-```
+---
 
 ## Software Setup
 
-### Frontend Setup (Admin Dashboard)
+### 1. Frontend (Admin Dashboard)
 
-#### 1. Prerequisites
-- Node.js 18+ installed
-- npm or yarn package manager
-- Supabase account (https://supabase.com)
+#### Prerequisites
+- Node.js 18+
+- Supabase project
 
-#### 2. Database Setup
-1. Create a new project in Supabase Dashboard
-2. Go to the SQL Editor in your Supabase project
-3. Copy and run the entire contents of `supabase-schema.sql`
-4. This will create all tables, enums, functions, triggers, RLS policies, and seed data
-
-#### 3. Create Test Users
-After running the schema, create test users in the Supabase Dashboard:
-
-**Admin User:**
-- Email: `admin@commutai.test`
-- Password: `Admin123!`
-- Auto-confirm: Yes
-- Copy the user UUID, then run in SQL Editor:
-  ```sql
-  INSERT INTO staff_users (id, full_name, email, role, is_active)
-  VALUES ('<paste-uuid-here>', 'System Admin', 'admin@commutai.test', 'admin', true);
-  ```
-
-**Conductor User:**
-- Email: `conductor@commutai.test`
-- Password: `Conductor123!`
-- Auto-confirm: Yes
-- Copy the user UUID, then run in SQL Editor:
-  ```sql
-  INSERT INTO staff_users (id, full_name, email, role, is_active)
-  VALUES ('<paste-uuid-here>', 'Test Conductor', 'conductor@commutai.test', 'conductor', true);
-  ```
-
-**Driver User:**
-- Email: `driver@commutai.test`
-- Password: `Driver123!`
-- Auto-confirm: Yes
-- Copy the user UUID, then run in SQL Editor:
-  ```sql
-  INSERT INTO staff_users (id, full_name, email, role, is_active)
-  VALUES ('<paste-uuid-here>', 'Test Driver', 'driver@commutai.test', 'driver', true);
-  ```
-
-**CS Desk User:**
-- Email: `csdesk@commutai.test`
-- Password: `CSDesk123!`
-- Auto-confirm: Yes
-- Copy the user UUID, then run in SQL Editor:
-  ```sql
-  INSERT INTO staff_users (id, full_name, email, role, is_active)
-  VALUES ('<paste-uuid-here>', 'CS Desk Operator', 'csdesk@commutai.test', 'cs_desk', true);
-  ```
-
-#### 4. Environment Configuration
-1. Get your Supabase credentials from the Supabase Dashboard:
-   - Project URL: Settings → API → Project URL
-   - Anon Key: Settings → API → anon public key
-
-2. Create a `.env` file in the project root:
-   ```env
-   VITE_SUPABASE_URL=your-project-url
-   VITE_SUPABASE_ANON_KEY=your-anon-key
-   ```
-
-#### 5. Install Dependencies
+#### Install & Run
 ```bash
+# Clone repo
+git clone https://github.com/CommutAI/sys-admin.git
+cd sys-admin
+
+# Install dependencies
 npm install
+
+# Configure environment
+cp .env.example .env
+# Edit .env:
+#   VITE_SUPABASE_URL=https://your-project.supabase.co
+#   VITE_SUPABASE_ANON_KEY=your-anon-key
+#   VITE_BACKEND_URL=https://sys-admin-62ro.onrender.com
+
+# Development
+npm run dev          # → http://localhost:5173
+
+# Production build
+npm run build        # → dist/
 ```
 
-#### 6. Run the Development Server
+#### Database Setup
+Run all migrations in order:
 ```bash
-npm run dev
+# In Supabase SQL Editor, run each file in migrations/ in order:
+# 001_initial_schema.sql through 017_add_video_recording_to_trips.sql
 ```
 
-The application will be available at `http://localhost:5173`
-
-#### 7. Build for Production
-```bash
-npm run build
+#### Create Staff Users
+In Supabase Dashboard → Authentication → Users, create users then link them:
+```sql
+INSERT INTO staff_users (id, full_name, email, role, is_active)
+VALUES ('<auth-user-uuid>', 'System Admin', 'admin@example.com', 'admin', true);
 ```
+Roles: `admin`, `conductor`, `driver`, `cs_desk`
 
-The optimized build will be in the `dist` directory.
+---
 
-### Backend Setup (FastAPI)
+### 2. Backend (FastAPI)
 
-#### 1. Navigate to Backend Directory
+The backend is deployed on **Render** via `backend/render.yaml`. To run locally:
+
 ```bash
 cd backend
-```
 
-#### 2. Install Dependencies
-```bash
+# Install dependencies
 pip install -r requirements.txt
-```
 
-#### 3. Configure Environment
-Copy `.env.example` to `.env` and fill in your credentials:
-```bash
+# Configure environment
 cp .env.example .env
-```
+# Edit .env:
+#   SUPABASE_URL=https://your-project.supabase.co
+#   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
-Edit `.env`:
-```env
-SUPABASE_URL=your-supabase-url
-SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
-REDIS_URL=redis://localhost:6379/0  # Optional
-JWT_SECRET_KEY=your-jwt-secret-key  # Optional
-```
-
-#### 4. Run the Server
-```bash
-python main.py
-```
-
-Or using uvicorn directly:
-```bash
+# Run locally
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The API will be available at `http://localhost:8000`
+**Key endpoints:**
+- `GET  /health` — Health check
+- `POST /api/pi/command` — Queue a shell command for the Pi
+- `GET  /api/pi/command/{id}` — Poll command result
+- `GET  /api/pi/status` — Check if Pi WebSocket is connected
+- `GET  /api/video-processing/download-video/{filename}` — Proxy video from Pi
+- `WS   /ws/video-stream/{client_id}` — WebSocket relay for live video
 
-#### 5. Access API Documentation
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+---
 
-### Raspberry Pi Server Setup
+### 3. Raspberry Pi Server
 
-#### 1. Connect to Raspberry Pi
+#### First-Time Setup
+
 ```bash
-ssh chichi@commutai.local
-# or
-ssh chichi@192.168.1.45
+# SSH into the Pi
+ssh chichi@<pi-ip-address>
+
+# Navigate to server directory
+cd ~/raspberry-pi-server
+
+# Install system dependencies
+sudo apt install -y ffmpeg v4l-utils v4l2loopback-dkms \
+  libopencv-dev python3-opencv python3-venv pigpio python3-pigpio
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install Python packages (use pinned versions)
+pip install -r requirements.txt
+# IMPORTANT: supabase and postgrest-py must be pinned:
+pip install "supabase>=2.3.0,<3.0.0" "postgrest-py>=0.16.0,<1.0.0"
+
+# Download YOLO model
+wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt
 ```
 
-#### 2. Navigate to Server Directory
-```bash
-cd /home/chichi/raspberry-pi-server
-```
-
-#### 3. Setup Virtual Environment
-```bash
-# Make setup script executable
-chmod +x setup_venv.sh
-
-# Run the setup
-./setup_venv.sh
-```
-
-#### 4. Configure Environment
-Copy `.env.example` to `.env`:
+#### Configure Environment
 ```bash
 cp .env.example .env
-```
-
-Edit `.env` with your configuration:
-```bash
 nano .env
 ```
 
-Required configuration:
 ```env
-# Supabase Configuration
+# Supabase
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=your-service-role-key
 
-# Hardware Configuration
+# Backend relay (Render)
+BACKEND_URL=https://sys-admin-62ro.onrender.com
+
+# Hardware
 ENABLE_SMS=true
 ENABLE_GPS=true
 ENABLE_EMERGENCY_BUTTON=true
-ENABLE_GEOLOCATION=true
 
-# SIM900A GSM Module Configuration
-SIM900A_PORT=/dev/ttyS0
+# SIM900A (GPIO4/GPIO5 software serial)
+SIM900A_PORT=GPIO4_GPIO5
 SIM900A_BAUDRATE=9600
 
-# NEO-6M GPS Module Configuration
-NEO6M_PORT=/dev/ttyS1
+# NEO-6M GPS (GPIO4/GPIO5)
+NEO6M_PORT=GPIO4_GPIO5
 NEO6M_BAUDRATE=9600
 
-# Emergency Button Configuration
 EMERGENCY_BUTTON_PIN=18
 
-# Camera Configuration
+# Camera
 CAMERA_ID=0
 CAMERA_WIDTH=640
 CAMERA_HEIGHT=480
 FPS=15
 JPEG_QUALITY=50
 
-# AI Detection Configuration
+# AI
 DISABLE_AI=false
 COUNT_METHOD=yolo
 MODEL_PATH=yolov8n.pt
 CONFIDENCE_THRESHOLD=0.25
-IOU_THRESHOLD=0.45
 
-# Backend API Configuration
-BACKEND_URL=http://localhost:8000
-
-# Emergency Contacts
-EMERGENCY_CONTACTS=+639927268704,+639108945427
-ADMIN_CONTACTS=+639108945427
+# Emergency contacts
+EMERGENCY_CONTACTS=+63XXXXXXXXXX,+63XXXXXXXXXX
 ```
 
-#### 5. Download YOLO Model
+#### Install as System Service
 ```bash
-wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt
-```
+# Install and enable systemd service
+sudo cp commutai-pi-service.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable commutai-pi-service
+sudo systemctl start commutai-pi-service
 
-#### 6. Run System Check
-```bash
-chmod +x check_system.sh
-./check_system.sh
-```
-
-#### 7. Setup Automatic Startup
-```bash
-# Copy automation files (from your local machine)
-scp commutai-pi-service.service chichi@commutai.local:/home/chichi/raspberry-pi-server/
-scp commutai-network-handler.sh chichi@commutai.local:/home/chichi/raspberry-pi-server/
-scp setup-automation.sh chichi@commutai.local:/home/chichi/raspberry-pi-server/
-
-# On Raspberry Pi
-cd /home/chichi/raspberry-pi-server
-sudo bash setup-automation.sh
-```
-
-This will:
-- Install a systemd service that starts the server on boot
-- Install a network dispatcher that restarts the server when network changes
-- Enable and start the service immediately
-
-#### 8. Verify Installation
-```bash
-# Check service status
+# Verify
 sudo systemctl status commutai-pi-service
-
-# View service logs
 sudo journalctl -u commutai-pi-service -f
-
-# Test server health
-curl http://localhost:5000/health
 ```
 
-### Database Setup for Pi Devices
-
-For auto-discovery to work, create the `pi_devices` table:
-
-```sql
--- Create the pi_devices table
-CREATE TABLE IF NOT EXISTS pi_devices (
-  bus_number   INTEGER     PRIMARY KEY,
-  bus_id       UUID        REFERENCES buses (id) ON DELETE SET NULL,
-  ip_address   TEXT        NOT NULL,
-  port         INTEGER     NOT NULL DEFAULT 5000,
-  last_seen    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  hostname     TEXT
-);
-
--- Enable RLS + allow full access via service role key
-ALTER TABLE pi_devices ENABLE ROW LEVEL SECURITY;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE schemaname = 'public'
-      AND tablename  = 'pi_devices'
-      AND policyname = 'pi_devices_service_role'
-  ) THEN
-    CREATE POLICY "pi_devices_service_role"
-      ON pi_devices FOR ALL
-      USING (true)
-      WITH CHECK (true);
-  END IF;
-END $$;
-
--- Enable Realtime so the dashboard reacts instantly when Pi changes IP
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_publication_tables
-    WHERE pubname = 'supabase_realtime' AND tablename = 'pi_devices'
-  ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE pi_devices;
-  END IF;
-END $$;
+#### Firewall
+```bash
+sudo ufw allow 8080
 ```
+
+---
+
+## Video Recording & Playback
+
+### How It Works
+
+1. **During trip** — Pi records video to SD card (`./recordings/video_<timestamp>_trip_<id>.mp4`)
+2. **After trip ends** — Pi transcodes to H.264 via ffmpeg, then uploads to Supabase Storage bucket `trip-videos`
+3. **DB updated** — `video_recordings.file_path` = public Supabase Storage URL; `video_recordings.storage_type` = `supabase_storage`
+4. **Playback** — Dashboard plays from Supabase URL directly (no Pi needed)
+
+### Offline Recording Recovery
+
+If the Pi had no internet during the trip:
+- Video stays as `storage_type: local` on the SD card
+- On **next boot** or **backend WebSocket reconnect**, `retry_pending_uploads()` automatically scans for unuploaded recordings and uploads them
+- Runs at startup (after 30s delay) and every hour as a safety net
+
+### Dashboard Video States
+
+| State | Meaning |
+|---|---|
+| ▶ Playing | Video loaded from Supabase Storage URL |
+| **Pi Required** | Recording still on SD card; Pi must reconnect and upload |
+| No Recording | Trip was not recorded |
+| Processing | Recording exists but not yet transcoded |
+
+### Supabase Storage
+
+- **Bucket:** `trip-videos` (public)
+- **Path:** `trip-videos/{trip_id}/{filename}`
+- **URL pattern:** `https://iyacktzzktwrpeibcena.supabase.co/storage/v1/object/public/trip-videos/{trip_id}/{filename}`
+
+---
+
+## Remote Pi Management
+
+When the Pi is on a mobile hotspot (not directly reachable), use the backend command relay:
+
+### Check Pi Status
+```bash
+curl https://sys-admin-62ro.onrender.com/api/pi/status
+# → {"pi_connected": true/false, "last_seen": "..."}
+```
+
+### Send Command to Pi
+```bash
+curl -X POST https://sys-admin-62ro.onrender.com/api/pi/command \
+  -H "Content-Type: application/json" \
+  -d '{"command": "sudo systemctl status commutai-pi-service"}'
+# → {"command_id": "abc123"}
+
+# Poll for result
+curl https://sys-admin-62ro.onrender.com/api/pi/command/abc123
+# → {"status": "completed", "output": "...", "exit_code": 0}
+```
+
+### Whitelisted Commands
+- `pip install <package>`
+- `pip show <package>`
+- `python --version`
+- `sudo systemctl restart/status/stop/start commutai-pi-service`
+- `sudo reboot`
+- `echo <text>`
+- `ls <path>`
+- `cat /proc/version`
+
+### Fix Supabase Client on Pi (after deploy)
+When Pi reconnects, run:
+```bash
+# Via remote command relay:
+POST /api/pi/command
+{"command": "pip install \"supabase>=2.3.0,<3.0.0\" \"postgrest-py>=0.16.0,<1.0.0\""}
+
+# Then restart:
+POST /api/pi/command
+{"command": "sudo systemctl restart commutai-pi-service"}
+```
+
+---
+
+## QR Card System
+
+Cards are stored in the `qr_cards` table. Each card has:
+
+| Field | Description |
+|---|---|
+| `card_uid` | Physical card ID (e.g., `RC-578-10-569`) |
+| `card_type` | `regular`, `student`, `senior_citizen`, `pwd` |
+| `passenger_type` | `regular`, `student`, `senior_citizen`, `pwd` |
+| `balance` | Current balance (PHP) |
+| `status` | `active`, `suspended`, `expired` |
+
+**Card prefix convention:**
+- `RC-` Regular Card
+- `SC-` Student Card
+- `SCC-` Senior Citizen Card
+- `PC-` PWD Card
+- `TRC-` Temporary Regular Card
+- `TSC-` Temporary Student Card
+- etc.
+
+**Payment methods:** `qr_card`, `cash`
+**Channel must match payment_method** (never use `pos` for cash)
+
+---
+
+## Database Migrations
+
+Migrations are in `migrations/` and must be run in order via Supabase SQL Editor.
+
+| File | Description |
+|---|---|
+| `001_initial_schema.sql` | Base tables, enums, RLS, seed data |
+| `002` | Add `branch` to `staff_users` |
+| `003` | Anomaly detection enhancements |
+| `004` | Irregularity enhancements |
+| `005` | Restrict RLS policies |
+| `006` | Add `password` column |
+| `007` | Add `decline_reason` column |
+| `008` | Create `pi_devices` table |
+| `009` | Fix `staff_users` RLS |
+| `010` | Restore `staff_users` auth FK |
+| `011` | Update SMS queue types |
+| `012` | Update `audit_logs` action constraint |
+| `013` | Update `card_reservations` status constraint |
+| `014` | Add anomaly types to irregularity enum |
+| `015` | Drop duplicate FK constraints |
+| `016` | Add connect/disconnect to audit logs |
+| `016b` | Audit logs security definer |
+| `017` | Add video recording fields to `trips` |
+
+---
 
 ## User Manual
 
-### Admin Dashboard
+### Admin Dashboard Pages
 
-#### Login
-1. Navigate to the dashboard URL
-2. Enter your email and password
-3. Click "Sign In"
-4. You will be redirected to the Dashboard
-
-#### Dashboard Overview
-The dashboard provides a real-time overview of:
-- **Active Buses**: Number of buses currently on trips
-- **Total Passengers**: Current passenger count across all buses
-- **Today's Revenue**: Total fare revenue for the day
-- **Active Emergencies**: Number of unresolved emergency alerts
-- **Unresolved Irregularities**: Number of fare irregularities requiring attention
+#### Dashboard
+Real-time summary: active buses, total passengers, today's revenue, active emergencies, unresolved irregularities.
 
 #### Live Map
-- View real-time GPS locations of all buses
-- Click on bus markers to see:
-  - Bus plate number
-  - Current passenger count
-  - Driver and conductor information
-  - Trip status
-- Map updates automatically via Supabase Realtime
-
-#### User Management
-- **Create Users**: Add new admin, conductor, driver, or CS desk accounts
-- **Manage Roles**: Assign appropriate roles to users
-- **Activate/Deactivate**: Enable or disable user accounts
-- **View Activity**: See user activity and login history
-
-#### Bus Management
-- **Add Buses**: Register new buses to the fleet
-- **Assign Routes**: Set bus routes and schedules
-- **Manage Status**: Mark buses as active, maintenance, or inactive
-- **View History**: Track bus usage and maintenance records
+- Real-time GPS bus locations (auto-updates via Supabase Realtime)
+- Click bus marker: plate, passengers, driver, conductor, trip status
 
 #### Trip Management
-- **Start Trips**: Begin new trips for conductors
-- **Monitor Active Trips**: View ongoing trips with real-time data
-- **End Trips**: Complete trips and generate reports
-- **Update GPS**: Manually update GPS coordinates if needed
+- Monitor active trips; view GPS track, passengers, revenue
+- Start/end trips manually
 
-#### Passenger Analytics
-- **View Trends**: Analyze passenger count patterns over time
-- **Time Range Selection**: Filter by hourly, daily, or monthly data
-- **Fare Irregularities**: View and resolve detected anomalies
-- **AI Detection**: Automatic detection of fare evasion based on camera count vs boarded passengers
+#### Reports (Trip Detail Modal)
+Click any completed trip to open the detail modal:
+- **GPS Map** — Route plotted with start/end markers; moving marker synced to video timestamp
+- **Video** — Plays from Supabase Storage if uploaded; shows "Pi Required" if still on SD card
+- **Segments** — List of recording segments; green badge = cloud, yellow badge = local SD
+- **Passengers / Transactions / Irregularities / Alerts** — Tabbed detail
 
-#### Emergency Alerts
-- **View Active Alerts**: See all unresolved emergency alerts
-- **Acknowledge Alerts**: Mark alerts as acknowledged
-- **Resolve Alerts**: Close resolved emergencies
-- **View Details**: See GPS location, bus info, and notes
+#### Card Management
+- Issue new QR cards (regular, student, senior, PWD, temporary)
+- View balance, top-up history, card status
+- Suspend/reactivate cards
 
-#### Reports
-- **Generate Reports**: Create reports for trips, transactions, passengers, and more
-- **Export Data**: Export reports as Excel or PDF
-- **Schedule Reports**: Set up automated report generation
-- **View History**: Access previously generated reports
+#### Fare Matrix
+- Configure point-to-point regular and discounted fares
+- Used for transaction fare calculation
 
 #### Audit Logs
-- **View All Activities**: See comprehensive audit trail
-- **Filter by User**: View actions by specific users
-- **Filter by Action**: View specific action types (CREATE, UPDATE, DELETE, etc.)
-- **Filter by Module**: View activities in specific modules
-- **Export Logs**: Download audit logs for compliance
+- Filter by user, action, module, date range
+- Export as PDF (list format) or Excel
 
-### Raspberry Pi Video Server
+### Raspberry Pi Service
 
-#### Starting the Server
-The server starts automatically on boot. Manual start:
 ```bash
-cd /home/chichi/raspberry-pi-server
-source venv/bin/activate
-python video_server_fastapi.py
-```
-
-#### Service Management
-```bash
-# Start service
+# Start
 sudo systemctl start commutai-pi-service
 
-# Stop service
+# Stop
 sudo systemctl stop commutai-pi-service
 
-# Restart service
+# Restart
 sudo systemctl restart commutai-pi-service
 
-# Check status
+# Status
 sudo systemctl status commutai-pi-service
 
-# View logs
+# Logs (live)
 sudo journalctl -u commutai-pi-service -f
+
+# Health check
+curl http://localhost:8080/health
 ```
 
-#### Health Check
-```bash
-curl http://localhost:5000/health
-```
-
-Expected response:
+Expected health response:
 ```json
 {
   "status": "healthy",
@@ -673,661 +585,153 @@ Expected response:
 }
 ```
 
-#### Video Monitoring
-- Access video feed via WebSocket from admin dashboard
-- Real-time passenger counting with AI detection
-- Automatic anomaly detection for fare evasion
-- Video recording (if enabled)
-
-#### Hardware Status
-Check hardware component status:
-```bash
-curl http://localhost:5000/hardware-status
-```
-
-#### Emergency Button
-- Press the physical emergency button to trigger an alert
-- Alert is sent to all emergency contacts via SMS
-- Alert is logged in the database
-- Admin dashboard shows the alert immediately
-
-#### GPS Tracking
-- GPS coordinates are automatically sent to the database
-- Location updates every 30 seconds (configurable)
-- Fallback to IP geolocation if GPS fails
-
-#### SMS Notifications
-- Automatic SMS on emergency alerts
-- Transaction notifications (if enabled)
-- Trip completion notifications (if enabled)
-- All SMS are logged in the database
+---
 
 ## Troubleshooting
 
-### Frontend Issues
+### Frontend
 
-#### Tailwind CSS Errors
-**Problem**: Tailwind CSS not working correctly
+| Problem | Solution |
+|---|---|
+| Tailwind not working | `npm install @tailwindcss/postcss` → delete `.vite` cache → restart |
+| Supabase connection | Check `.env` URL/key, verify RLS policies |
+| Realtime not updating | Check table is published in Supabase Realtime; check browser WebSocket |
+| `ERR_BLOCKED_BY_CLIENT` on Render | Ad blocker blocking `onrender.com` — whitelist in browser |
+| Build fails | `rm -rf node_modules dist package-lock.json` → `npm install` → `npm run build` |
 
-**Solution**:
+### Backend
+
+| Problem | Solution |
+|---|---|
+| Server won't start | `lsof -ti:8000 \| xargs kill -9` → `python main.py` |
+| Cannot reach Supabase | Verify `SUPABASE_SERVICE_ROLE_KEY` in `.env` |
+| CORS errors | Add frontend URL to `allowed_origins` in `main.py` |
+| Render cold start delay | First request wakes the dyno; pre-warm by visiting `/health` |
+
+### Raspberry Pi
+
+| Problem | Solution |
+|---|---|
+| `'SingleAPIResponse[TypeVar]' object is not subscriptable` | `pip install "supabase>=2.3.0,<3.0.0" "postgrest-py>=0.16.0,<1.0.0"` |
+| Camera not found | `ls /dev/video*`; try `CAMERA_ID=1`; run `diagnose-camera.sh` |
+| OOM / `Killed` on startup | Set `DISABLE_AI=true` or increase swap to 1GB (see below) |
+| GPS not reading | `python3 check_gps.py`; verify `pigpiod` is running |
+| SMS not sending | `python3 check_sim900.py`; verify SIM card is active |
+| Video not uploading | Check `SUPABASE_URL`/`SUPABASE_KEY` in `.env`; check disk space |
+| Pi not reachable remotely | Use `POST /api/pi/command` relay via Render backend |
+
+**Increase swap (fix OOM):**
 ```bash
-# Install @tailwindcss/postcss
-npm install @tailwindcss/postcss
-
-# Update postcss.config.js to use @tailwindcss/postcss
-# Clear Vite cache
-rm -rf node_modules/.vite
-
-# Restart dev server
-npm run dev
-```
-
-#### Supabase Connection Issues
-**Problem**: Cannot connect to Supabase
-
-**Solution**:
-- Verify `.env` file has correct URL and key
-- Check Supabase project is active
-- Ensure RLS policies allow the operations
-- Test connection: `ping your-project.supabase.co`
-
-#### Real-time Subscriptions Not Working
-**Problem**: Real-time updates not appearing
-
-**Solution**:
-- Verify tables are published in Supabase Realtime
-- Check network connection
-- Ensure authenticated with Supabase Auth
-- Check browser console for WebSocket errors
-
-#### Build Errors
-**Problem**: Build process fails
-
-**Solution**:
-```bash
-# Clear cache
-rm -rf node_modules
-rm -rf dist
-rm package-lock.json
-
-# Install dependencies
-npm install
-
-# Build again
-npm run build
-```
-
-### Backend Issues
-
-#### Server Won't Start
-**Problem**: FastAPI server fails to start
-
-**Solution**:
-```bash
-# Check if port 8000 is in use
-lsof -ti:8000 | xargs kill -9
-
-# Check Python version (3.8+ required)
-python --version
-
-# Reinstall dependencies
-pip install -r requirements.txt
-
-# Check logs
-python main.py
-```
-
-#### Database Connection Issues
-**Problem**: Cannot connect to Supabase
-
-**Solution**:
-- Verify SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in `.env`
-- Test network connectivity: `ping your-project.supabase.co`
-- Check Supabase project status
-- Verify service role key permissions
-
-#### CORS Errors
-**Problem**: Frontend cannot access backend API
-
-**Solution**:
-- Check CORS configuration in `main.py`
-- Ensure frontend URL is in `allowed_origins`
-- Verify backend is running on correct port
-
-### Raspberry Pi Issues
-
-#### Camera Not Found
-**Problem**: Server reports camera not found
-
-**Solution**:
-```bash
-# Check camera device
-ls -la /dev/video*
-
-# Test camera with v4l2
-sudo apt-get install v4l-utils
-v4l2-ctl --device=/dev/video0 --info
-
-# Try different camera ID in .env
-CAMERA_ID=1  # or 2, 3, etc.
-
-# Reboot Pi
-sudo reboot
-```
-
-#### YOLO Model Missing
-**Problem**: Server reports YOLO model not found
-
-**Solution**:
-```bash
-cd /home/chichi/raspberry-pi-server
-wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt
-```
-
-#### Service Won't Start
-**Problem**: Systemd service fails to start
-
-**Solution**:
-```bash
-# Check service logs
-sudo journalctl -u commutai-pi-service -n 50
-
-# Check if virtual environment exists
-ls -la /home/chichi/raspberry-pi-server/venv
-
-# Test manual start
-cd /home/chichi/raspberry-pi-server
-source venv/bin/activate
-python video_server_fastapi.py
-
-# Reinstall service
-sudo bash setup-automation.sh
-```
-
-#### Network Issues
-**Problem**: Server not accessible from other devices
-
-**Solution**:
-```bash
-# Check if server is running locally
-curl http://localhost:5000/health
-
-# Check firewall
-sudo ufw status
-sudo ufw allow 5000/tcp
-
-# Verify Pi IP address
-hostname -I
-
-# Check network handler logs
-cat /home/chichi/raspberry-pi-server/network-handler.log
-```
-
-#### GPS Not Working
-**Problem**: GPS coordinates not updating
-
-**Solution**:
-```bash
-# Check serial port
-ls -la /dev/ttyS0
-ls -la /dev/serial0
-
-# Test GPS connection
-python3 -c "import serial; ser = serial.Serial('/dev/ttyS0', 9600); print(ser.read(100))"
-
-# Check pigpio daemon (for GPIO4/GPIO5)
-sudo systemctl status pigpiod
-
-# Enable serial port in raspi-config
-sudo raspi-config
-```
-
-#### SIM900A Not Working
-**Problem**: SMS not sending
-
-**Solution**:
-```bash
-# Check serial port permissions
-sudo chmod 666 /dev/ttyS0
-sudo usermod -a -G dialout chichi
-
-# Test SIM900A connection
-python3 -c "import serial; ser = serial.Serial('/dev/ttyS0', 9600); ser.write(b'AT\r'); print(ser.read(100))"
-
-# Check signal strength
-# Send AT+CSQ command via serial
-
-# Check SIM card
-# Send AT+CPIN? command via serial
-
-# Verify power supply (2A required)
-```
-
-#### Emergency Button Not Working
-**Problem**: Button press not detected
-
-**Solution**:
-```bash
-# Test GPIO
-python3 -c "import RPi.GPIO as GPIO; GPIO.setmode(GPIO.BCM); GPIO.setup(18, GPIO.IN); print(GPIO.input(18))"
-
-# Check wiring
-# Verify pull-up resistor is connected
-# Check GPIO pin number in .env
-
-# Test with simple script
-python3 test_gpio.py
-```
-
-#### High CPU Usage
-**Problem**: Raspberry Pi CPU usage is too high
-
-**Solution**:
-```bash
-# Lower FPS in .env
-FPS=10
-
-# Lower resolution
-CAMERA_WIDTH=480
-CAMERA_HEIGHT=360
-
-# Disable AI if not needed
-DISABLE_AI=true
-
-# Use HOG instead of YOLO
-COUNT_METHOD=hog
-
-# Increase frame skipping
-SKIP_DETECTION_FRAMES=5
-```
-
-#### Out of Memory
-**Problem**: System runs out of memory
-
-**Solution**:
-```bash
-# Check memory usage
-free -h
-
-# Add swap space
 sudo dphys-swapfile swapoff
-sudo nano /etc/dphys-swapfile
-# Set CONF_SWAPSIZE=1024
+sudo sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=1024/' /etc/dphys-swapfile
 sudo dphys-swapfile setup
 sudo dphys-swapfile swapon
-
-# Reduce video quality
-JPEG_QUALITY=40
-
-# Disable video recording
-ENABLE_VIDEO_RECORDING=false
+free -h
 ```
 
-### Database Issues
+**Memory requirements:**
+| Mode | Min RAM |
+|---|---|
+| `DISABLE_AI=true` (stream only) | 256 MB |
+| `DISABLE_AI=false` (YOLO) | 1.5 GB free |
 
-#### Connection Timeout
-**Problem**: Database queries timing out
-
-**Solution**:
-- Check network connectivity to Supabase
-- Verify Supabase project is not paused
-- Check Supabase status page
-- Optimize queries with indexes
-- Increase timeout in configuration
-
-#### RLS Policy Errors
-**Problem**: Row-Level Security blocking operations
-
-**Solution**:
-- Check RLS policies in Supabase Dashboard
-- Verify user has correct role
-- Check service role key permissions
-- Test with service role key
-
-#### Real-time Not Working
-**Problem**: Real-time subscriptions not receiving updates
-
-**Solution**:
-- Verify tables are published in Supabase Realtime
-- Check replication slot status
-- Verify WebSocket connection
-- Check Supabase Realtime status
+---
 
 ## Maintenance
 
-### Regular Tasks
-
-#### Daily
-- Check emergency alerts for resolution
-- Review fare irregularities
-- Monitor system performance
-- Check Raspberry Pi service status
-
-#### Weekly
-- Review audit logs for suspicious activity
-- Check database storage usage
-- Review passenger analytics
-- Backup database (if not auto-backed by Supabase)
-
-#### Monthly
-- Clean old video recordings (if enabled)
-- Review and optimize database indexes
-- Update software dependencies
-- Review hardware status and connections
-
-### Software Updates
-
-#### Frontend Updates
+### Update Pi Server Files
 ```bash
-# Pull latest changes
-git pull
+# From Windows, push to Pi via SCP
+scp -r raspberry-pi-server/* chichi@<pi-ip>:~/raspberry-pi-server/
 
-# Update dependencies
-npm update
-
-# Test locally
-npm run dev
-
-# Build for production
-npm run build
-
-# Deploy to production
-```
-
-#### Backend Updates
-```bash
-# Pull latest changes
-git pull
-
-# Update dependencies
-pip install -r requirements.txt --upgrade
-
-# Test locally
-python main.py
-
-# Restart service
-sudo systemctl restart backend-service
-```
-
-#### Raspberry Pi Updates
-```bash
-# SSH into Pi
-ssh chichi@commutai.local
-
-# Navigate to server directory
-cd /home/chichi/raspberry-pi-server
-
-# Pull latest changes
-git pull
-
-# Update dependencies
-source venv/bin/activate
-pip install -r requirements.txt --upgrade
+# Or pull from git on Pi
+cd ~/raspberry-pi-server
+git pull origin main
 
 # Restart service
 sudo systemctl restart commutai-pi-service
 ```
 
-### Database Maintenance
-
-#### Backup
-Supabase provides automatic backups. Manual backup:
-```sql
--- Export data
-pg_dump -h db.xxx.supabase.co -U postgres -d postgres > backup.sql
-```
-
-#### Cleanup
-```sql
--- Remove old video recordings (older than 30 days)
-DELETE FROM video_recordings 
-WHERE recorded_at < NOW() - INTERVAL '30 days';
-
--- Remove old GPS logs (older than 90 days)
-DELETE FROM gps_logs 
-WHERE recorded_at < NOW() - INTERVAL '90 days';
-
--- Remove old audit logs (older than 180 days)
-DELETE FROM audit_logs 
-WHERE created_at < NOW() - INTERVAL '180 days';
-```
-
-#### Index Optimization
-```sql
--- Analyze tables for query optimization
-ANALYZE passenger_counts;
-ANALYZE boarded_passengers;
-ANALYZE transactions;
-ANALYZE gps_logs;
-```
-
-### Hardware Maintenance
-
-#### Camera
-- Clean lens regularly
-- Check connections
-- Verify focus and exposure
-- Test resolution settings
-
-#### GPS Module
-- Check antenna connection
-- Verify signal strength
-- Update position periodically
-- Check for interference
-
-#### GSM Module
-- Check SIM card status
-- Verify signal strength
-- Test SMS functionality
-- Check power supply
-
-#### Emergency Button
-- Test button functionality
-- Check wiring connections
-- Verify GPIO configuration
-- Test alert triggering
-
-#### Raspberry Pi
-- Monitor CPU temperature
-- Check disk space usage
-- Verify power supply
-- Update OS regularly
-
-### Security Maintenance
-
-#### Regular Security Checks
-- Review audit logs for unauthorized access
-- Check for failed login attempts
-- Review user permissions
-- Update passwords regularly
-
-#### SSL/TLS Configuration
-For production use, enable HTTPS:
+### Update Python Dependencies on Pi
 ```bash
-# Install certbot
-sudo apt-get install certbot
-
-# Generate certificate
-sudo certbot certonly --standalone -d your-domain.com
-
-# Configure nginx/caddy as reverse proxy with SSL
+source ~/raspberry-pi-server/venv/bin/activate
+pip install -r requirements.txt
+# Always re-pin supabase
+pip install "supabase>=2.3.0,<3.0.0" "postgrest-py>=0.16.0,<1.0.0"
 ```
 
-#### Firewall Configuration
-```bash
-# Enable firewall
-sudo ufw enable
-
-# Allow SSH
-sudo ufw allow ssh
-
-# Allow video server port
-sudo ufw allow 5000/tcp
-
-# Allow backend API port
-sudo ufw allow 8000/tcp
-
-# Check status
-sudo ufw status
-```
-
-## Support
-
-For issues or questions:
-1. Check the troubleshooting section above
-2. Review relevant documentation files in the `docs/` folder:
-   - `docs/VIDEO_MONITORING_SETUP.md` - Video monitoring setup
-   - `docs/SIM900A_SETUP.md` - GSM module setup
-   - `docs/DEPLOYMENT_GUIDE.md` - Deployment instructions
-   - `docs/AUTO_START_GUIDE.md` - Auto-start configuration
-   - `docs/ULTRA_LOW_LATENCY_GUIDE.md` - Performance optimization
-   - `docs/PI_SETUP_INSTRUCTIONS.md` - Raspberry Pi setup
-   - `docs/AUDIT_LOGGING_IMPLEMENTATION.md` - Audit logging details
-3. Check system logs:
-   - Frontend: Browser console
-   - Backend: Application logs
-   - Raspberry Pi: `sudo journalctl -u commutai-pi-service -f`
-4. Verify configuration files
-5. Test with minimal configuration
-
-## License
-
-This project is part of the CommutAI transportation management system.
-
-## Database Schema
-
-The system uses the following main tables:
-
-- **staff_users**: Staff accounts with roles (admin, conductor, cs_desk)
-- **buses**: Bus fleet management with routes and status
-- **trips**: Trip records with GPS tracking
-- **qr_cards**: QR card management for passengers
-- **temporary_tickets**: Temporary ticket issuance
-- **transactions**: Financial transactions
-- **passenger_counts**: Passenger count snapshots
-- **boarded_passengers**: Boarding event records
-- **gps_logs**: Historical GPS data
-- **fare_irregularities**: Fare compliance tracking
-- **emergency_alerts**: Emergency incident management
-- **customer_service_logs**: Customer service records
-- **gcash_transactions**: GCash payment transaction records
-- **notifications**: System notifications and alerts
-- **audit_logs**: System activity and security event tracking
-- **fare_matrix**: Route fare structure with regular and discounted rates
-- **bus_schedules**: Bus assignment to trips across 10-day rotation
-- **trip_schedules**: Trip timing with arrival and departure windows
-
-## Row-Level Security
-
-The database implements RLS policies to ensure:
-- Admins can see all data
-- Conductors can only access their own trips
-- All authenticated staff can read buses, QR cards, and transactions
-- Each role has appropriate write permissions
-
-## Real-time Features
-
-The following tables are published for real-time updates:
-- passenger_counts
-- fare_irregularities
-- emergency_alerts
-- trips
-- boarded_passengers
-
-## Building for Production
+### Storage Management
+Videos are stored at `~/raspberry-pi-server/recordings/`. The Pi auto-manages disk:
+- Deletes recordings older than `MAX_RECORDING_DAYS` (configurable)
+- Frees space when less than `MIN_FREE_DISK_GB` remains (FIFO — oldest first)
+- Once uploaded to Supabase Storage, local copies can be safely deleted
 
 ```bash
-npm run build
+# Check disk usage
+df -h ~/raspberry-pi-server/recordings
+
+# Manual cleanup
+./cleanup_old_videos.sh
 ```
 
-The optimized build will be in the `dist` directory.
+### Deploy Frontend Changes
+```bash
+# Changes auto-deploy to Render on push to main
+git add .
+git commit -m "feat: your change"
+git push origin main
+# Render rebuilds and deploys (~2 min)
+```
 
-## Documentation
+### Backup Database
+In Supabase Dashboard → Settings → Database → Backups. Point-in-time recovery is available on Pro plan.
 
-Comprehensive documentation is available in the `docs/` directory:
-
-### Quick Links
-- **[docs/README.md](docs/README.md)** - Documentation hub with all guides
-- **[docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md)** - Main deployment guide
-- **[docs/deployment/AUTO_START.md](docs/deployment/AUTO_START.md)** - Auto-start configuration
-- **[docs/security/SECURITY.md](docs/security/SECURITY.md)** - Security guidelines
-
-### Documentation Categories
-
-**Deployment** ([docs/deployment/](docs/deployment/))
-- Deployment guides for all components
-- Auto-start configuration
-- Raspberry Pi setup instructions
-- Minimal setup guides
-
-**Architecture** ([docs/architecture/](docs/architecture/))
-- Video processing architecture
-- Auto IP detection system
-- Real-time optimization
-- Hardware setup (SIM900A, GPS)
-- Low latency optimization
-
-**Security** ([docs/security/](docs/security/))
-- Security best practices
-- Credential management
-- Cleanup instructions
-
-**Cleanup** ([docs/cleanup/](docs/cleanup/))
-- Codebase cleanup summaries
-- SQL migration cleanup
-- Maintenance documentation
-
-### Component Documentation
-
-- **[backend/README.md](backend/README.md)** - Backend-specific documentation
-- **[backend/INSTALL_WINDOWS_SERVICE.md](backend/INSTALL_WINDOWS_SERVICE.md)** - Windows service installation
-- **[raspberry-pi-server/README.md](raspberry-pi-server/README.md)** - Raspberry Pi server documentation
-- **[migrations/README.md](migrations/README.md)** - Database migration documentation
+---
 
 ## Project Structure
 
 ```
-track2go-systemadmin/
+sys-admin/
 ├── src/
-│   ├── components/
-│   │   └── Layout.jsx          # Main layout with sidebar
-│   ├── lib/
-│   │   └── supabase.js         # Supabase client configuration
 │   ├── pages/
-│   │   ├── Dashboard.jsx       # Main dashboard
-│   │   ├── LiveMap.jsx         # GPS tracking map
-│   │   ├── ManageUsers.jsx     # User management
-│   │   ├── BusManagement.jsx   # Bus fleet management
-│   │   └── ...                 # Other pages
-│   ├── App.jsx                 # Router configuration
-│   └── index.css               # Global styles
-├── .env                        # Environment variables
-├── supabase-schema.sql         # Database schema
-└── package.json
+│   │   ├── Dashboard.jsx
+│   │   ├── LiveMap.jsx
+│   │   ├── TripManagement.jsx
+│   │   ├── Reports.jsx           ← GPS map, video playback, trip details
+│   │   ├── CardManagement.jsx
+│   │   ├── FareMatrix.jsx
+│   │   ├── PassengerAnalytics.jsx
+│   │   ├── EmergencyAlerts.jsx
+│   │   ├── ManageUsers.jsx
+│   │   ├── BusManagement.jsx
+│   │   ├── AuditLogs.jsx
+│   │   ├── Notifications.jsx
+│   │   ├── VideoMonitoring.jsx   ← Live Pi camera feed
+│   │   ├── GcashTopUp.jsx
+│   │   └── CustomerService.jsx
+│   ├── App.jsx
+│   └── main.jsx
+├── backend/
+│   ├── main.py                   ← FastAPI app entry point
+│   ├── routers/
+│   │   ├── video_processing.py   ← Video proxy + Pi command relay
+│   │   ├── trips.py
+│   │   ├── transactions.py
+│   │   ├── cards.py
+│   │   ├── analytics.py
+│   │   ├── reports.py
+│   │   └── ...
+│   ├── render.yaml               ← Render deploy config
+│   └── requirements.txt
+├── raspberry-pi-server/
+│   ├── video_server_fastapi.py   ← Main Pi server (FastAPI, port 8080)
+│   ├── sync_worker.py            ← SQLite-backed GPS/passenger sync buffer
+│   ├── requirements.txt          ← Pinned Python deps
+│   ├── requirements-minimal.txt  ← Minimal deps (no AI)
+│   ├── commutai-pi-service.service ← Systemd unit file
+│   └── ...
+├── migrations/                   ← SQL migration files (run in order)
+├── public/
+├── package.json
+└── vite.config.js
 ```
-
-## Troubleshooting
-
-### Tailwind CSS Issues
-
-If you encounter Tailwind CSS errors, ensure you have:
-- Installed `@tailwindcss/postcss` package
-- Updated `postcss.config.js` to use `@tailwindcss/postcss`
-- Cleared the Vite cache: `rm -rf node_modules/.vite`
-
-### Supabase Connection Issues
-
-- Verify your `.env` file has the correct URL and key
-- Check that your Supabase project is active
-- Ensure RLS policies allow the operations you're trying to perform
-
-### Real-time Subscriptions Not Working
-
-- Verify the tables are published in Supabase Realtime
-- Check your network connection
-- Ensure you're authenticated with Supabase Auth
-
-## License
-
-This project is part of the CommutAI transportation management system.
-# sys-admin
