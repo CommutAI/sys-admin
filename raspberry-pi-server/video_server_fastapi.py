@@ -715,9 +715,12 @@ CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.45'))  # 0.45:
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.40'))  # 0.40 NMS IoU — tighter to eliminate duplicate boxes
 JPEG_QUALITY = int(os.getenv('JPEG_QUALITY', '50'))
 
-# YOLO-specific confidence threshold for person detection
-YOLO_CONFIDENCE_THRESHOLD = float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.45'))
-MAX_DET = int(os.getenv('MAX_DET', '50'))
+# YOLO-specific confidence threshold for person detection.
+# Default raised to 0.55 — eliminates seats/bags/clothing ghost detections.
+# Pi .env may override this; enforce a hard floor of 0.45 to prevent
+# accidental low-threshold overrides from leaking hallucinations through.
+YOLO_CONFIDENCE_THRESHOLD = max(0.45, float(os.getenv('YOLO_CONFIDENCE_THRESHOLD', '0.55')))
+MAX_DET = int(os.getenv('MAX_DET', '20'))  # Bus interior: realistic cap of 20 persons
 
 # Video Recording configuration
 ENABLE_VIDEO_RECORDING = os.getenv('ENABLE_VIDEO_RECORDING', 'false').lower() == 'true'
@@ -899,9 +902,9 @@ class VideoProcessor:
         self.model = None
         self.tracker = PassengerTracker(
             hit_thresh=YOLO_CONFIDENCE_THRESHOLD,          # must beat threshold to spawn track
-            keep_thresh=max(0.30, YOLO_CONFIDENCE_THRESHOLD * 0.75),  # keep alive at 75% of threshold
-            max_missed=3,   # drop track after 3 missed frames (fast exit = no inflated count)
-            min_hits=3      # must be detected 3 times before it counts (kills ghost flashes)
+            keep_thresh=max(0.35, YOLO_CONFIDENCE_THRESHOLD * 0.80),  # keep alive at 80% of threshold
+            max_missed=2,   # drop track after 2 missed detections — faster exit kills stale ghosts
+            min_hits=5      # must be detected 5 times before it counts (kills all ghost flashes)
         )
         self.frame_queue = queue.Queue(maxsize=1)  # Strictly latest-frame only (maxsize=1)
         self.latest_frame = None
@@ -1289,7 +1292,7 @@ class VideoProcessor:
                 max_class_ids = np.argmax(class_scores, axis=1)
                 person_scores = predictions[:, 4]
                 
-                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if (YOLO_CONFIDENCE_THRESHOLD and YOLO_CONFIDENCE_THRESHOLD > 0.01) else 0.45
+                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if (YOLO_CONFIDENCE_THRESHOLD and YOLO_CONFIDENCE_THRESHOLD > 0.01) else 0.55
                 
                 # Strict check: object's TOP predicted class must be person (class 0)
                 # This prevents chairs, helmets, and hanging clothes from false-triggering
@@ -1353,7 +1356,7 @@ class VideoProcessor:
                 class_scores = predictions[:, 4:]
                 max_class_ids = np.argmax(class_scores, axis=1)
                 person_scores = predictions[:, 4]
-                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if YOLO_CONFIDENCE_THRESHOLD > 0.01 else 0.45
+                conf_thresh = YOLO_CONFIDENCE_THRESHOLD if YOLO_CONFIDENCE_THRESHOLD > 0.01 else 0.55
                 mask = (max_class_ids == 0) & (person_scores >= conf_thresh)
                 if mask.any():
                     filtered = predictions[mask]
@@ -1410,7 +1413,10 @@ class VideoProcessor:
         right_dets = self._detect_onnx_crop(frame, x_mid, y_top, w,     y_bottom)
 
         combined = all_dets + left_dets + right_dets
-        merged   = self._apply_nms(combined, iou_threshold=IOU_THRESHOLD)[:MAX_DET]
+        # Tighter IoU (0.25) for cross-crop merging: same person seen in multiple
+        # crop passes must heavily overlap to be deduplicated. Prevents the same
+        # seated passenger from being counted 2–3× across overlapping crop boundaries.
+        merged   = self._apply_nms(combined, iou_threshold=0.25)[:MAX_DET]
         if len(merged) > len(all_dets):
             print(f"[TILED] full={len(all_dets)} left={len(left_dets)} right={len(right_dets)} → merged={len(merged)}")
         return merged
@@ -1671,47 +1677,65 @@ class VideoProcessor:
 
     @staticmethod
     def _is_valid_person_box(bbox, frame_w, frame_h):
-        """Reject non-human ceiling artifacts and curtains while allowing seated, leaning, or partially visible passengers."""
+        """Reject non-human detections: hands, arms, curtains, objects, pillars.
+        Allows seated, standing, leaning, or partially visible passengers.
+        """
         x1, y1, x2, y2 = bbox
         w = x2 - x1
         h = y2 - y1
+        area = w * h
+        aspect = h / float(max(1, w))  # > 1 = taller than wide
 
-        # 1. Minimum person dimensions:
-        # At DETECTION_SIZE=320, a passenger 40px tall at 480p → 26px scaled.
-        # Allow down to 12px height so back-row seated passengers aren't cut off.
-        # Width minimum kept at 8px.
-        if h < 12 or w < 8:
+        # 1. Minimum absolute area — rejects hands, wrists, small objects.
+        # A seated passenger at 640×480 from behind occupies at least 1800px².
+        # Hands/arms typically produce 800–1400px² boxes.
+        if area < 1800:
             return False
 
-        # 2. Ceiling / wall-hung object rejection:
-        # Only reject objects entirely confined to the upper section
+        # 2. Minimum dimensions — belt-and-suspenders on tiny boxes.
+        if h < 30 or w < 20:
+            return False
+
+        # 3. Aspect ratio — real people are taller than wide OR roughly square
+        # when seated and viewed from behind. Reject:
+        #   • Extremely flat boxes (h/w < 0.35): panoramic smear, shelf edge
+        #   • Near-perfect wide rectangles of curtains/fabric (checked via area + confidence upstream)
+        if aspect < 0.35:
+            return False
+
+        # 4. Reject very square/small boxes in the top portion of the frame —
+        # these are almost always hands reaching into frame or ceiling objects.
+        # A box that is roughly square (0.35 ≤ aspect ≤ 1.3) AND small (< 6% frame area)
+        # AND positioned in the upper half is almost never a seated passenger.
+        frame_area = max(1, frame_w * frame_h)
+        rel_area = area / float(frame_area)
+        box_center_y = (y1 + y2) / 2.0
+        in_upper_half = box_center_y < frame_h * 0.50
+        is_small = rel_area < 0.06           # < 6% of frame
+        is_squarish = 0.35 <= aspect <= 1.3  # square-ish rather than tall
+        if is_small and is_squarish and in_upper_half:
+            return False
+
+        # 5. Ceiling / wall-hung object rejection (unchanged):
+        # Reject objects entirely confined to the upper 35% and very short.
         if y2 <= int(frame_h * 0.35) and y1 < int(frame_h * 0.10) and h < int(frame_h * 0.25):
             return False
 
-        # 3. Reject extreme full-screen bounding box artifacts (>85% width and height)
+        # 6. Reject extreme full-screen bounding box artifacts (> 85% width AND height)
         if w > int(frame_w * 0.85) and h > int(frame_h * 0.85):
             return False
 
-        # 4. Aspect ratio: human passengers can be standing, seated, or only head visible.
-        # Seated passengers from an overhead/angled camera often appear wider than tall.
-        # Only reject if extremely wide and flat (panoramic artifact, h/w < 0.25).
-        if (h / float(max(1, w))) < 0.25:
-            return False
-
-        # 5. Reject static border/doorway pillar artifacts:
-        # Covers door jambs, wall pillars, and vertical structural elements near frame edges.
-        aspect = h / float(max(1, w))
-        near_right_edge = x2 >= int(frame_w * 0.80)   # box ends in rightmost 20% of frame
-        near_left_edge  = x1 <= int(frame_w * 0.20)   # box starts in leftmost 20% of frame
-        tall_column     = aspect >= 2.5                # very tall thin column
-        spans_majority  = h >= int(frame_h * 0.55)    # spans more than 55% of frame height
-        starts_high     = y1 <= int(frame_h * 0.20)   # starts within top 20% of frame
-
+        # 7. Reject tall-column structural artifacts near frame edges
+        # (door jambs, wall pillars, vertical elements)
+        near_right_edge = x2 >= int(frame_w * 0.80)
+        near_left_edge  = x1 <= int(frame_w * 0.20)
+        tall_column     = aspect >= 2.5
+        spans_majority  = h >= int(frame_h * 0.55)
+        starts_high     = y1 <= int(frame_h * 0.20)
         if tall_column and spans_majority and starts_high and (near_right_edge or near_left_edge):
             return False
 
-        # 6. Reject extremely narrow slivers that are unlikely to be a person
-        # (e.g. w < 5% of frame width when h > 50% frame height)
+        # 8. Reject extremely narrow slivers (w < 5% frame width, h > 50% frame height)
         if w < int(frame_w * 0.05) and h > int(frame_h * 0.50):
             return False
 
@@ -2466,11 +2490,13 @@ class VideoProcessor:
                                 stable_dets = self.tracker.update(raw_dets)
                                 instant_count = len(stable_dets)
 
-                                # Temporal median over last 5 detection results.
+                                # Temporal median over last 11 detection results.
                                 # Median ignores single-frame spikes (hallucinations)
                                 # completely — far more robust than mean smoothing.
+                                # 11-frame window (~1.1s at 10Hz detection) smooths
+                                # burst ghosts without lagging behind real changes.
                                 self.detection_history.append(instant_count)
-                                if len(self.detection_history) > 5:
+                                if len(self.detection_history) > 11:
                                     self.detection_history.pop(0)
                                 sorted_hist = sorted(self.detection_history)
                                 smoothed = sorted_hist[len(sorted_hist) // 2]
