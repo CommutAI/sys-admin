@@ -222,6 +222,24 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(periodic_register())
 
+    # ── Startup: retry any local recordings that never made it to Supabase ──
+    async def retry_pending_uploads_on_startup():
+        """
+        Wait 30 s for internet to settle, then upload any recordings that are
+        still stored_type='local' on disk but were never pushed to Supabase Storage.
+        Runs once at startup and again every hour as a safety net.
+        """
+        await asyncio.sleep(30)   # give the network time to come up
+        while True:
+            await asyncio.ensure_future(
+                asyncio.get_event_loop().run_in_executor(
+                    None, video_processor.retry_pending_uploads
+                )
+            )
+            await asyncio.sleep(3600)   # re-check every hour
+
+    asyncio.create_task(retry_pending_uploads_on_startup())
+
     # Autonomous active trip polling directly from Supabase (runs every 3 seconds)
     async def poll_active_trips():
         """Poll Supabase directly for active in_progress trips to auto-start/stop video recording"""
@@ -346,6 +364,12 @@ async def lifespan(app: FastAPI):
                 try:
                     async with websockets.connect(backend_ws_url) as ws:
                         print(f"[Backend Stream] ✓ Connected to backend successfully")
+
+                        # On every (re)connect, kick off a background retry for any
+                        # local recordings that weren't uploaded while offline.
+                        asyncio.get_event_loop().run_in_executor(
+                            None, video_processor.retry_pending_uploads
+                        )
 
                         # Send trip info if active
                         if video_processor.current_trip_id:
@@ -2071,6 +2095,79 @@ class VideoProcessor:
 
         except Exception as e:
             print(f"[StorageGuard] Error checking storage: {e}")
+
+    def retry_pending_uploads(self):
+        """
+        Scan video_recordings for completed rows that are still storage_type='local'
+        and whose file still exists on disk. Upload each one to Supabase Storage,
+        then update video_recordings.file_path, storage_type, and trips.video_recording_url.
+
+        Called once at startup (after 30 s) and every hour thereafter so that videos
+        recorded while offline are automatically published once the Pi gets internet.
+        """
+        if not supabase:
+            print("[RetryUpload] Supabase client not available — skipping")
+            return
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            print("[RetryUpload] Supabase not configured — skipping")
+            return
+
+        try:
+            print("[RetryUpload] Scanning for local recordings not yet uploaded …")
+            rows = (
+                supabase.table('video_recordings')
+                .select('id, trip_id, file_name, file_path, storage_type, status')
+                .eq('status', 'completed')
+                .eq('storage_type', 'local')
+                .execute()
+            )
+            pending = rows.data or []
+            if not pending:
+                print("[RetryUpload] No pending local recordings found.")
+                return
+
+            print(f"[RetryUpload] Found {len(pending)} local recording(s) to upload.")
+            for rec in pending:
+                rec_id    = rec.get('id')
+                trip_id   = rec.get('trip_id')
+                file_name = rec.get('file_name')
+                file_path = rec.get('file_path') or ''
+
+                # Resolve absolute path on disk
+                if file_path.startswith('./') or file_path.startswith('/'):
+                    abs_path = os.path.abspath(file_path)
+                else:
+                    abs_path = os.path.join(VIDEO_STORAGE_PATH, file_name) if file_name else None
+
+                if not abs_path or not os.path.exists(abs_path):
+                    print(f"[RetryUpload] File not found on disk: {abs_path} — skipping {rec_id}")
+                    continue
+
+                print(f"[RetryUpload] Uploading {file_name} for trip {trip_id} …")
+                storage_url = self._upload_to_supabase_storage(abs_path, trip_id)
+                if not storage_url:
+                    print(f"[RetryUpload] Upload failed for {file_name} — will retry next cycle")
+                    continue
+
+                # Update DB
+                try:
+                    supabase.table('video_recordings').update({
+                        'file_path':    storage_url,
+                        'storage_type': 'supabase_storage',
+                    }).eq('id', rec_id).execute()
+
+                    if trip_id:
+                        supabase.table('trips').update({
+                            'video_recording_url':    storage_url,
+                            'video_recording_status': 'available',
+                        }).eq('id', trip_id).execute()
+
+                    print(f"[RetryUpload] ✓ {file_name} uploaded and DB updated for trip {trip_id}")
+                except Exception as db_exc:
+                    print(f"[RetryUpload] DB update error for {rec_id}: {db_exc}")
+
+        except Exception as exc:
+            print(f"[RetryUpload] Error scanning pending uploads: {exc}")
 
     def _upload_to_supabase_storage(self, video_path: str, trip_id: str) -> str | None:
         """
