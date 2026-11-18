@@ -219,6 +219,12 @@ async def lifespan(app: FastAPI):
         while True:
             await asyncio.sleep(300)   # re-check every 5 minutes (was 30s)
             register_device()
+            # Also retry any missed uploads on every heartbeat.
+            # Pi has internet when it can reach Supabase to register, so this
+            # is the safest moment to attempt cloud uploads of local recordings.
+            asyncio.get_event_loop().run_in_executor(
+                None, video_processor.retry_pending_uploads
+            )
 
     asyncio.create_task(periodic_register())
 
@@ -431,6 +437,24 @@ async def lifespan(app: FastAPI):
                                         # Execute a whitelisted shell command sent from the dashboard
                                         cmd_id = data.get('id', 'unknown')
                                         command = data.get('command', '')
+
+                                        # Special internal command: trigger cloud upload of local recordings
+                                        if command == '__trigger_upload__':
+                                            print(f"[RemoteCmd] Trigger upload requested (id={cmd_id})")
+                                            asyncio.get_event_loop().run_in_executor(
+                                                None, video_processor.retry_pending_uploads
+                                            )
+                                            await ws.send(json.dumps({
+                                                'type': 'command_result',
+                                                'id': cmd_id,
+                                                'command': command,
+                                                'exit_code': 0,
+                                                'stdout': 'Upload scan started in background',
+                                                'stderr': '',
+                                                'timestamp': __import__('datetime').datetime.utcnow().isoformat(),
+                                            }))
+                                            continue
+
                                         print(f"[RemoteCmd] Executing command {cmd_id}: {command}")
                                         import subprocess, shlex, datetime as _dt
                                         try:

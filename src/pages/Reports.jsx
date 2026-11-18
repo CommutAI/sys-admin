@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { FileText, Download, Calendar, TrendingUp, Users, DollarSign, Bus, Activity, ArrowUp, ArrowDown, ArrowLeftRight, Search, Filter, MoreHorizontal, ChevronLeft, ChevronRight, Eye, EyeOff, X, Settings, ChevronDown, SortAsc, SortDesc, BarChart3, Clock, MapPin, CheckCircle, AlertCircle, Download as DownloadIcon, AlertTriangle, Users as UsersIcon, Play, Copy } from 'lucide-react';
+import { FileText, Download, Calendar, TrendingUp, Users, DollarSign, Bus, Activity, ArrowUp, ArrowDown, ArrowLeftRight, Search, Filter, MoreHorizontal, ChevronLeft, ChevronRight, Eye, EyeOff, X, Settings, ChevronDown, SortAsc, SortDesc, BarChart3, Clock, MapPin, CheckCircle, AlertCircle, Download as DownloadIcon, AlertTriangle, Users as UsersIcon, Play, Copy, RefreshCw, Upload } from 'lucide-react';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -105,6 +105,11 @@ const Reports = () => {
   const [tripVideoUrl, setTripVideoUrl] = useState(null);
   const [tripVideoStatus, setTripVideoStatus] = useState(null);
   const [tripVideoRecordings, setTripVideoRecordings] = useState([]);
+
+  // Pi sync state
+  const [syncingVideos, setSyncingVideos] = useState(false);
+  const [syncMessage, setSyncMessage] = useState(null);
+  const [piOnline, setPiOnline] = useState(null); // null=unknown, true=online, false=offline
 
   // GPS track + video-map sync
   const videoRef = useRef(null);
@@ -620,6 +625,14 @@ const Reports = () => {
     // block the video proxy when the user clicks play. Fire-and-forget.
     const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
     fetch(`${backendUrl}/health`).catch(() => {});
+    // Check Pi connectivity and reset sync state
+    setSyncingVideos(false);
+    setSyncMessage(null);
+    setPiOnline(null);
+    fetch(`${backendUrl}/api/pi/status`)
+      .then(r => r.json())
+      .then(d => setPiOnline(!!d.pi_connected))
+      .catch(() => setPiOnline(false));
 
     try {
       // Fetch transactions for this trip
@@ -753,6 +766,25 @@ const Reports = () => {
       console.error('Error fetching trip details:', error);
     } finally {
       setTripDetailLoading(false);
+    }
+  };
+
+  const handleSyncVideos = async () => {
+    setSyncingVideos(true);
+    setSyncMessage(null);
+    try {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
+      const r = await fetch(`${backendUrl}/api/pi/trigger-upload`, { method: 'POST' });
+      const d = await r.json();
+      if (d.status === 'queued_no_pi') {
+        setSyncMessage('Pi is offline — videos will upload automatically when Pi reconnects.');
+      } else {
+        setSyncMessage('Upload started! Refresh the trip in a few minutes to watch the video.');
+      }
+    } catch {
+      setSyncMessage('Failed to reach backend. Try again later.');
+    } finally {
+      setSyncingVideos(false);
     }
   };
 
@@ -2713,6 +2745,9 @@ const Reports = () => {
                   setModalAnomaliesPage(1);
                   setModalIrregularitiesPage(1);
                   setModalAlertsPage(1);
+                  setSyncingVideos(false);
+                  setSyncMessage(null);
+                  setPiOnline(null);
                 }}
                 className="text-white/60 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/10 ml-1"
                 title="Close"
@@ -2804,11 +2839,30 @@ const Reports = () => {
                       <div className="absolute inset-0 flex items-center justify-center">
                         <div className="text-center px-6">
                           <Bus className="w-14 h-14 text-orange-400 mx-auto mb-3" />
-                          <p className="text-orange-400 font-medium">Pi Required</p>
-                          <p className="text-white/40 text-xs mt-1 max-w-[220px]">
-                            Video is stored on the Pi's SD card.<br />
-                            It will be available once the Pi reconnects and uploads to cloud.
+                          <p className="text-orange-400 font-medium">Video on Pi SD Card</p>
+                          <p className="text-white/40 text-xs mt-1 max-w-[240px]">
+                            Recording is stored locally on the Pi. Sync it to the cloud to watch it here.
                           </p>
+                          {/* Pi online status dot */}
+                          <div className="flex items-center justify-center gap-1.5 mt-2">
+                            <div className={`w-2 h-2 rounded-full ${piOnline === true ? 'bg-green-400' : piOnline === false ? 'bg-red-400' : 'bg-yellow-400 animate-pulse'}`} />
+                            <span className="text-white/40 text-xs">
+                              {piOnline === true ? 'Pi connected' : piOnline === false ? 'Pi offline' : 'Checking Pi…'}
+                            </span>
+                          </div>
+                          {/* Sync button */}
+                          <button
+                            onClick={handleSyncVideos}
+                            disabled={syncingVideos}
+                            className="mt-3 px-4 py-1.5 rounded-lg bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 text-xs font-medium transition-colors disabled:opacity-50 flex items-center gap-1.5 mx-auto"
+                          >
+                            {syncingVideos
+                              ? <><RefreshCw size={12} className="animate-spin" /> Syncing…</>
+                              : <><Upload size={12} /> Sync to Cloud</>}
+                          </button>
+                          {syncMessage && (
+                            <p className="text-green-400 text-xs mt-2 max-w-[240px] mx-auto">{syncMessage}</p>
+                          )}
                         </div>
                       </div>
                     ) : tripVideoStatus === 'error' ? (

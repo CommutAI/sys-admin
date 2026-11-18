@@ -191,6 +191,25 @@ async def get_pi_connection_status():
     }
 
 
+@router.post("/api/pi/trigger-upload")
+async def trigger_pi_upload():
+    """
+    Tell the Pi to immediately scan for and upload any local recordings to Supabase Storage.
+    The Pi handles this on its next WebSocket heartbeat.
+    Safe to call even when Pi is offline — it will execute on reconnect.
+    """
+    import uuid
+    cmd_id = str(uuid.uuid4())[:8]
+    _enqueue_command(cmd_id, "__trigger_upload__")
+    if not manager.pi_connections:
+        return {
+            "id": cmd_id,
+            "status": "queued_no_pi",
+            "note": "Pi is offline — upload will start automatically when Pi reconnects"
+        }
+    return {"id": cmd_id, "status": "queued", "note": "Upload trigger sent to Pi"}
+
+
 @router.websocket("/ws/video-stream/{client_id}")
 async def video_stream_endpoint(websocket: WebSocket, client_id: str):
     """
