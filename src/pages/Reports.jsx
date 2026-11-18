@@ -679,31 +679,65 @@ const Reports = () => {
 
       // Build video URL - check source to use correct endpoint
       const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
-      const completedRecording = (recordingsData || []).find(r => r.status === 'completed' && r.file_name);
 
-      // Helper: always route through the backend proxy.
-      // The backend serves local files first, then transparently proxies from the Pi
-      // tunnel — avoiding Cloudflare browser interstitials that break direct <video> access.
-      const buildVideoUrl = (fileName) => {
-        if (!fileName) return null;
-        // Already a full remote URL (Cloudflare R2 / Supabase Storage) — use directly
-        if (fileName.startsWith('http://') || fileName.startsWith('https://')) return fileName;
-        // Everything else goes through the backend proxy
-        return `${backendUrl}/api/video-processing/download-video/${fileName}`;
+      // Prefer recordings already uploaded to Supabase Storage (permanent, Pi-independent)
+      const cloudRecording = (recordingsData || []).find(r =>
+        r.status === 'completed' && r.file_path && r.file_path.startsWith('https://')
+      );
+      const completedRecording = cloudRecording ||
+        (recordingsData || []).find(r => r.status === 'completed' && r.file_name);
+
+      /**
+       * buildVideoUrl — resolve the best playable URL for a video.
+       *
+       * Priority:
+       *   1. file_path is already a Supabase Storage / Cloudflare URL → use directly
+       *   2. fileName is a full https URL → use directly
+       *   3. storage_type === 'local' (Pi SD card only) → return null (Pi offline = unplayable)
+       *   4. Plain filename → route through backend proxy (backend tries local disk then Pi tunnel)
+       */
+      const buildVideoUrl = (fileName, filePath, storageType) => {
+        // Cloud-stored file_path → play directly, no Pi needed
+        if (filePath && filePath.startsWith('https://')) return filePath;
+        // Full URL passed as fileName
+        if (fileName && (fileName.startsWith('http://') || fileName.startsWith('https://'))) return fileName;
+        // Local-only recording — Pi is required
+        if (storageType === 'local' || (filePath && filePath.startsWith('./'))) return null;
+        // Plain filename — try backend proxy (which also proxies from Pi if online)
+        if (fileName) return `${backendUrl}/api/video-processing/download-video/${fileName}`;
+        return null;
       };
 
+      // Determine whether ALL recordings are local-only (Pi required)
+      const allLocal = (recordingsData || []).length > 0 &&
+        (recordingsData || []).every(r => r.storage_type === 'local' || (r.file_path && r.file_path.startsWith('./')));
+
       if (trip.video_recording_url && trip.video_recording_status === 'available') {
-        const fileName = trip.video_recording_url.startsWith('http')
-          ? trip.video_recording_url
-          : trip.video_recording_url.split('/').pop();
-        setTripVideoUrl(buildVideoUrl(fileName));
-        setTripVideoStatus('available');
-        // Use trip started_at as video start reference timestamp
+        const isFullUrl = trip.video_recording_url.startsWith('http');
+        const fileName = isFullUrl ? trip.video_recording_url : trip.video_recording_url.split('/').pop();
+        const filePath = isFullUrl ? trip.video_recording_url : null;
+        const url = buildVideoUrl(fileName, filePath, null);
+        if (url) {
+          setTripVideoUrl(url);
+          setTripVideoStatus('available');
+        } else {
+          setTripVideoUrl(null);
+          setTripVideoStatus(allLocal ? 'pi_required' : 'not_available');
+        }
         setVideoStartTs(trip.started_at ? new Date(trip.started_at).getTime() : null);
       } else if (completedRecording) {
-        setTripVideoUrl(buildVideoUrl(completedRecording.file_name));
-        setTripVideoStatus('available');
-        // Use recording metadata.recorded_at or trip start
+        const url = buildVideoUrl(
+          completedRecording.file_name,
+          completedRecording.file_path,
+          completedRecording.storage_type
+        );
+        if (url) {
+          setTripVideoUrl(url);
+          setTripVideoStatus('available');
+        } else {
+          setTripVideoUrl(null);
+          setTripVideoStatus('pi_required');
+        }
         const recStart = completedRecording.metadata?.recorded_at || trip.started_at;
         setVideoStartTs(recStart ? new Date(recStart).getTime() : null);
       } else if ((recordingsData || []).length > 0) {
@@ -2734,15 +2768,16 @@ const Reports = () => {
                           const src = e.currentTarget.src;
                           const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
                           const fileName = src.split('/').pop().split('?')[0];
-                          // Backend proxy is the canonical fallback — it fetches from Pi internally
                           const backendProxy = `${backendUrl}/api/video-processing/download-video/${fileName}`;
-                          if (!src.includes(backendUrl)) {
-                            console.warn('[Video] Primary URL failed, switching to backend proxy:', backendProxy);
+                          if (!src.includes(backendUrl) && !src.includes('supabase.co')) {
+                            // First failure — try backend proxy once
+                            console.warn('[Video] Primary URL failed, trying backend proxy:', backendProxy);
                             e.currentTarget.src = backendProxy;
                             e.currentTarget.load();
                           } else {
+                            // Backend proxy also failed — Pi is likely offline
                             console.error('[Video] Backend proxy also failed for:', fileName);
-                            setTripVideoStatus('error');
+                            setTripVideoStatus('pi_required');
                             setTripVideoUrl(null);
                           }
                         }}
@@ -2763,6 +2798,17 @@ const Reports = () => {
                           <Activity className="w-14 h-14 text-yellow-400 mx-auto mb-3" />
                           <p className="text-yellow-400 font-medium">No Recording Available</p>
                           <p className="text-white/40 text-xs mt-1">Video recording not available for this trip</p>
+                        </div>
+                      </div>
+                    ) : tripVideoStatus === 'pi_required' ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-6">
+                          <Bus className="w-14 h-14 text-orange-400 mx-auto mb-3" />
+                          <p className="text-orange-400 font-medium">Pi Required</p>
+                          <p className="text-white/40 text-xs mt-1 max-w-[220px]">
+                            Video is stored on the Pi's SD card.<br />
+                            It will be available once the Pi reconnects and uploads to cloud.
+                          </p>
                         </div>
                       </div>
                     ) : tripVideoStatus === 'error' ? (
@@ -2806,7 +2852,11 @@ const Reports = () => {
                             <div className="flex justify-between items-start mb-2">
                               <div className="flex-1 pr-2">
                                 <p className="text-white font-medium text-xs truncate" title={recording.file_name}>{recording.file_name}</p>
-                                <p className="text-white/40 text-[11px] capitalize">{recording.storage_type} storage</p>
+                                <p className={`text-[11px] capitalize ${
+                                  recording.storage_type === 'supabase_storage' ? 'text-green-400' :
+                                  recording.storage_type === 'local' ? 'text-yellow-400' :
+                                  'text-white/40'
+                                }`}>{recording.storage_type?.replace('_', ' ')} storage</p>
                               </div>
                               <div className="flex items-center gap-1.5 shrink-0">
                                 <span className={`text-[11px] px-2 py-0.5 rounded ${
@@ -2819,12 +2869,21 @@ const Reports = () => {
                                 {recording.status === 'completed' && (
                                   <div className="flex items-center gap-1">
                                     <button
-                                      onClick={async () => {
+                                      onClick={() => {
                                         const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://sys-admin-62ro.onrender.com';
-                                        // Always use backend proxy — it handles Pi fetching internally
-                                        const url = `${backendUrl}/api/video-processing/download-video/${recording.file_name}`;
-                                        setTripVideoUrl(url);
-                                        setTripVideoStatus('available');
+                                        // Prefer Supabase Storage file_path if available (Pi-independent)
+                                        if (recording.file_path && recording.file_path.startsWith('https://')) {
+                                          setTripVideoUrl(recording.file_path);
+                                          setTripVideoStatus('available');
+                                        } else if (recording.storage_type === 'local' || (recording.file_path && recording.file_path.startsWith('./'))) {
+                                          // Local-only — Pi required to play
+                                          setTripVideoUrl(null);
+                                          setTripVideoStatus('pi_required');
+                                        } else {
+                                          const url = `${backendUrl}/api/video-processing/download-video/${recording.file_name}`;
+                                          setTripVideoUrl(url);
+                                          setTripVideoStatus('available');
+                                        }
                                       }}
                                       className="p-1 rounded bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 transition-colors"
                                       title="Play this segment"
