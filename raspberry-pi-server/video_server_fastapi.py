@@ -2276,10 +2276,51 @@ class VideoProcessor:
         public_url  = f"{SUPABASE_URL}/storage/v1/object/public/trip-videos/{object_path}"
         file_size   = os.path.getsize(video_path)
 
-        print(f"[Storage] Uploading {filename} ({file_size/1024/1024:.1f} MB) → Supabase Storage …")
+        # ── Compress if file exceeds Supabase Storage free-tier limit (50 MB) ──
+        SUPABASE_MAX_BYTES = int(os.getenv('SUPABASE_MAX_VIDEO_MB', '45')) * 1024 * 1024
+        upload_path = video_path  # may be replaced by compressed copy
+        compressed_tmp = None
+        if file_size > SUPABASE_MAX_BYTES:
+            print(f"[Storage] File is {file_size/1024/1024:.1f} MB — exceeds limit, compressing with ffmpeg …")
+            compressed_tmp = video_path.replace('.mp4', '_compressed.mp4')
+            try:
+                result = subprocess.run(
+                    [
+                        'ffmpeg', '-y', '-i', video_path,
+                        '-vcodec', 'libx264', '-crf', '28',   # CRF 28 ≈ good quality, ~40% smaller
+                        '-preset', 'fast',
+                        '-acodec', 'aac', '-b:a', '64k',
+                        '-movflags', '+faststart',
+                        compressed_tmp,
+                    ],
+                    capture_output=True, text=True, timeout=300
+                )
+                if result.returncode == 0 and os.path.exists(compressed_tmp):
+                    comp_size = os.path.getsize(compressed_tmp)
+                    print(f"[Storage] Compressed: {file_size/1024/1024:.1f} MB → {comp_size/1024/1024:.1f} MB")
+                    upload_path = compressed_tmp
+                    file_size = comp_size
+                    # Use compressed filename in bucket
+                    comp_filename = os.path.basename(compressed_tmp)
+                    object_path = f"{trip_id}/{comp_filename}"
+                    upload_url = f"{SUPABASE_URL}/storage/v1/object/trip-videos/{object_path}"
+                    public_url = f"{SUPABASE_URL}/storage/v1/object/public/trip-videos/{object_path}"
+                else:
+                    print(f"[Storage] ffmpeg failed (rc={result.returncode}): {result.stderr[-300:]}")
+                    print("[Storage] Skipping upload — file too large and compression unavailable")
+                    return None
+            except FileNotFoundError:
+                print("[Storage] ffmpeg not installed — cannot compress. Install: sudo apt install ffmpeg")
+                print("[Storage] Skipping upload — file too large")
+                return None
+            except Exception as comp_exc:
+                print(f"[Storage] Compression error: {comp_exc} — skipping upload")
+                return None
+
+        print(f"[Storage] Uploading {os.path.basename(upload_path)} ({file_size/1024/1024:.1f} MB) → Supabase Storage …")
 
         try:
-            with open(video_path, 'rb') as f:
+            with open(upload_path, 'rb') as f:
                 resp = requests.post(
                     upload_url,
                     headers={
@@ -2300,6 +2341,14 @@ class VideoProcessor:
         except Exception as exc:
             print(f"[Storage] ✗ Upload error: {exc}")
             return None
+        finally:
+            # Clean up compressed temp file after upload attempt
+            if compressed_tmp and os.path.exists(compressed_tmp):
+                try:
+                    os.remove(compressed_tmp)
+                    print(f"[Storage] Cleaned up temp compressed file: {os.path.basename(compressed_tmp)}")
+                except Exception:
+                    pass
 
     def _upload_to_cloudflare_stream(self, video_path, trip_id):
         """Upload video to Cloudflare Stream and return playback URL"""
