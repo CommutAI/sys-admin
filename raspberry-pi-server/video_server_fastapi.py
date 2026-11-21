@@ -921,6 +921,7 @@ class VideoProcessor:
         self.db_save_interval = 30  # Save to SQLite every 30 seconds (was 5s)
         self.last_anomaly_check = 0
         self.anomaly_check_interval = 300  # Anomaly detection every 5 minutes (was every save)
+        self.trip_start_time = None        # Set when trip begins; used for early-trip gate
         self.camera_reconnect_attempts = 0
         self.max_reconnect_attempts = 5
         self.reconnect_delay = 2  # seconds
@@ -1889,9 +1890,21 @@ class VideoProcessor:
             print(f"[DB] ✗ Error writing passenger count to SQLite: {e}")
     
     def trigger_anomaly_detection(self):
-        """Trigger anomaly detection in a background thread — never blocks video streaming."""
+        """Trigger anomaly detection in a background thread — never blocks video streaming.
+
+        Early-trip gate: suppress the first 5 minutes of a trip to avoid false-positive
+        count-mismatch alerts caused by passengers still completing their QR scans.
+        """
         if not self.current_trip_id:
             return
+
+        # Early-trip gate — 300 s (5 min) after trip start before any anomaly check
+        EARLY_TRIP_GATE_SECONDS = int(os.getenv('EARLY_TRIP_GATE_SECONDS', '300'))
+        if self.trip_start_time is not None:
+            elapsed = time.time() - self.trip_start_time
+            if elapsed < EARLY_TRIP_GATE_SECONDS:
+                print(f"[Anomaly] Skipping — trip is only {elapsed:.0f}s old (gate={EARLY_TRIP_GATE_SECONDS}s)")
+                return
 
         import threading
         def _detect():
@@ -1921,6 +1934,7 @@ class VideoProcessor:
         """Set the current trip ID for database recording"""
         self.current_trip_id = trip_id
         self.current_bus_id = bus_id
+        self.trip_start_time = time.time()  # Used to gate early-trip false-positive alerts
         print(f"Current trip ID set to: {trip_id}, bus_id: {bus_id}")
         # Auto-start recording when a trip begins
         if ENABLE_VIDEO_RECORDING and not self.recording:
@@ -1932,6 +1946,7 @@ class VideoProcessor:
         if self.recording:
             self.stop_recording()
         self.current_trip_id = None
+        self.trip_start_time = None
         print("Current trip ID cleared")
     
     def start_recording(self):
