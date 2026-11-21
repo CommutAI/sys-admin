@@ -183,7 +183,7 @@ const Login = () => {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 className="w-full bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-3 text-white placeholder-white/40 focus:outline-none focus:border-orange-500 text-sm"
-                placeholder="admin@commutai.com"
+                placeholder="admin@commutai.local"
               />
             </div>
           </div>

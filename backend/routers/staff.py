@@ -159,9 +159,12 @@ async def login(request: LoginRequest):
     Staff login endpoint - verifies credentials and returns user info
     """
     try:
-        # Check if user exists in staff_users table
-        result = supabase.table('staff_users').select('*').eq('email', request.email).single().execute()
-        user = result.data if result.data else None
+        # Check if user exists in staff_users table.
+        # Use maybeSingle() pattern: .limit(1) instead of .single() to avoid
+        # PGRST116 "0 rows" exception when email doesn't exist — that exception
+        # was swallowed by the outer except and returned as a 500 instead of 401.
+        result = supabase.table('staff_users').select('*').eq('email', request.email).limit(1).execute()
+        user = result.data[0] if result.data else None
 
         if not user:
             raise HTTPException(status_code=401, detail="Invalid email or password")
