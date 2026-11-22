@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-SMS Queue Processor for CommuteAI
-Polls Supabase for pending SMS messages and sends them via SIM900A
+Raspberry Pi SMS Service for CommutAI
+Standalone queue processor for SIM900A GSM modem.
+Polls Supabase sms_queue and transmits SMS notifications via hardware.
 """
 
 import os
@@ -9,380 +10,402 @@ import sys
 import time
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
-
-# Create logs directory if it doesn't exist
-script_dir = os.path.dirname(os.path.abspath(__file__))
-logs_dir = os.path.join(script_dir, 'logs')
-os.makedirs(logs_dir, exist_ok=True)
+# Try multiple .env locations
+for env_path in [
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'raspberry-pi-server', '.env'),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'),
+    '/home/chichi/raspberry-pi-server/.env',
+    '/home/chichi/.env'
+]:
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        break
 
 # Configure logging
-log_file = os.path.join(logs_dir, 'sms-processor.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
+        logging.FileHandler('/home/chichi/sms_service.log'),
+        logging.StreamHandler(sys.stdout)
     ]
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("SMSProcessor")
 
-# Try to import required modules
 try:
     import serial
     SERIAL_AVAILABLE = True
 except ImportError:
     SERIAL_AVAILABLE = False
-    logger.error("pyserial not installed. Install with: pip install pyserial")
+    logger.error("pyserial not installed")
 
 try:
     from supabase import create_client
     SUPABASE_AVAILABLE = True
 except ImportError:
     SUPABASE_AVAILABLE = False
-    logger.error("supabase not installed. Install with: pip install supabase")
+    logger.error("supabase client library not installed")
 
 
-class SMSQueueProcessor:
-    """Processes SMS queue from Supabase"""
+class SIM900AQueueProcessor:
+    """Processes SMS queue from Supabase and sends via SIM900A GSM hardware"""
 
     def __init__(self):
-        self.serial_connection = None
+        self.serial_conn: Optional[serial.Serial] = None
         self.connected = False
         self.supabase = None
 
-        # Configuration
         self.port = os.getenv('SIM900A_PORT', '/dev/ttyUSB0')
         self.baudrate = int(os.getenv('SIM900A_BAUDRATE', '9600'))
         self.supabase_url = os.getenv('SUPABASE_URL')
-        self.supabase_key = os.getenv('SUPABASE_KEY')
-        self.poll_interval = int(os.getenv('SMS_POLL_INTERVAL', '30'))  # seconds
-        self.max_concurrent = int(os.getenv('MAX_CONCURRENT_SMS', '3'))
+        self.supabase_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_KEY')
+        self.poll_interval = int(os.getenv('SMS_POLL_INTERVAL', '5'))
+        self.batch_limit = int(os.getenv('MAX_CONCURRENT_SMS', '5'))
+        self._lock_fp = None
 
-        # Initialize
         self._init_supabase()
         self._connect_hardware()
 
     def _init_supabase(self):
-        """Initialize Supabase client"""
         if not SUPABASE_AVAILABLE:
-            logger.warning("Supabase client not available")
+            logger.error("Supabase module not available")
             return
-
         if not self.supabase_url or not self.supabase_key:
-            logger.warning("Supabase credentials not configured")
+            logger.error("Supabase credentials missing in environment")
             return
-
         try:
             self.supabase = create_client(self.supabase_url, self.supabase_key)
-            logger.info("Supabase client initialized")
+            logger.info("Supabase client successfully initialized")
         except Exception as e:
-            logger.error(f"Failed to initialize Supabase: {e}")
+            logger.error(f"Failed to initialize Supabase client: {e}")
 
     def _connect_hardware(self) -> bool:
-        """Connect to SIM900A module"""
         if not SERIAL_AVAILABLE:
-            logger.error("Serial library not available")
+            logger.error("Serial module not available")
             return False
 
+        # Acquire exclusive OS lock to prevent concurrent serial access
+        if self._lock_fp is None:
+            try:
+                import fcntl
+                self._lock_fp = open('/tmp/sim900a_port.lock', 'w')
+                fcntl.flock(self._lock_fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._lock_fp.write(f"{os.getpid()}\n")
+                self._lock_fp.flush()
+            except (IOError, BlockingIOError, PermissionError):
+                logger.error("Another process is currently holding /tmp/sim900a_port.lock. Aborting hardware connection.")
+                return False
+
+        if self.serial_conn:
+            try:
+                self.serial_conn.close()
+            except Exception:
+                pass
+            self.serial_conn = None
+            self.connected = False
+
         try:
-            self.serial_connection = serial.Serial(
+            logger.info(f"Connecting to SIM900A on {self.port} at {self.baudrate} baud...")
+            self.serial_conn = serial.Serial(
                 port=self.port,
                 baudrate=self.baudrate,
-                timeout=2
+                timeout=5
             )
+            time.sleep(1)
 
-            # Test connection
-            self.serial_connection.write(b'AT\r')
+            # Cancel any pending / dangling prompts
+            self.serial_conn.write(b'\x1B\x1B\r\n')
+            time.sleep(0.3)
+            if hasattr(self.serial_conn, 'reset_input_buffer'):
+                self.serial_conn.reset_input_buffer()
+
+            # Test basic AT communication
+            self.serial_conn.write(b'AT\r')
             time.sleep(0.5)
-            response = self.serial_connection.read(100).decode('utf-8', errors='ignore')
+            response = self.serial_conn.read(100).decode('utf-8', errors='ignore')
 
             if 'OK' in response:
                 self.connected = True
-                logger.info(f"SIM900A connected on {self.port} @ {self.baudrate} baud")
+                logger.info(f"SIM900A modem successfully connected on {self.port}")
+
+                # Configure modem parameters for reliable SMS:
+                commands = [
+                    (b'ATE0\r', 0.2),                          # Echo off
+                    (b'AT+CMEE=2\r', 0.2),                      # Verbose error messages
+                    (b'AT+CGATT=0\r', 0.3),                     # Detach GPRS to eliminate PS Busy conflict
+                    (b'AT+CGSMS=1\r', 0.2),                     # Force Circuit-Switched (CS) SMS domain
+                    (b'AT+CSCA="+639170000130",145\r', 0.2),    # Configure Globe/TM SMSC
+                    (b'AT+CSMP=17,167,0,0\r', 0.2),             # Standard text mode submit parameters
+                    (b'AT+CSCS="GSM"\r', 0.2),                  # GSM 7-bit character set
+                    (b'AT+CMGF=1\r', 0.3),                      # Set SMS Text Mode
+                ]
+                for cmd, wait_t in commands:
+                    self.serial_conn.write(cmd)
+                    time.sleep(wait_t)
+
+                if hasattr(self.serial_conn, 'reset_input_buffer'):
+                    self.serial_conn.reset_input_buffer()
                 return True
             else:
-                logger.error(f"SIM900A did not respond with OK. Response: {response}")
+                logger.error(f"SIM900A did not return OK to AT command. Got: {repr(response)}")
+                self.connected = False
                 return False
 
         except serial.SerialException as e:
-            logger.error(f"Failed to connect to SIM900A: {e}")
+            logger.error(f"Serial port error on {self.port}: {e}")
+            self.connected = False
             return False
         except Exception as e:
-            logger.error(f"Hardware connection error: {e}")
+            logger.error(f"Unexpected error connecting to hardware: {e}")
+            self.connected = False
             return False
 
-    def _normalize_phone_number(self, phone_number: str) -> str:
-        """Normalize phone number to international format without + prefix for SIM900A"""
-        phone_number = phone_number.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+    def _format_numbers(self, phone_number: str) -> List[str]:
+        """Return list of candidate formats: [E.164 (+639...), National (09...)]"""
+        cleaned = phone_number.replace(' ', '').replace('-', '').replace('(', '').replace(')', '').strip()
+        candidates = []
+        if cleaned.startswith('0'):
+            intl = '+63' + cleaned[1:]
+            candidates = [intl, cleaned]
+        elif cleaned.startswith('+63'):
+            nat = '0' + cleaned[3:]
+            candidates = [cleaned, nat]
+        elif cleaned.startswith('63'):
+            intl = '+' + cleaned
+            nat = '0' + cleaned[2:]
+            candidates = [intl, nat]
+        else:
+            candidates = ['+63' + cleaned, '0' + cleaned]
+        return candidates
 
-        if phone_number.startswith('0'):
-            phone_number = '63' + phone_number[1:]
-        elif phone_number.startswith('+'):
-            phone_number = phone_number[1:]  # Remove + for SIM900A
-        elif not phone_number.startswith('63'):
-            phone_number = '63' + phone_number
-
-        return phone_number
-
-    def _send_at_command(self, command: str, timeout: float = 1.0) -> str:
-        """Send AT command and return response"""
-        if not self.connected or not self.serial_connection:
-            logger.error("SIM900A not connected")
-            return ""
-
+    def _send_modem_single(self, target_phone: str, message: str) -> Tuple[bool, str]:
+        """Attempt sending to a specific formatted phone number via SIM900A"""
         try:
-            self.serial_connection.write((command + '\r').encode())
-            time.sleep(timeout)
-            response = self.serial_connection.read(200).decode('utf-8', errors='ignore').strip()
-            return response
-        except Exception as e:
-            logger.error(f"AT command error: {e}")
-            return ""
+            # 1. Clear any pending prompts or leftover buffer
+            self.serial_conn.write(b'\x1B\x1B\r\n')
+            time.sleep(0.3)
+            if hasattr(self.serial_conn, 'reset_input_buffer'):
+                self.serial_conn.reset_input_buffer()
 
-    def send_sms(self, phone_number: str, message: str) -> tuple[bool, Optional[str]]:
-        """Send SMS via SIM900A
-        Returns (success, error_message)
-        """
-        if not self.connected:
-            error_msg = "Cannot send SMS - SIM900A not connected"
-            logger.error(error_msg)
-            return False, error_msg
+            # 2. Ensure mode is ready
+            self.serial_conn.write(b'AT+CMGF=1\r')
+            time.sleep(0.2)
+            if hasattr(self.serial_conn, 'reset_input_buffer'):
+                self.serial_conn.reset_input_buffer()
 
-        try:
-            normalized_phone = self._normalize_phone_number(phone_number)
+            # 3. Send destination number and wait for '>' (allow up to 8s)
+            cmd = f'AT+CMGS="{target_phone}"\r'.encode()
+            self.serial_conn.write(cmd)
 
-            # Remove special characters that SIM900A can't handle in text mode
-            message = message.replace('→', '->').replace('₱', 'PHP')
-            message = message.encode('ascii', 'ignore').decode('ascii')
+            prompt_found = False
+            start_prompt = time.time()
+            prompt_buf = ""
+            while time.time() - start_prompt < 8.0:
+                if self.serial_conn.in_waiting > 0:
+                    chunk = self.serial_conn.read(self.serial_conn.in_waiting).decode('utf-8', errors='ignore')
+                    prompt_buf += chunk
+                    if '>' in prompt_buf:
+                        prompt_found = True
+                        break
+                    if 'ERROR' in prompt_buf:
+                        break
+                time.sleep(0.1)
 
-            logger.info(f"Sending SMS to {normalized_phone}: {message[:50]}...")
+            if not prompt_found:
+                err = prompt_buf.strip() or "No '>' prompt from modem (timeout)"
+                self.serial_conn.write(b'\x1B\x1B\r\n')
+                time.sleep(0.3)
+                if hasattr(self.serial_conn, 'reset_input_buffer'):
+                    self.serial_conn.reset_input_buffer()
+                return False, err
 
-            # Clear any pending data
-            self.serial_connection.reset_input_buffer()
-            self.serial_connection.reset_output_buffer()
+            # 4. Write message payload followed by Ctrl+Z (\x1A)
+            msg_payload = f"{message}\x1A".encode('utf-8', errors='ignore')
+            self.serial_conn.write(msg_payload)
 
-            # Check SIM registration
-            reg_check = self._send_at_command('AT+CREG?')
-            logger.debug(f"SIM Registration: {reg_check}")
+            # 5. Wait for network acknowledgment (up to 20s)
+            start_ack = time.time()
+            ack_buf = ""
+            success = False
+            error_reason = ""
 
-            # Check signal strength
-            csq_check = self._send_at_command('AT+CSQ')
-            logger.debug(f"Signal Quality: {csq_check}")
+            while time.time() - start_ack < 20.0:
+                if self.serial_conn.in_waiting > 0:
+                    chunk = self.serial_conn.read(self.serial_conn.in_waiting).decode('utf-8', errors='ignore')
+                    ack_buf += chunk
+                    if '+CMGS:' in ack_buf:
+                        success = True
+                        break
+                    if 'ERROR' in ack_buf:
+                        error_reason = ack_buf.strip()
+                        break
+                time.sleep(0.2)
 
-            # Set SMS mode to text
-            self._send_at_command('AT+CMGF=1')
-            time.sleep(0.5)
-
-            # Set recipient
-            self._send_at_command(f'AT+CMGS="{normalized_phone}"')
-            time.sleep(1)
-
-            # Send message
-            self.serial_connection.write(f'{message}\x1A'.encode())
-            time.sleep(8)
-
-            # Read response
-            response = ""
-            for _ in range(10):
-                if self.serial_connection.in_waiting > 0:
-                    response += self.serial_connection.read(self.serial_connection.in_waiting).decode('utf-8', errors='ignore')
-                time.sleep(0.5)
-
-            response = response.strip()
-            logger.info(f"SIM900A response: {response}")
-
-            if 'OK' in response or '+CMGS:' in response:
-                logger.info(f"SMS sent successfully to {normalized_phone}")
-                return True, None
+            if success:
+                return True, "Delivered (+CMGS confirmed)"
             else:
-                error_msg = f"Failed to send SMS to {normalized_phone}: {response}"
-                logger.error(error_msg)
-                return False, error_msg
+                if not error_reason:
+                    error_reason = f"Timeout waiting for ACK (got: {repr(ack_buf.strip())})"
+                self.serial_conn.write(b'\x1B\x1B\r\n')
+                time.sleep(0.3)
+                if hasattr(self.serial_conn, 'reset_input_buffer'):
+                    self.serial_conn.reset_input_buffer()
+                return False, error_reason
 
         except Exception as e:
-            error_msg = f"SMS sending error: {e}"
-            logger.error(error_msg)
-            return False, error_msg
+            self.connected = False
+            return False, str(e)
+
+    def send_sms(self, phone_number: str, message: str) -> Tuple[bool, str]:
+        """Send SMS via SIM900A hardware modem"""
+        if self.connected or self._connect_hardware():
+            candidate_numbers = self._format_numbers(phone_number)
+            last_err = ""
+
+            for num in candidate_numbers:
+                logger.info(f"Sending via SIM900A to {num}: {message[:50]}...")
+                success, reason = self._send_modem_single(num, message)
+                if success:
+                    logger.info(f"SMS successfully sent to {num} via SIM900A")
+                    return True, reason
+                last_err = reason
+                logger.warning(f"SIM900A send failed for {num}: {reason}")
+                time.sleep(1.0)
+
+            return False, f"SIM900A: {last_err}"
+        else:
+            return False, "SIM900A hardware modem not connected"
 
     def fetch_pending_sms(self) -> List[Dict]:
-        """Fetch pending SMS from Supabase"""
+        """Fetch pending or failed retriable SMS messages from Supabase"""
         if not self.supabase:
-            logger.warning("Cannot fetch SMS - Supabase not initialized")
             return []
 
         try:
-            response = self.supabase.table('sms_queue').select('*').eq('status', 'pending').order('priority', desc=True).order('created_at').limit(self.max_concurrent).execute()
+            res = self.supabase.table('sms_queue') \
+                .select('*') \
+                .in_('status', ['pending', 'failed']) \
+                .lt('retry_count', 3) \
+                .order('priority', desc=True) \
+                .order('created_at', desc=False) \
+                .limit(self.batch_limit) \
+                .execute()
 
-            if response.data:
-                logger.info(f"Fetched {len(response.data)} pending SMS messages")
-                return response.data
-            else:
-                logger.debug("No pending SMS messages")
-                return []
-
+            if res.data:
+                logger.info(f"Fetched {len(res.data)} pending/retriable SMS message(s)")
+                return res.data
+            return []
         except Exception as e:
-            logger.error(f"Failed to fetch pending SMS: {e}")
+            logger.error(f"Failed to fetch pending SMS from Supabase: {e}")
             return []
 
     def update_sms_status(self, sms_id: str, status: str, error_message: Optional[str] = None):
-        """Update SMS status in Supabase"""
+        """Update message status and timestamps in Supabase"""
         if not self.supabase:
             return
 
         try:
-            # Get current retry_count
             current = self.supabase.table('sms_queue').select('retry_count').eq('id', sms_id).execute()
-            current_attempts = current.data[0]['retry_count'] if current.data else 0
+            current_retries = current.data[0].get('retry_count', 0) if current.data else 0
+            new_retries = current_retries + 1
 
             update_data = {
                 'status': status,
-                'retry_count': current_attempts + 1
+                'retry_count': new_retries
             }
 
+            now_iso = datetime.now().isoformat()
             if status == 'sent':
-                update_data['sent_at'] = datetime.now().isoformat()
-
-            if status == 'failed':
-                update_data['failed_at'] = datetime.now().isoformat()
-
-            if error_message:
-                update_data['error_message'] = error_message
+                update_data['sent_at'] = now_iso
+                update_data['error_message'] = None
+            elif status == 'failed':
+                update_data['failed_at'] = now_iso
+                update_data['error_message'] = error_message or 'Transmission failed'
+                if new_retries >= 3:
+                    update_data['status'] = 'permanently_failed'
+                    logger.warning(f"SMS {sms_id} marked as permanently_failed after {new_retries} attempts")
 
             self.supabase.table('sms_queue').update(update_data).eq('id', sms_id).execute()
-            logger.debug(f"Updated SMS {sms_id} status to {status} (attempt {current_attempts + 1})")
-
+            logger.info(f"Updated SMS {sms_id} -> {update_data['status']} (attempt {new_retries})")
         except Exception as e:
-            logger.error(f"Failed to update SMS status: {e}")
+            logger.error(f"Failed to update status for SMS {sms_id}: {e}")
 
     def process_queue(self):
-        """Process pending SMS messages"""
-        pending_sms = self.fetch_pending_sms()
+        """Fetch and process the pending queue"""
+        messages = self.fetch_pending_sms()
+        if not messages:
+            return
 
-        for sms in pending_sms:
-            sms_id = sms['id']
-            phone_number = sms['phone_number']
-            message = sms['message']
-            sms_type = sms.get('type', 'other')
-            max_attempts = sms.get('max_retries', 3)
-            current_attempts = sms.get('retry_count', 0)
+        for sms in messages:
+            sms_id = sms.get('id')
+            phone = sms.get('phone_number')
+            text = sms.get('message')
+            sms_type = sms.get('sms_type', 'reservation_confirmation')
 
-            logger.info(f"Processing SMS {sms_id} ({sms_type}) - attempt {current_attempts + 1}/{max_attempts}")
-
-            # Check if max attempts reached
-            if current_attempts >= max_attempts:
-                logger.warning(f"SMS {sms_id} reached max attempts ({max_attempts}), marking as failed")
-                self.update_sms_status(sms_id, 'failed', 'Max retry attempts reached')
+            if not phone or not text:
+                logger.warning(f"Skipping malformed SMS {sms_id} (missing phone or message)")
+                self.update_sms_status(sms_id, 'permanently_failed', 'Missing phone number or message body')
                 continue
 
-            # Send SMS
-            success, error = self.send_sms(phone_number, message)
+            logger.info(f"Processing SMS {sms_id} [{sms_type}] for {phone}")
+            success, reason = self.send_sms(phone, text)
 
-            # Update status
             if success:
                 self.update_sms_status(sms_id, 'sent')
             else:
-                # Check if should permanently fail
-                if current_attempts + 1 >= max_attempts:
-                    self.update_sms_status(sms_id, 'failed', error)
-                else:
-                    # Keep as pending for retry
-                    try:
-                        self.supabase.table('sms_queue').update({
-                            'error_message': error,
-                            'retry_count': current_attempts + 1
-                        }).eq('id', sms_id).execute()
-                        logger.warning(f"SMS {sms_id} failed (attempt {current_attempts + 1}/{max_attempts}), will retry")
-                    except Exception as e:
-                        logger.error(f"Failed to update retry info: {e}")
+                self.update_sms_status(sms_id, 'failed', reason)
 
-            # Small delay between messages
-            time.sleep(2)
-
-    def cleanup_old_messages(self):
-        """Clean up old sent/failed messages (optional)"""
-        if not self.supabase:
-            return
-
-        try:
-            # Delete messages older than 30 days that are sent or failed
-            from datetime import timedelta
-            cutoff_date = datetime.now() - timedelta(days=30)
-
-            response = self.supabase.table('sms_queue').delete().lt('created_at', cutoff_date.isoformat()).in_('status', ['sent', 'failed']).execute()
-
-            if response.data:
-                logger.info(f"Cleaned up {len(response.data)} old SMS messages")
-
-        except Exception as e:
-            logger.error(f"Error cleaning up old messages: {e}")
+            time.sleep(1.5)
 
     def run(self):
-        """Main loop - continuously poll and process SMS queue"""
-        logger.info("Starting SMS queue processor...")
+        """Main service polling loop"""
+        logger.info(f"SMS Service running. Polling every {self.poll_interval}s on {self.port}...")
+        while True:
+            try:
+                if not self.connected:
+                    self._connect_hardware()
 
-        if not self.supabase:
-            logger.error("Cannot start - Supabase not initialized")
-            return
+                if self.connected:
+                    self.process_queue()
+                else:
+                    logger.warning(f"Modem unavailable on {self.port}. Retrying connection next cycle...")
 
-        if not self.connected:
-            logger.warning("Starting without SIM900A - will fail to send SMS")
-
-        logger.info(f"Poll interval: {self.poll_interval} seconds")
-        logger.info(f"Max concurrent SMS: {self.max_concurrent}")
-
-        try:
-            while True:
-                self.process_queue()
-
-                # Run cleanup every hour
-                if int(time.time()) % 3600 < self.poll_interval:
-                    self.cleanup_old_messages()
-
-                logger.debug(f"Sleeping for {self.poll_interval} seconds...")
+                time.sleep(self.poll_interval)
+            except KeyboardInterrupt:
+                logger.info("Service stopping due to keyboard interrupt...")
+                break
+            except Exception as e:
+                logger.error(f"Unexpected error in main polling loop: {e}")
                 time.sleep(self.poll_interval)
 
-        except KeyboardInterrupt:
-            logger.info("Shutting down...")
-            return
-        except Exception as e:
-            logger.error(f"Error in main loop: {e}")
-            time.sleep(self.poll_interval)
-
     def disconnect(self):
-        """Disconnect from hardware"""
-        if self.serial_connection:
-            self.serial_connection.close()
+        if self._lock_fp:
+            try:
+                import fcntl
+                fcntl.flock(self._lock_fp, fcntl.LOCK_UN)
+                self._lock_fp.close()
+            except Exception:
+                pass
+            self._lock_fp = None
+
+        if self.serial_conn:
+            try:
+                self.serial_conn.close()
+            except Exception:
+                pass
             self.connected = False
             logger.info("SIM900A disconnected")
 
 
 def main():
-    """Main entry point"""
-    print("=" * 70)
-    print("📱 SMS Queue Processor - CommuteAI")
-    print("=" * 70)
-    print()
-
-    processor = SMSQueueProcessor()
-
-    # Check status
-    print("Status:")
-    print(f"  Supabase: {'Connected' if processor.supabase else 'Not connected'}")
-    print(f"  SIM900A: {'Connected' if processor.connected else 'Not connected'}")
-    print(f"  Poll Interval: {processor.poll_interval} seconds")
-    print(f"  Max Concurrent: {processor.max_concurrent}")
-    print()
-
+    service = SIM900AQueueProcessor()
     try:
-        processor.run()
+        service.run()
     finally:
-        processor.disconnect()
+        service.disconnect()
 
 
 if __name__ == "__main__":

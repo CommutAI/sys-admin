@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """
 Standalone SMS Service for Bus Monitoring System
-Independent service that queues SMS notifications to Supabase for processing by SMS queue processor
-- Frontend/Backend calls this service to queue SMS
-- SMS queue processor (sms_queue_processor.py) polls and sends SMS via SIM900A
-- Provides offline support and better reliability
+Independent service that handles SMS notifications without depending on video/camera modules
 """
 
 import os
@@ -80,6 +77,9 @@ class SMSService:
 
     def _connect_hardware(self) -> bool:
         """Connect to SIM900A module"""
+        if os.getenv('ENABLE_SIM900A_HARDWARE', 'false').lower() != 'true':
+            logger.info('Direct serial access disabled in SMS API server to prevent port conflict on %s', self.port)
+            return False
         if not SERIAL_AVAILABLE:
             logger.error("Serial library not available")
             return False
@@ -186,53 +186,74 @@ class SMSService:
             logger.error(f"AT command error: {e}")
             return ""
 
-    def send_sms(self, phone_number: str, message: str, sms_type: str = 'test', priority: int = 5) -> Dict:
-        """Queue SMS to database for processing by SMS queue processor"""
-        if not self.supabase:
-            logger.error("Cannot queue SMS - Supabase not initialized")
-            return {'success': False, 'error': 'Supabase not connected'}
+    def send_sms(self, phone_number: str, message: str, sms_type: str = 'test') -> Dict:
+        """Send SMS to a single recipient"""
+        if not self.connected:
+            logger.error("Cannot send SMS - SIM900A not connected")
+            return {'success': False, 'error': 'Not connected'}
 
         try:
             # Normalize phone number
             normalized_phone = self._normalize_phone_number(phone_number)
-            logger.info(f"Queueing SMS to {normalized_phone}: {message[:50]}...")
+            logger.info(f"Normalized phone: {phone_number} -> {normalized_phone}")
 
-            data = {
-                'phone_number': normalized_phone,
-                'message': message,
-                'type': sms_type,
-                'status': 'pending',
-                'priority': priority,
-                'retry_count': 0,
-                'max_retries': 3,
-                'created_at': datetime.now().isoformat()
-            }
+            logger.info(f"Sending SMS to {normalized_phone}: {message[:50]}...")
 
-            response = self.supabase.table('sms_queue').insert(data).execute()
+            # Check SIM registration
+            reg_check = self._send_at_command('AT+CREG?')
+            logger.info(f"SIM Registration: {reg_check}")
 
-            if response.data:
-                sms_id = response.data[0]['id']
-                logger.info(f"SMS queued successfully with ID: {sms_id}")
-                self._log_sms(normalized_phone, message, sms_type, 'queued')
-                return {'success': True, 'phone': normalized_phone, 'sms_id': sms_id}
+            # Check signal strength
+            csq_check = self._send_at_command('AT+CSQ')
+            logger.info(f"Signal Strength: {csq_check}")
+
+            # Set SMS mode to text
+            self._send_at_command('AT+CMGF=1')
+            time.sleep(0.5)
+
+            # Set recipient
+            cmgs_response = self._send_at_command(f'AT+CMGS="{normalized_phone}"')
+            logger.info(f"CMGS response: {cmgs_response}")
+            time.sleep(0.5)
+
+            # Send message
+            self.serial_connection.write(f'{message}\x1A'.encode())  # Remove \r, just Ctrl+Z
+            time.sleep(5)  # Increased wait time
+
+            # Read response in chunks to get full response
+            response = ""
+            for _ in range(10):  # Try reading multiple times
+                if self.serial_connection.in_waiting > 0:
+                    response += self.serial_connection.read(self.serial_connection.in_waiting).decode('utf-8', errors='ignore')
+                time.sleep(0.5)
+
+            response = response.strip()
+            logger.info(f"SIM900A response: {response}")
+            logger.info(f"Message length: {len(message)} characters")
+
+            if 'OK' in response:
+                logger.info(f"SMS sent successfully to {normalized_phone}")
+                self._log_sms(normalized_phone, message, sms_type, 'sent')
+                return {'success': True, 'phone': normalized_phone}
             else:
-                logger.error(f"Failed to queue SMS to {normalized_phone}")
-                return {'success': False, 'error': 'Failed to insert into queue', 'phone': normalized_phone}
+                logger.error(f"Failed to send SMS to {normalized_phone}: {response}")
+                self._log_sms(normalized_phone, message, sms_type, 'failed')
+                return {'success': False, 'error': response, 'phone': normalized_phone}
 
         except Exception as e:
-            logger.error(f"SMS queuing error: {e}")
+            logger.error(f"SMS sending error: {e}")
             self._log_sms(phone_number, message, sms_type, 'failed')
             return {'success': False, 'error': str(e), 'phone': phone_number}
 
-    def send_bulk_sms(self, phone_numbers: List[str], message: str, sms_type: str = 'emergency', priority: int = 5) -> Dict:
-        """Queue SMS to multiple recipients"""
+    def send_bulk_sms(self, phone_numbers: List[str], message: str, sms_type: str = 'emergency') -> Dict:
+        """Send SMS to multiple recipients"""
         results = []
         for phone_number in phone_numbers:
             # Normalize each phone number
             normalized_phone = self._normalize_phone_number(phone_number)
-            result = self.send_sms(normalized_phone, message, sms_type, priority)
+            result = self.send_sms(normalized_phone, message, sms_type)
             results.append(result)
-            time.sleep(0.5)  # Small delay between queue operations
+            time.sleep(2)  # Delay between messages
 
         success_count = sum(1 for r in results if r['success'])
         return {
@@ -243,7 +264,7 @@ class SMSService:
         }
 
     def send_emergency_alert(self, message: str = None, location: Dict = None) -> Dict:
-        """Send emergency alert to all emergency contacts (priority 1 - highest)"""
+        """Send emergency alert to all emergency contacts"""
         if not message:
             message = "EMERGENCY: Bus system emergency alert!"
 
@@ -251,10 +272,10 @@ class SMSService:
             message += f" Location: {location.get('lat', 'N/A')}, {location.get('lng', 'N/A')}"
 
         logger.warning(f"Sending emergency alert to {len(self.emergency_contacts)} contacts")
-        return self.send_bulk_sms(self.emergency_contacts, message, 'emergency', priority=1)
+        return self.send_bulk_sms(self.emergency_contacts, message, 'emergency')
 
     def send_admin_alert(self, message: str = None, location: Dict = None) -> Dict:
-        """Send admin alert to all admin contacts (priority 2 - high)"""
+        """Send admin alert to all admin contacts"""
         if not message:
             message = "ADMIN ALERT: System notification"
 
@@ -262,7 +283,7 @@ class SMSService:
             message += f" Location: {location.get('lat', 'N/A')}, {location.get('lng', 'N/A')}"
 
         logger.info(f"Sending admin alert to {len(self.admin_contacts)} contacts")
-        return self.send_bulk_sms(self.admin_contacts, message, 'admin', priority=2)
+        return self.send_bulk_sms(self.admin_contacts, message, 'admin')
 
     # ==================== SPECIFIC SMS FUNCTIONALITIES ====================
 
@@ -270,19 +291,19 @@ class SMSService:
                                      passenger_name: str, route: str, schedule: str,
                                      seats: int, total_fare: float) -> Dict:
         """
-        Queue confirmation SMS for successful pre-reservation from public dashboard (priority 5 - normal)
+        Send confirmation SMS for successful pre-reservation from public dashboard
         """
         message = f"RESERVATION CONFIRMED. ID: {reservation_id}. Passenger: {passenger_name}. Route: {route}. Schedule: {schedule}. Seats: {seats}. Total Fare: ₱{total_fare:.2f}"
         logger.info(f"Message content: {message}")
 
-        logger.info(f"Queueing reservation confirmation to {phone_number}")
-        return self.send_sms(phone_number, message, 'reservation_confirmation', priority=5)
+        logger.info(f"Sending reservation confirmation to {phone_number}")
+        return self.send_sms(phone_number, message, 'reservation_confirmation')
 
     def send_card_approval_notification(self, phone_number: str, card_id: str,
                                        card_holder: str, status: str,
                                        reason: str = None) -> Dict:
         """
-        Queue SMS notification for card approval/decline by system admin (priority 5 - normal)
+        Send SMS notification for card approval/decline by system admin
         """
         if status.lower() == 'approved':
             message = f"CARD APPROVED\n"
@@ -304,13 +325,13 @@ class SMSService:
             message = message.replace('\n', ' ')
             logger.info(f"Message content: {message}")
 
-        logger.info(f"Queueing card {status} notification to {phone_number}")
-        return self.send_sms(phone_number, message, f'card_{status.lower()}', priority=5)
+        logger.info(f"Sending card {status} notification to {phone_number}")
+        return self.send_sms(phone_number, message, f'card_{status.lower()}')
 
     def send_emergency_alert_from_bus(self, message: str = None, location: Dict = None,
                                       bus_number: str = None, driver_name: str = None) -> Dict:
         """
-        Queue emergency SMS from driver and conductor (priority 1 - highest)
+        Send emergency SMS from driver and conductor
         Goes to all emergency contacts
         """
         if not message:
@@ -325,14 +346,14 @@ class SMSService:
             emergency_msg += f"Location: {location.get('lat', 'N/A')}, {location.get('lng', 'N/A')}"
         logger.info(f"Message content: {emergency_msg}")
 
-        logger.warning(f"Queueing emergency alert from bus to {len(self.emergency_contacts)} contacts")
-        return self.send_bulk_sms(self.emergency_contacts, emergency_msg, 'emergency_bus', priority=1)
+        logger.warning(f"Sending emergency alert from bus to {len(self.emergency_contacts)} contacts")
+        return self.send_bulk_sms(self.emergency_contacts, emergency_msg, 'emergency_bus')
 
     def send_trip_completion_confirmation(self, phone_number: str, passenger_name: str,
                                          bus_number: str, route: str, fare: float,
                                          alighting_stop: str, distance: float = None) -> Dict:
         """
-        Queue confirmation SMS after successful trip completion (alighting) (priority 5 - normal)
+        Send confirmation SMS after successful trip completion (alighting)
         """
         message = f"TRIP COMPLETED. Passenger: {passenger_name}. Bus: {bus_number}. Route: {route}. Alighting: {alighting_stop}. Fare: ₱{fare:.2f}. "
         if distance:
@@ -340,14 +361,14 @@ class SMSService:
         message += f"Thank you for riding with us!"
         logger.info(f"Message content: {message}")
 
-        logger.info(f"Queueing trip completion confirmation to {phone_number}")
-        return self.send_sms(phone_number, message, 'trip_completion', priority=5)
+        logger.info(f"Sending trip completion confirmation to {phone_number}")
+        return self.send_sms(phone_number, message, 'trip_completion')
 
     def send_topup_confirmation(self, phone_number: str, card_id: str,
                                  card_holder: str, amount: float,
                                  new_balance: float, transaction_id: str = None) -> Dict:
         """
-        Queue SMS confirmation for QR card top-up in customer service (priority 5 - normal)
+        Send SMS confirmation for QR card top-up in customer service
         """
         message = f"TOP-UP SUCCESSFUL. Card ID: {card_id}. Holder: {card_holder}. Amount: ₱{amount:.2f}. New Balance: ₱{new_balance:.2f}. "
         if transaction_id:
@@ -355,11 +376,11 @@ class SMSService:
         message += f"Thank you for reloading!"
         logger.info(f"Message content: {message}")
 
-        logger.info(f"Queueing top-up confirmation to {phone_number}")
-        return self.send_sms(phone_number, message, 'topup', priority=5)
+        logger.info(f"Sending top-up confirmation to {phone_number}")
+        return self.send_sms(phone_number, message, 'topup')
 
     def _log_sms(self, phone_number: str, message: str, sms_type: str, status: str):
-        """Log SMS to database (for historical records, separate from queue)"""
+        """Log SMS to database"""
         if not self.supabase:
             return
 
@@ -369,10 +390,10 @@ class SMSService:
                 'message': message,
                 'sms_type': sms_type,
                 'status': status,
-                'created_at': datetime.now().isoformat()
+                'sent_at': datetime.now().isoformat()
             }
             self.supabase.table('sms_logs').insert(data).execute()
-            logger.debug(f"SMS logged to database: {sms_type} to {phone_number} ({status})")
+            logger.debug(f"SMS logged to database: {sms_type} to {phone_number}")
         except Exception as e:
             logger.error(f"Failed to log SMS to database: {e}")
 
@@ -385,14 +406,13 @@ class SMSService:
     def check_status(self) -> Dict:
         """Check service status"""
         status = {
-            'service': 'SMS Service (Queue-based)',
+            'service': 'SMS Service',
             'connected': self.connected,
             'supabase_available': SUPABASE_AVAILABLE and self.supabase is not None,
             'emergency_contacts_count': len(self.emergency_contacts),
             'admin_contacts_count': len(self.admin_contacts),
             'port': self.port,
-            'baudrate': self.baudrate,
-            'mode': 'queue'  # Indicates SMS are queued, not sent directly
+            'baudrate': self.baudrate
         }
 
         if self.connected:
@@ -420,9 +440,8 @@ class SMSService:
 def main():
     """Main entry point for standalone SMS service"""
     print("=" * 70)
-    print("📱 SMS Service - Queue-based")
+    print("📱 SMS Service - Standalone")
     print("=" * 70)
-    print("Note: SMS are queued to Supabase. Use sms_queue_processor.py to send.")
     print()
 
     # Initialize service
@@ -431,7 +450,6 @@ def main():
     # Check status
     status = sms_service.check_status()
     print("Service Status:")
-    print(f"  Mode: {status['mode']}")
     print(f"  Connected: {status['connected']}")
     print(f"  Port: {status['port']} @ {status['baudrate']} baud")
     print(f"  Emergency Contacts: {status['emergency_contacts_count']}")
@@ -458,13 +476,13 @@ def main():
             # Send emergency alert from bus
             message = sys.argv[2] if len(sys.argv) > 2 else None
             result = sms_service.send_emergency_alert_from_bus(message)
-            print(f"Emergency alert queued: {result['successful']}/{result['total']} successful")
+            print(f"Emergency alert sent: {result['successful']}/{result['total']} successful")
 
         elif command == 'admin':
             # Send admin alert
             message = sys.argv[2] if len(sys.argv) > 2 else None
             result = sms_service.send_admin_alert(message)
-            print(f"Admin alert queued: {result['successful']}/{result['total']} successful")
+            print(f"Admin alert sent: {result['successful']}/{result['total']} successful")
 
         elif command == 'reservation':
             # Send reservation confirmation
@@ -479,7 +497,7 @@ def main():
                 result = sms_service.send_reservation_confirmation(
                     phone, reservation_id, passenger_name, route, schedule, seats, fare
                 )
-                print(f"Reservation confirmation queued: {result}")
+                print(f"Reservation confirmation sent: {result}")
             else:
                 print("Usage: python sms_service.py reservation <phone> <id> <name> <route> <schedule> <seats> <fare>")
 
@@ -494,7 +512,7 @@ def main():
                 result = sms_service.send_card_approval_notification(
                     phone, card_id, card_holder, status, reason
                 )
-                print(f"Card {status} notification queued: {result}")
+                print(f"Card {status} notification sent: {result}")
             else:
                 print("Usage: python sms_service.py card <phone> <card_id> <holder> <approved|declined> [reason]")
 
@@ -511,7 +529,7 @@ def main():
                 result = sms_service.send_trip_completion_confirmation(
                     phone, passenger_name, bus_number, route, fare, alighting_stop, distance
                 )
-                print(f"Trip completion confirmation queued: {result}")
+                print(f"Trip completion confirmation sent: {result}")
             else:
                 print("Usage: python sms_service.py trip <phone> <name> <bus> <route> <fare> <stop> [distance]")
 
@@ -527,7 +545,7 @@ def main():
                 result = sms_service.send_topup_confirmation(
                     phone, card_id, card_holder, amount, new_balance, transaction_id
                 )
-                print(f"Top-up confirmation queued: {result}")
+                print(f"Top-up confirmation sent: {result}")
             else:
                 print("Usage: python sms_service.py topup <phone> <card_id> <holder> <amount> <new_balance> [transaction_id]")
 
@@ -545,21 +563,19 @@ def main():
             print("Available commands: test, emergency, admin, reservation, card, trip, topup, refresh, status")
     else:
         print("Available commands:")
-        print("  python sms_service.py test <phone> [message]                    - Queue test SMS")
-        print("  python sms_service.py emergency [message]                        - Queue emergency alert")
-        print("  python sms_service.py admin [message]                            - Queue admin alert")
+        print("  python sms_service.py test <phone> [message]                    - Send test SMS")
+        print("  python sms_service.py emergency [message]                        - Send emergency alert")
+        print("  python sms_service.py admin [message]                            - Send admin alert")
         print("  python sms_service.py reservation <phone> <id> <name> <route> <schedule> <seats> <fare>")
-        print("                                                            - Queue reservation confirmation")
+        print("                                                            - Send reservation confirmation")
         print("  python sms_service.py card <phone> <card_id> <holder> <approved|declined> [reason]")
-        print("                                                            - Queue card approval/decline")
+        print("                                                            - Send card approval/decline")
         print("  python sms_service.py trip <phone> <name> <bus> <route> <fare> <stop> [distance]")
-        print("                                                            - Queue trip completion")
+        print("                                                            - Send trip completion")
         print("  python sms_service.py topup <phone> <card_id> <holder> <amount> <new_balance> [ref]")
-        print("                                                            - Queue top-up confirmation")
+        print("                                                            - Send top-up confirmation")
         print("  python sms_service.py refresh                                    - Refresh contacts from DB")
         print("  python sms_service.py status                                     - Show service status")
-        print()
-        print("Note: Run sms_queue_processor.py to process queued SMS and send via SIM900A")
 
     sms_service.disconnect()
 
