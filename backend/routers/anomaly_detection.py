@@ -101,18 +101,24 @@ class AnomalyDetectionSummary(BaseModel):
 # Helper Functions
 # ============================================================================
 
-def calculate_severity_from_percentage(percentage: float) -> str:
-    """Calculate severity based on percentage above threshold"""
+def calculate_severity_from_percentage(percentage: float, max_severity: str = "critical") -> str:
+    """Calculate severity based on percentage above threshold.
+    By default caps at 'critical' to keep 'emergency' reserved for true life-safety/distress incidents."""
     if percentage < 10:
-        return "low"
+        sev = "low"
     elif percentage < 25:
-        return "medium"
+        sev = "medium"
     elif percentage < 50:
-        return "high"
+        sev = "high"
     elif percentage < 100:
-        return "critical"
+        sev = "critical"
     else:
-        return "emergency"
+        sev = "emergency"
+
+    order = ["low", "medium", "high", "critical", "emergency"]
+    if max_severity in order and order.index(sev) > order.index(max_severity):
+        return max_severity
+    return sev
 
 
 def calculate_confidence(data_points: int, variance: float) -> float:
@@ -173,7 +179,7 @@ def detect_fare_evasion(trip: Dict, ai_count: int, boarded_count: int, staff_cou
     historical_avg = get_historical_average(trip['id'])
     trend = get_trend(trip['id'])
     
-    severity = calculate_severity_from_percentage(percentage_above)
+    severity = calculate_severity_from_percentage(percentage_above, max_severity="critical")
     confidence = calculate_confidence(10, discrepancy if historical_avg else 0)
     
     # Build detailed description
@@ -239,7 +245,7 @@ def detect_overcrowding(trip: Dict, ai_count: int, bus_capacity: int = 35) -> An
     over_by = ai_count - bus_capacity
     percentage_over = (over_by / bus_capacity * 100) if bus_capacity > 0 else 0
     
-    severity = calculate_severity_from_percentage(percentage_over)
+    severity = calculate_severity_from_percentage(percentage_over, max_severity="critical")
     confidence = 0.95  # High confidence for count-based detection
     
     historical_avg = get_historical_average(trip['id'])
@@ -527,11 +533,29 @@ def detect_trip_duration(trip: Dict) -> AnomalyResult:
     else:
         confidence = 0.0
     
-    severity = calculate_severity_from_percentage((delay_minutes / 30.0 * 100) if delay_minutes > 0 else 0)
+    # Schedule delays are operational warnings: max severity is "high" (never "critical" or "emergency")
+    severity = calculate_severity_from_percentage((delay_minutes / 30.0 * 100) if delay_minutes > 0 else 0, max_severity="high")
     percentage_above = (delay_minutes / 30.0 * 100) if delay_minutes > 0 else 0
     
+    if elapsed_minutes > 720:  # > 12 hours = unclosed / stale trip
+        status_label = "STALE (UNCLOSED TRIP)"
+        priority = "LOW"
+        action = "Close stale trip record"
+        details = (
+            f"Trip has been open for {elapsed_minutes / 60:.1f} hours without being completed. "
+            f"Trip was likely finished without closing in conductor app."
+        )
+    else:
+        status_label = 'DELAYED' if detected else 'ON SCHEDULE'
+        priority = "MEDIUM"
+        action = "Investigate cause of delay"
+        details = (
+            f"Trip significantly delayed. Check for traffic, mechanical issues, "
+            f"or unauthorized stops. Update passengers on ETA."
+        )
+
     description = (
-        f"Trip Duration: {'DELAYED' if detected else 'ON SCHEDULE'}. "
+        f"Trip Duration: {status_label}. "
         f"Elapsed: {elapsed_minutes:.0f} min, Expected: {expected_duration} min, "
         f"Delay: {delay_minutes:.0f} min ({percentage_above:.0f}% above threshold). "
         f"Started: {started_at or 'Unknown'}."
@@ -539,10 +563,9 @@ def detect_trip_duration(trip: Dict) -> AnomalyResult:
     
     if detected:
         recommendation = AnomalyRecommendation(
-            priority="MEDIUM",
-            action="Investigate cause of delay",
-            details=f"Trip significantly delayed. Check for traffic, mechanical issues, "
-                    f"or unauthorized stops. Update passengers on ETA.",
+            priority=priority,
+            action=action,
+            details=details,
             estimated_impact="Schedule disruption, passenger inconvenience"
         )
     else:
