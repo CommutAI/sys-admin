@@ -8,6 +8,7 @@ const CustomerService = () => {
   const [filterAction, setFilterAction] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
   const [newLog, setNewLog] = useState({
     action: 'inquiry',
     description: '',
@@ -21,6 +22,7 @@ const CustomerService = () => {
   const fetchLogs = async () => {
     try {
       setLoading(true);
+      setFetchError(null);
       const { data, error } = await supabase
         .from('customer_service_logs')
         .select('*, trips(*, bus_id:buses!trips_bus_id_fkey(*)), handler:staff_users!customer_service_logs_handled_by_fkey(*)')
@@ -30,6 +32,7 @@ const CustomerService = () => {
       setLogs(data || []);
     } catch (error) {
       console.error('Error fetching customer service logs:', error);
+      setFetchError(error.message || 'Failed to load customer service logs');
     } finally {
       setLoading(false);
     }
@@ -101,6 +104,12 @@ const CustomerService = () => {
 
   return (
     <div className="space-y-6">
+      {fetchError && (
+        <div className="bg-red-500/20 border border-red-500/50 text-red-400 px-4 py-3 rounded-xl text-sm flex items-center justify-between">
+          <span>{fetchError}</span>
+          <button onClick={fetchLogs} className="underline text-xs hover:text-white">Retry</button>
+        </div>
+      )}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-white text-3xl font-bold mb-2">Customer Service</h1>

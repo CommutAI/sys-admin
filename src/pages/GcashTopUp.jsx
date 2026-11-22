@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 const GcashTopUp = () => {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
@@ -17,6 +18,7 @@ const GcashTopUp = () => {
   const fetchTransactions = async () => {
     try {
       setLoading(true);
+      setFetchError(null);
       const { data, error } = await supabase
         .from('gcash_transactions')
         .select('*')
@@ -26,6 +28,7 @@ const GcashTopUp = () => {
       setTransactions(data || []);
     } catch (error) {
       console.error('Error fetching transactions:', error);
+      setFetchError(error.message || 'Failed to load GCash transactions');
     } finally {
       setLoading(false);
     }
@@ -78,6 +81,12 @@ const GcashTopUp = () => {
 
   return (
     <div className="space-y-6">
+      {fetchError && (
+        <div className="bg-red-500/20 border border-red-500/50 text-red-400 px-4 py-3 rounded-xl text-sm flex items-center justify-between">
+          <span>{fetchError}</span>
+          <button onClick={fetchTransactions} className="underline text-xs hover:text-white">Retry</button>
+        </div>
+      )}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-white text-3xl font-bold mb-2">GCash Transactions</h1>

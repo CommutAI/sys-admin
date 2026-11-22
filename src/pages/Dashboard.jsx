@@ -94,21 +94,21 @@ const calculateRouteProgress = (lat, lng, coordinates) => {
   return Math.min(Math.max(progress, 0), 100); // Clamp between 0-100
 };
 
-// Determine route direction based on progress
-const getRouteDirection = (progress) => {
-  if (progress < 50) return 'Manolo Fortich → Agora';
-  if (progress > 50) return 'Agora → Manolo Fortich';
-  return 'Near Agora Terminal';
+// Determine route direction based on progress or trip endpoints
+const getRouteDirection = (origin, destination) => {
+  if (origin && destination) return `${origin} ➔ ${destination}`;
+  return 'Manolo Fortich ➔ Agora Terminal';
 };
 
 // Estimate time to destination (assuming average speed of 40 km/h)
 const estimateTimeToDestination = (progress, routeDistance = ROUTE_TOTAL_DISTANCE) => {
-  const remainingProgress = 100 - progress;
+  const remainingProgress = Math.max(0, 100 - progress);
   const remainingDistance = (remainingProgress / 100) * routeDistance;
   const avgSpeed = 40; // km/h
   const timeHours = remainingDistance / avgSpeed;
   const timeMinutes = Math.round(timeHours * 60);
 
+  if (timeMinutes < 1) return 'Arriving now';
   if (timeMinutes < 60) return `${timeMinutes} min`;
   const hours = Math.floor(timeMinutes / 60);
   const mins = timeMinutes % 60;
@@ -137,123 +137,157 @@ const BusDetailsModal = ({ bus, onClose }) => {
   if (!bus) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[999999] p-4">
-      <div className="bg-gray-900 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl relative z-[1000000]">
+    <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-[999999] p-4">
+      <div className="bg-gray-900 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl relative z-[1000000] border border-gray-700">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 sm:p-6 border-b border-gray-700 bg-gray-800">
-          <h2 className="text-white text-lg sm:text-xl font-bold flex items-center gap-2">
-            <Bus className="text-orange-400" size={24} />
-            Bus #{bus.plate || 'N/A'} Details
-          </h2>
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-gray-700 bg-gray-800">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-orange-500/20 text-orange-400 border border-orange-500/30">
+              <Bus size={24} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-white text-lg sm:text-xl font-bold">
+                  Bus #{bus.plate || 'N/A'}
+                </h2>
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                  bus.hasActiveTrip ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-gray-700 text-gray-300'
+                }`}>
+                  {bus.hasActiveTrip ? 'Active Trip' : 'Standby / Idle'}
+                </span>
+              </div>
+              <p className="text-gray-400 text-xs mt-0.5">
+                Corridor: <span className="text-gray-300 font-medium">{bus.route}</span>
+              </p>
+            </div>
+          </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-white transition-colors"
+            className="text-gray-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-700"
           >
-            <X size={24} />
+            <X size={22} />
           </button>
         </div>
 
-        {/* Split Pane Content - Responsive */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-gray-700">
-          {/* Left Column */}
-          <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-            {/* Route */}
-            <div>
-              <p className="text-gray-400 text-sm mb-1">Route</p>
-              <p className="text-white font-semibold">{bus.route}</p>
-            </div>
+        {/* Content */}
+        <div className="p-4 sm:p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+          {/* Active Trip Journey Tracker */}
+          {bus.hasActiveTrip ? (
+            <div className="bg-gradient-to-br from-orange-500/10 via-amber-500/5 to-transparent border border-orange-500/30 rounded-2xl p-4 sm:p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-3 border-b border-orange-500/20">
+                <span className="text-xs uppercase font-bold tracking-wider text-orange-400 flex items-center gap-1.5">
+                  <Navigation size={14} className="text-orange-400 animate-pulse" />
+                  Trip Direction & Progress
+                </span>
+                <span className="text-sm font-bold text-white bg-orange-500/20 border border-orange-500/30 px-3 py-1 rounded-full">
+                  {bus.boundFor || `Bound for ${bus.destination || 'Agora Terminal'}`}
+                </span>
+              </div>
 
-            {/* Status */}
-            <div>
-              <p className="text-gray-400 text-sm mb-1">Status</p>
-              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                bus.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
+              {/* Journey Stepper Line */}
+              <div className="my-3">
+                <div className="flex items-center justify-between text-xs sm:text-sm font-semibold text-white mb-2">
+                  <span className="flex items-center gap-1 text-gray-300">
+                    <MapPin size={14} className="text-emerald-400" />
+                    Origin: {bus.origin || 'Manolo Fortich Terminal'}
+                  </span>
+                  <span className="flex items-center gap-1 text-orange-300 font-bold">
+                    <MapPin size={14} className="text-orange-400" />
+                    Destination: {bus.destination || 'Agora Terminal'}
+                  </span>
+                </div>
+
+                {/* Progress Track */}
+                <div className="relative w-full bg-gray-800 rounded-full h-3 border border-gray-700 my-2">
+                  <div
+                    className="bg-gradient-to-r from-orange-500 to-amber-400 h-3 rounded-full transition-all duration-300"
+                    style={{ width: `${Math.min(100, Math.max(3, bus.routeProgress || 0))}%` }}
+                  />
+                  {/* Floating Bus Pointer */}
+                  <div
+                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 bg-white text-orange-600 rounded-full p-1 shadow-md border-2 border-orange-500 transition-all duration-300"
+                    style={{ left: `${Math.min(96, Math.max(4, bus.routeProgress || 0))}%` }}
+                    title={`Trip progress: ${bus.routeProgress?.toFixed(1)}%`}
+                  >
+                    <Bus size={12} />
+                  </div>
+                </div>
+
+                {/* ETA & Progress labels */}
+                <div className="flex justify-between items-center text-xs text-gray-300 mt-2">
+                  <span>Trip Progress: <strong className="text-orange-400 font-bold text-sm">{bus.routeProgress?.toFixed(1)}%</strong></span>
+                  <span>Est. Time to Destination: <strong className="text-white font-bold text-sm">{bus.eta}</strong></span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-gray-800/60 border border-gray-700 rounded-2xl p-4 flex items-center justify-between">
+              <div>
+                <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Trip Status</p>
+                <p className="text-white font-medium text-sm mt-0.5">No active trip currently in progress</p>
+                <p className="text-gray-400 text-xs mt-1">Bus is stationary or on standby at terminal.</p>
+              </div>
+              <span className="px-3 py-1 rounded-full text-xs font-semibold bg-gray-700 text-gray-300 border border-gray-600">
+                Standby
+              </span>
+            </div>
+          )}
+
+          {/* Quick Metrics Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-gray-800/80 p-3.5 rounded-xl border border-gray-700/60">
+              <p className="text-gray-400 text-xs mb-1">Fleet Status</p>
+              <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                bus.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-300'
               }`}>
-                {bus.status}
+                {bus.status === 'active' ? 'In Service' : bus.status}
               </span>
             </div>
 
-            {/* Passengers */}
-            <div>
-              <p className="text-gray-400 text-sm mb-1">Passengers</p>
-              <p className="text-white text-2xl sm:text-3xl font-bold flex items-center gap-2">
-                <Users className="text-orange-400" size={24} />
+            <div className="bg-gray-800/80 p-3.5 rounded-xl border border-gray-700/60">
+              <p className="text-gray-400 text-xs mb-1">Passengers</p>
+              <p className="text-white font-bold text-lg flex items-center gap-1.5">
+                <Users size={16} className="text-orange-400" />
                 {bus.passengers}
               </p>
             </div>
 
-            {/* GPS Coordinates */}
-            <div>
-              <p className="text-gray-400 text-sm mb-1">GPS Coordinates</p>
-              <p className="text-white font-mono text-xs sm:text-sm bg-gray-800 p-3 rounded-lg border border-gray-700 break-all">
-                {Number(bus.lat).toFixed(6)}, {Number(bus.lng).toFixed(6)}
+            <div className="bg-gray-800/80 p-3.5 rounded-xl border border-gray-700/60">
+              <p className="text-gray-400 text-xs mb-1">GPS Source</p>
+              <p className="text-xs font-semibold text-emerald-400 truncate" title={bus.locationSource}>
+                {bus.locationSource?.includes('driver_phone') || bus.locationSource?.includes('phone')
+                  ? '📱 Driver Phone'
+                  : bus.locationSource === 'gps'
+                  ? '🛰️ Satellite GPS'
+                  : bus.locationSource || 'Fallback'}
               </p>
             </div>
 
-            {/* GPS Source */}
-            <div>
-              <p className="text-gray-400 text-sm mb-1">GPS Source</p>
-              <span className={`px-3 py-1 rounded-full text-sm ${
-                bus.locationSource?.includes('driver_phone') || bus.locationSource?.includes('phone') || bus.locationSource === 'gps'
-                  ? 'bg-green-500/20 text-green-400'
-                  : 'bg-yellow-500/20 text-yellow-400'
-              }`}>
-                {bus.locationSource?.includes('driver_phone') || bus.locationSource?.includes('phone')
-                  ? '📱 Driver Phone GPS'
-                  : bus.locationSource === 'gps'
-                  ? '🛰️ Satellite GPS'
-                  : bus.locationSource || 'fallback'}
-              </span>
+            <div className="bg-gray-800/80 p-3.5 rounded-xl border border-gray-700/60">
+              <p className="text-gray-400 text-xs mb-1">Last Signal</p>
+              <p className="text-white text-xs font-medium truncate">
+                {bus.locationUpdatedAt ? new Date(bus.locationUpdatedAt).toLocaleTimeString() : 'No data'}
+              </p>
             </div>
           </div>
 
-          {/* Right Column */}
-          <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 bg-gray-800/50">
-            {/* Route Progress */}
-            {bus.routeProgress !== undefined && (
-              <>
-                <div>
-                  <p className="text-gray-400 text-sm mb-2">Route Progress</p>
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="flex-1 bg-gray-700 rounded-full h-4">
-                      <div
-                        className="bg-orange-500 h-4 rounded-full transition-all duration-300"
-                        style={{ width: `${bus.routeProgress}%` }}
-                      />
-                    </div>
-                    <span className="text-orange-400 font-bold text-lg sm:text-xl min-w-[60px] sm:min-w-[70px] text-right">
-                      {bus.routeProgress.toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-gray-400 text-sm mb-1">Direction</p>
-                  <p className="text-white font-semibold text-base sm:text-lg">{bus.routeDirection}</p>
-                </div>
-
-                <div>
-                  <p className="text-gray-400 text-sm mb-1">ETA to Destination</p>
-                  <p className="text-white font-semibold text-xl sm:text-2xl">{bus.eta}</p>
-                </div>
-              </>
-            )}
-
-            {/* Last Update */}
-            <div>
-              <p className="text-gray-400 text-sm mb-1">Last Update</p>
-              <p className="text-white font-semibold text-sm">
-                {bus.locationUpdatedAt ? new Date(bus.locationUpdatedAt).toLocaleString() : 'No data'}
-              </p>
+          {/* Detailed Coordinates & Telemetry */}
+          <div className="bg-gray-800/40 p-3.5 rounded-xl border border-gray-700/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 text-gray-300 font-mono">
+              <MapPin size={14} className="text-orange-400 flex-shrink-0" />
+              <span>GPS: {Number(bus.lat).toFixed(6)}, {Number(bus.lng).toFixed(6)}</span>
             </div>
+            <span className="text-gray-400">
+              Updated: {bus.locationUpdatedAt ? new Date(bus.locationUpdatedAt).toLocaleString() : 'N/A'}
+            </span>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="p-4 sm:p-6 border-t border-gray-700 bg-gray-800">
+        <div className="p-4 sm:p-5 border-t border-gray-700 bg-gray-800/80 flex justify-end">
           <button
             onClick={onClose}
-            className="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-xl font-medium transition-colors"
+            className="px-6 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-medium transition-colors text-sm shadow-lg shadow-orange-500/20"
           >
             Close
           </button>
@@ -283,63 +317,94 @@ const AnimatedBusMarker = ({ bus, onClick }) => {
       }}
     >
       <Popup>
-        <div className="p-3 min-w-[250px]">
-          <h3 className="font-bold text-lg mb-2 text-gray-800">Bus #{bus.plate || 'N/A'}</h3>
-          <div className="space-y-1 text-sm text-gray-700">
-            <p><strong>Route:</strong> {bus.route}</p>
-            <p><strong>Status:</strong> <span className={`px-2 py-0.5 rounded text-xs ${bus.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>{bus.status}</span></p>
-            <p><strong>Passengers:</strong> {bus.passengers}</p>
+        <div className="p-3 min-w-[260px] max-w-[320px] text-gray-800 font-sans">
+          {/* Header */}
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-200">
+            <div className="flex items-center gap-1.5">
+              <span className="text-orange-500 font-black text-base">🚌</span>
+              <h3 className="font-bold text-base text-gray-900">Bus #{bus.plate || 'N/A'}</h3>
+            </div>
+            <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+              bus.hasActiveTrip ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-gray-100 text-gray-600'
+            }`}>
+              {bus.hasActiveTrip ? 'In Transit' : 'Idle'}
+            </span>
+          </div>
 
-            {/* Route Progress */}
-            {bus.routeProgress !== undefined && (
-              <>
-                <div className="mt-2">
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-gray-600">Route Progress</span>
-                    <span className="font-semibold text-orange-600">{bus.routeProgress.toFixed(1)}%</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div
-                      className="bg-orange-500 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${bus.routeProgress}%` }}
-                    />
-                  </div>
+          {/* Active Trip Info vs Idle Info */}
+          {bus.hasActiveTrip ? (
+            <div className="space-y-2">
+              {/* Trip Heading Banner */}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-2">
+                <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">
+                  Current Trip Heading
+                </span>
+                <div className="text-xs font-bold text-gray-900 flex items-center gap-1.5 mt-0.5">
+                  <span className="truncate">{bus.origin || 'Manolo Fortich'}</span>
+                  <span className="text-amber-600 font-black">➔</span>
+                  <span className="truncate text-amber-700">{bus.destination || 'Agora Terminal'}</span>
                 </div>
-                <p className="text-xs text-gray-600"><strong>Direction:</strong> {bus.routeDirection}</p>
-                <p className="text-xs text-gray-600"><strong>ETA to Destination:</strong> {bus.eta}</p>
-              </>
-            )}
-
-            <p className="text-gray-500 text-xs mt-2">
-              GPS: {Number(bus.lat).toFixed(6)}, {Number(bus.lng).toFixed(6)}
-            </p>
-            <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-500">Source:</span>
-                {bus.locationSource?.includes('driver_phone') || bus.locationSource?.includes('phone') ? (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                    📱 Driver Phone GPS
-                  </span>
-                ) : bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi') && !bus.locationSource?.includes('anchor') ? (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                    🛰️ Satellite GPS
-                  </span>
-                ) : bus.locationSource?.includes('terminal') || bus.locationSource?.includes('anchor') ? (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-300" title="Stationary at Terminal (No GPS Fix)">
-                    📍 Terminal (Stationary)
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-blue-100 text-blue-800 border border-blue-300">
-                    📶 {bus.locationSource || 'fallback'}
-                  </span>
-                )}
               </div>
-              {bus.locationUpdatedAt && (
-                <p className="text-gray-400 text-[11px]">
-                  Last update: {new Date(bus.locationUpdatedAt).toLocaleTimeString()}
-                </p>
+
+              {/* Route Progress Bar */}
+              <div>
+                <div className="flex justify-between items-center text-xs mb-1">
+                  <span className="text-gray-500">Trip Progress</span>
+                  <span className="font-bold text-amber-600">{bus.routeProgress?.toFixed(1)}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-amber-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${Math.min(100, Math.max(3, bus.routeProgress || 0))}%` }}
+                  />
+                </div>
+                <div className="flex justify-between items-center text-[11px] text-gray-500 mt-1">
+                  <span>ETA: <strong className="text-gray-800">{bus.eta}</strong></span>
+                  <span className="truncate max-w-[130px]" title={bus.route}>Corridor: {bus.route}</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs text-gray-600 space-y-1">
+              <p><strong>Corridor:</strong> {bus.route}</p>
+              <p className="text-gray-500 italic">No active trip (Bus is standby at terminal)</p>
+            </div>
+          )}
+
+          {/* Passengers & GPS */}
+          <div className="mt-2.5 pt-2 border-t border-gray-100 space-y-1.5 text-xs text-gray-600">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1 font-medium text-gray-700">
+                <Users size={13} className="text-orange-500" />
+                {bus.passengers} onboard
+              </span>
+              <span className="font-mono text-[11px] text-gray-500">
+                {Number(bus.lat).toFixed(4)}, {Number(bus.lng).toFixed(4)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-gray-500">GPS Source:</span>
+              {bus.locationSource?.includes('driver_phone') || bus.locationSource?.includes('phone') ? (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  📱 Driver Phone
+                </span>
+              ) : bus.locationSource?.includes('gps') && !bus.locationSource?.includes('ip') && !bus.locationSource?.includes('pi') && !bus.locationSource?.includes('anchor') ? (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  🛰️ Satellite GPS
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                  📍 {bus.locationSource || 'fallback'}
+                </span>
               )}
             </div>
+
+            {bus.locationUpdatedAt && (
+              <p className="text-gray-400 text-[10px] text-right">
+                Last update: {new Date(bus.locationUpdatedAt).toLocaleTimeString()}
+              </p>
+            )}
           </div>
         </div>
       </Popup>
@@ -1106,9 +1171,27 @@ const Dashboard = () => {
           locationUpdatedAt = null;
         }
 
-        const routeProgress = calculateRouteProgress(lat, lng, routeCoordinates);
-        const routeDirection = getRouteDirection(routeProgress);
-        const eta = estimateTimeToDestination(routeProgress, calculateRouteDistance(routeCoordinates));
+        const hasActiveTrip = Boolean(trip);
+        const origin = trip?.starting_point || 'Manolo Fortich Terminal';
+        const destination = trip?.end_point || 'Agora Terminal';
+        const isHeadingToAgora = !origin.toLowerCase().includes('agora');
+
+        const rawProgress = calculateRouteProgress(lat, lng, routeCoordinates);
+        const routeProgress = hasActiveTrip
+          ? (isHeadingToAgora ? rawProgress : Math.max(0, 100 - rawProgress))
+          : 0;
+
+        const routeDirection = hasActiveTrip
+          ? `${origin} ➔ ${destination}`
+          : 'Standby / At Terminal';
+
+        const boundFor = hasActiveTrip
+          ? `Bound for ${destination}`
+          : 'Standby / At Terminal';
+
+        const eta = hasActiveTrip
+          ? estimateTimeToDestination(routeProgress, calculateRouteDistance(routeCoordinates))
+          : 'Stationary';
 
         return {
           id: bus.id,
@@ -1118,6 +1201,10 @@ const Dashboard = () => {
           lng,
           passengers: 0,
           status: trip ? 'active' : bus.status,
+          hasActiveTrip,
+          origin,
+          destination,
+          boundFor,
           locationSource,
           locationUpdatedAt,
           busId: bus.id,
@@ -1726,24 +1813,35 @@ const Dashboard = () => {
                           Active
                         </span>
                       </div>
-                      <p className="text-white/70 text-xs mb-1">{bus.route}</p>
+                      <p className="text-white/70 text-xs mb-1">
+                        {bus.hasActiveTrip ? (
+                          <span className="text-orange-300 font-semibold flex items-center gap-1">
+                            <span>{bus.origin || 'Manolo Fortich'}</span>
+                            <span className="text-orange-400">➔</span>
+                            <span>{bus.destination || 'Agora'}</span>
+                          </span>
+                        ) : (
+                          bus.route
+                        )}
+                      </p>
 
                       {/* Route Progress Bar */}
-                      {bus.routeProgress !== undefined && (
+                      {bus.hasActiveTrip && (
                         <div className="mt-2 mb-2">
                           <div className="flex justify-between text-xs mb-1">
-                            <span className="text-white/60">Progress</span>
-                            <span className="text-orange-400 font-semibold">{bus.routeProgress.toFixed(0)}%</span>
+                            <span className="text-white/60">Trip Progress</span>
+                            <span className="text-orange-400 font-semibold">{bus.routeProgress?.toFixed(0)}%</span>
                           </div>
-                          <div className="w-full bg-white/10 rounded-full h-1.5">
+                          <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
                             <div
                               className="bg-orange-500 h-1.5 rounded-full transition-all duration-300"
-                              style={{ width: `${bus.routeProgress}%` }}
+                              style={{ width: `${Math.min(100, Math.max(3, bus.routeProgress || 0))}%` }}
                             />
                           </div>
-                          <p className="text-white/50 text-xs mt-1">
-                            ETA: {bus.eta}
-                          </p>
+                          <div className="flex justify-between items-center text-white/50 text-xs mt-1">
+                            <span>ETA: {bus.eta}</span>
+                            <span className="text-[10px] text-white/40 truncate max-w-[100px]">{bus.route}</span>
+                          </div>
                         </div>
                       )}
 

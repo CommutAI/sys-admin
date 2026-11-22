@@ -6,6 +6,7 @@ const Notifications = () => {
   const [filterType, setFilterType] = useState('all');
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
 
   useEffect(() => {
     fetchNotifications();
@@ -26,6 +27,7 @@ const Notifications = () => {
   const fetchNotifications = async () => {
     try {
       setLoading(true);
+      setFetchError(null);
       const { data, error } = await supabase
         .from('notifications')
         .select('*')
@@ -36,6 +38,7 @@ const Notifications = () => {
       setNotifications(data || []);
     } catch (error) {
       console.error('Error fetching notifications:', error);
+      setFetchError(error.message || 'Failed to load notifications');
     } finally {
       setLoading(false);
     }
@@ -111,6 +114,12 @@ const Notifications = () => {
 
   return (
     <div className="space-y-6">
+      {fetchError && (
+        <div className="bg-red-500/20 border border-red-500/50 text-red-400 px-4 py-3 rounded-xl text-sm flex items-center justify-between">
+          <span>{fetchError}</span>
+          <button onClick={fetchNotifications} className="underline text-xs hover:text-white">Retry</button>
+        </div>
+      )}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-white text-3xl font-bold mb-2 flex items-center gap-3">
